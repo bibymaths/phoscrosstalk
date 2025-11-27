@@ -1,0 +1,39 @@
+[project]
+name = "phoscrosstalk"
+version = "0.1.0"
+description = "Global phospho-crosstalk ODE modeling from PTM databases and time-series phosphorylation data."
+authors = [
+    { name = "Abhinav Mishra", email = "mishraabhinav36@gmail.com"}
+]
+license = { file = "LICENSE" }
+readme = "README.md"
+requires-python = ">=3.10"
+
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "matplotlib",
+    "pymoo",
+    "numba",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "ruff",
+    "ipython",
+]
+
+[project.urls]
+homepage = "https://github.com/bibymaths/phoscrosstalk"
+repository = "https://github.com/bibymaths/phoscrosstalk"
+issues = "https://github.com/bibymaths/phoscrosstalk/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
