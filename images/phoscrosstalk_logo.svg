@@ -1,0 +1,28 @@
+<svg width="760" height="200" xmlns="http://www.w3.org/2000/svg">
+  <rect width="760" height="200" fill="#0d1117"/>
+  <text x="50%" y="38%" dominant-baseline="middle" text-anchor="middle"
+        font-family="MonoSpace" font-size="42" fill="#39d353">
+      PhosCrosstalk
+  </text>
+  <text x="50%" y="68%" dominant-baseline="middle" text-anchor="middle"
+        font-family="MonoSpace" font-size="20" fill="#58a6ff">
+      Global Crosstalk-Informed Phosphorylation ODE Modeling
+  </text>
+
+  <!-- network dots -->
+  <circle cx="120" cy="150" r="6" fill="#58a6ff"/>
+  <circle cx="200" cy="120" r="6" fill="#39d353"/>
+  <circle cx="280" cy="160" r="6" fill="#f778ba"/>
+  <circle cx="340" cy="125" r="6" fill="#ffca3a"/>
+  <circle cx="420" cy="155" r="6" fill="#39d353"/>
+  <circle cx="500" cy="120" r="6" fill="#58a6ff"/>
+  <circle cx="580" cy="150" r="6" fill="#f778ba"/>
+
+  <!-- connecting lines -->
+  <line x1="120" y1="150" x2="200" y2="120" stroke="#444" stroke-width="1.5"/>
+  <line x1="200" y1="120" x2="280" y2="160" stroke="#444" stroke-width="1.5"/>
+  <line x1="280" y1="160" x2="340" y2="125" stroke="#444" stroke-width="1.5"/>
+  <line x1="340" y1="125" x2="420" y2="155" stroke="#444" stroke-width="1.5"/>
+  <line x1="420" y1="155" x2="500" y2="120" stroke="#444" stroke-width="1.5"/>
+  <line x1="500" y1="120" x2="580" y2="150" stroke="#444" stroke-width="1.5"/>
+</svg>
