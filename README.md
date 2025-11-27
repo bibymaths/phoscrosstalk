@@ -1,4 +1,6 @@
-<p align="center">
+<img src="images/phoscrosstalk_logo.svg" width="450"> 
+
+<p align="left">
 
 <img src="https://img.shields.io/badge/python-3.10%2B-3776ab?logo=python&logoColor=white">
 
@@ -9,8 +11,6 @@
 <img src="https://img.shields.io/badge/Optimization-DE%20%7C%20SLSQP-ff69b4">
 
 </p>
-
----
 
 # **PhosCrosstalk**
 
@@ -64,9 +64,9 @@ Scores are normalized and assembled into a global interaction matrix aligned to 
 
 A local matrix (`Cl`) computes proximity-based influence:
 
-[
+$$
 Cl_{ij} = e^{-|position_i - position_j| / L}
-]
+$$
 
 This captures short-range sequence-based coupling within proteins.
 
@@ -263,16 +263,17 @@ Scatter plot of simulated vs observed fold changes.
 
 The ODE captures phosphorylation as:
 
-[
-\frac{dS_k}{dt} = k^{act}_k (1 - S_k) - k^{deact}_k S_k
-]
+$$
+\frac{dS_k}{dt}
+= k^{act}_k (1 - S_k) - k^{deact}_k S_k
+$$
 
-[
-\frac{dp_i}{dt} =
-(k_{on,i} , S_{\text{prot}(i)} + β_g, (Cg p)_i + β_l, (Cl p)_i)(1 - p_i)
+and for each phosphosite \(i\):
 
-* k_{off,i} p_i
-  ]
+$$
+\frac{dp_i}{dt}
+= ( k_{on,i} \, S_{\text{prot}(i)} + \beta_g (C_g p)_i + \beta_l (C_l p)_i )(1 - p_i) - k_{off,i} \, p_i
+$$
 
 This structure allows:
 
