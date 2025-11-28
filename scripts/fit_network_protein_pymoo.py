@@ -19,20 +19,19 @@ import multiprocessing
 from functools import partial
 
 from matplotlib import pyplot as plt
+from pymoo.algorithms.soo.nonconvex.nrbo import NRBO
+from pymoo.algorithms.soo.nonconvex.pattern import PatternSearch
 from scipy.integrate import odeint
 from scipy.optimize import least_squares, minimize
 from scipy.sparse import csr_matrix
 
 # Pymoo imports
-try:
-    from pymoo.core.problem import ElementwiseProblem
-    from pymoo.algorithms.soo.nonconvex.de import DE
-    from pymoo.optimize import minimize as pymoo_minimize
-    from pymoo.termination import get_termination
 
-    PYMOO_AVAILABLE = True
-except ImportError:
-    PYMOO_AVAILABLE = False
+from pymoo.core.problem import ElementwiseProblem
+from pymoo.algorithms.soo.nonconvex.de import DE
+from pymoo.optimize import minimize as pymoo_minimize
+from pymoo.termination import get_termination
+from pymoo.termination.default import DefaultSingleObjectiveTermination
 
 # ------------------------------------------------------------
 #  TIMEPOINTS & DATA
@@ -274,7 +273,7 @@ def obj_func_scalar(theta, t, Cg, Cl, P_data, site_prot_idx, K, reg_lambda=1e-3)
     P_sim = simulate_p(t, Cg, Cl, P_data, theta, site_prot_idx, K)
 
     # Sum of Squared Errors
-    sse = np.sum((P_sim - P_data) ** 2)
+    sse = np.sum((P_data - P_sim) ** 2)
 
     # L2 Regularization on log-params (keeping them smallish)
     reg = reg_lambda * np.sum(theta ** 2)
@@ -286,30 +285,29 @@ def obj_func_scalar(theta, t, Cg, Cl, P_data, site_prot_idx, K, reg_lambda=1e-3)
 #  PYMOO PROBLEM DEFINITION
 # ------------------------------------------------------------
 
-if PYMOO_AVAILABLE:
-    class NetworkProblem(ElementwiseProblem):
-        def __init__(self, t, Cg, Cl, P_data, site_prot_idx, K, reg_lambda, bounds):
-            # n_var calculation
-            # K (act) + K (deact) + 1 (bg) + 1 (bl) + N (on) + N (off)
-            N = P_data.shape[0]
-            n_var = 2 * K + 2 + 2 * N
+class NetworkProblem(ElementwiseProblem):
+    def __init__(self, t, Cg, Cl, P_data, site_prot_idx, K, reg_lambda, bounds):
+        # n_var calculation
+        # K (act) + K (deact) + 1 (bg) + 1 (bl) + N (on) + N (off)
+        N = P_data.shape[0]
+        n_var = 2 * K + 2 + 2 * N
 
-            self.t = t
-            self.Cg = Cg
-            self.Cl = Cl
-            self.P_data = P_data
-            self.site_prot_idx = site_prot_idx
-            self.K = K
-            self.reg_lambda = reg_lambda
+        self.t = t
+        self.Cg = Cg
+        self.Cl = Cl
+        self.P_data = P_data
+        self.site_prot_idx = site_prot_idx
+        self.K = K
+        self.reg_lambda = reg_lambda
 
-            super().__init__(n_var=n_var, n_obj=1, n_ieq_constr=0, xl=bounds[0], xu=bounds[1])
+        super().__init__(n_var=n_var, n_obj=1, n_ieq_constr=0, xl=bounds[0], xu=bounds[1])
 
-        def _evaluate(self, x, out, *args, **kwargs):
-            # x is a single individual (vector of params)
-            cost = obj_func_scalar(x, self.t, self.Cg, self.Cl,
-                                   self.P_data, self.site_prot_idx,
-                                   self.K, self.reg_lambda)
-            out["F"] = cost
+    def _evaluate(self, x, out, *args, **kwargs):
+        # x is a single individual (vector of params)
+        cost = obj_func_scalar(x, self.t, self.Cg, self.Cl,
+                               self.P_data, self.site_prot_idx,
+                               self.K, self.reg_lambda)
+        out["F"] = cost
 
 
 # ------------------------------------------------------------
@@ -317,8 +315,6 @@ if PYMOO_AVAILABLE:
 # ------------------------------------------------------------
 
 def run_pymoo(t, Cg, Cl, P_data, site_prot_idx, K, bounds, n_cores=4, pop_size=50, n_gen=100):
-    if not PYMOO_AVAILABLE:
-        raise ImportError("Pymoo not installed. Run `pip install pymoo`.")
 
     print(f"[*] initializing Pymoo DE with {n_cores} cores, pop={pop_size}, gen={n_gen}...")
 
@@ -330,32 +326,30 @@ def run_pymoo(t, Cg, Cl, P_data, site_prot_idx, K, bounds, n_cores=4, pop_size=5
 
     # Setup DE Algorithm
     # DE strategy: rand/1/bin is standard, can tune 'CR' and 'F' if needed
-    algorithm = DE(
-        pop_size=pop_size,
-        variant="DE/rand/1/bin",
-        CR=0.7,
-        F=0.5,
-        dither="vector",
-        jitter=False
+    # algorithm = DE(
+    #     pop_size=pop_size,
+    #     variant="DE/rand/1/bin",
+    #     CR=0.7,
+    #     F=0.5,
+    #     dither="vector",
+    #     jitter=False
+    # )
+
+    # Initialize the algorithm
+    algorithm = PatternSearch()
+
+    # Termination Criterion
+    termination = DefaultSingleObjectiveTermination(
+        xtol=1e-8,
+        cvtol=1e-6,
+        ftol=1e-6,
+        period=20,
+        n_max_gen=1000,
+        n_max_evals=100000
     )
-
-    termination = get_termination("n_gen", n_gen)
-
     # Run Optimization
     # We use starmap parallelization via the Runner
     start_time = time.time()
-
-    # Pymoo uses a Runner for parallelization
-    from pymoo.core.evaluator import Evaluator
-    # from pymoo.core.callback import Callback
-    #
-    # class ProgressCallback(Callback):
-    #     def __init__(self):
-    #         super().__init__()
-    #
-    #     def notify(self, algorithm):
-    #         best_f = algorithm.pop.get("F").min()
-    #         print(f"    Gen {algorithm.n_gen}/{n_gen} | Best SSE: {best_f:.4f}", end='\r')
 
     res = pymoo_minimize(
         problem,
@@ -364,7 +358,6 @@ def run_pymoo(t, Cg, Cl, P_data, site_prot_idx, K, bounds, n_cores=4, pop_size=5
         seed=1,
         verbose=True,
         runner=pool.starmap,
-        # callback=ProgressCallback()
     )
 
     pool.close()
