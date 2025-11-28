@@ -384,25 +384,13 @@ def simulate_p(t, Cg, Cl, P_data, theta, site_prot_idx, K):
 #  FITTING
 # ------------------------------------------------------------
 
-def residuals(theta, t, Cg, Cl, P_data, site_prot_idx, K, reg_lambda=1e-3):
-    """
-    Residuals for least_squares: data + L2 on log-params.
-    """
-    P_sim, _ = simulate_p(t, Cg, Cl, P_data, theta, site_prot_idx, K)
-    data_res = (P_sim - P_data).ravel()
-    reg_res = np.sqrt(reg_lambda) * theta
-    return np.concatenate([data_res, reg_res])
-
 def objective_slsqp(theta, t, Cg, Cl, P_data, site_prot_idx, K, reg_lambda=1e-3):
     """
     Scalar objective for SLSQP:
       J(theta) = 0.5 * ||P_sim - P_data||^2 + 0.5 * reg_lambda * ||theta||^2
     """
     P_sim, _ = simulate_p(t, Cg, Cl, P_data, theta, site_prot_idx, K)
-    diff = P_sim - P_data
-    data_cost = 0.5 * np.sum(diff ** 2)
-    reg_cost = 0.5 * reg_lambda * np.sum(theta ** 2)
-    return data_cost + reg_cost
+    return np.sum((P_data-P_sim) ** 2) + reg_lambda * np.sum(theta ** 2)
 
 def fit_network(t, Cg, Cl, P_data, site_prot_idx, K):
     """
@@ -448,12 +436,12 @@ def fit_network(t, Cg, Cl, P_data, site_prot_idx, K):
         objective_slsqp,
         theta0,
         args=(t, Cg, Cl, P_data, site_prot_idx, K),
-        method="SLSQP",
+        method="COBYLA",
         bounds=bounds,
         callback=callback,
         options={
             "disp": True,      # print SLSQP messages
-            "maxiter": 50,    # adjust if needed
+            # "maxiter": 50,    # adjust if needed
         },
     )
 
