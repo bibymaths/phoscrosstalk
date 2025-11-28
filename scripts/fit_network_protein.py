@@ -436,9 +436,9 @@ def fit_network(t, Cg, Cl, P_data, site_prot_idx, K):
         objective_slsqp,
         theta0,
         args=(t, Cg, Cl, P_data, site_prot_idx, K),
-        method="COBYLA",
+        method="COBYQA",
         bounds=bounds,
-        callback=callback,
+        # callback=callback,
         options={
             "disp": True,      # print SLSQP messages
             # "maxiter": 50,    # adjust if needed

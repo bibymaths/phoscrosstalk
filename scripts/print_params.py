@@ -8,7 +8,7 @@ def is_numeric_array(arr):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--npz", required=True)
+    parser.add_argument("--npz", default="../results/fitting_slsqp/fitted_params.npz", help="Path to the NPZ file")
     args = parser.parse_args()
 
     data = np.load(args.npz, allow_pickle=True)
