@@ -16,7 +16,7 @@ dependencies = [
     "matplotlib",
     "pymoo",
     "numba",
-    "pynetphorest",
+    "pynetphorest==0.1.3",
     "cobyqa>=1.1.3",
 ]
 
