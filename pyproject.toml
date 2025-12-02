@@ -18,6 +18,8 @@ dependencies = [
     "numba",
     "pynetphorest==0.1.3",
     "cobyqa>=1.1.3",
+    "networkx>=3.4.2",
+    "lxml>=6.0.2",
 ]
 
 [project.optional-dependencies]

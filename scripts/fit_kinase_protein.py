@@ -224,9 +224,9 @@ def scale_fc_to_unit_interval(Y, use_log=False, high_percentile=90.0):
         A = P_y - b
         if A < eps:
             A = 1.0
-
+        #
         p = (y - b) / A
-        p = np.clip(p, 0.0, 1.0)
+        # p = np.clip(p, 0.0, 1.0)
 
         P[i] = p
         baselines[i] = b
