@@ -80,18 +80,18 @@ def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
 
     Returns
     -------
-    sites         : list[str]  e.g. 'ABL2_S620'
-    proteins      : list[str]  unique protein names (for global model)
+    sites         : list[str]  e.g. 'ABL2_S620'   (only true sites)
+    proteins      : list[str]  unique protein names (with at least one site)
     site_prot_idx : np.array(N,) int (index into proteins for each site)
     positions     : np.array(N,) float (residue positions or NaN)
     t             : np.array(T,)
-    Y             : np.array(N,T)  (FC values)
+    Y             : np.array(N,T)  (site-level FC values)
+    A_data        : np.array(P,T) or None  (protein-level FC, P rows)
+    A_proteins    : np.array(P,) or None   (protein names for A_data rows)
     """
-    # auto-detect separator so it works for CSV or TSV
     df = pd.read_csv(path, sep=None, engine="python")
 
     # ---- identify time-series columns ----
-    # allow both v1..v14 and x1..x14
     value_cols = [c for c in df.columns
                   if c.startswith("v") or c.startswith("x")]
     if len(value_cols) != len(timepoints):
@@ -108,40 +108,45 @@ def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
     else:
         raise ValueError("Need either 'Protein' or 'GeneID' column in data.")
 
-    proteins_raw = df[prot_col].astype(str).tolist()
+    # ---- split: site rows vs protein-abundance rows ----
+    if "Psite" in df.columns:
+        has_site = df["Psite"].notna()
+    elif "Residue" in df.columns:
+        has_site = df["Residue"].notna()
+    else:
+        raise ValueError("Need either 'Residue' or 'Psite' column in data.")
 
-    # ---- unify residue / psite column ----
+    df_sites = df[has_site].copy()
+    df_prot  = df[~has_site].copy()
+
+    # ---- site-level handling (as before, but only on df_sites) ----
+    proteins_raw = df_sites[prot_col].astype(str).tolist()
+
     residues_raw = []
     positions = []
 
-    if "Residue" in df.columns:
+    if "Residue" in df_sites.columns:
         # Old style: e.g. 'Y1172'
-        for r in df["Residue"].astype(str):
+        for r in df_sites["Residue"].astype(str):
             residues_raw.append(r)
             m = re.match(r"[A-Z]([0-9]+)", r)
             positions.append(int(m.group(1)) if m else np.nan)
 
-    elif "Psite" in df.columns:
-        # New style: e.g. 'S_620' or NaN for TF-level
-        for psite in df["Psite"]:
-            if pd.isna(psite):
-                # TF level / no specific site
-                residues_raw.append("TF")
-                positions.append(np.nan)
+    elif "Psite" in df_sites.columns:
+        # New style: e.g. 'S_620'
+        for psite in df_sites["Psite"]:
+            psite = str(psite)
+            if "_" in psite:
+                aa, pos = psite.split("_", 1)
+                residues_raw.append(f"{aa}{pos}")
+                try:
+                    positions.append(int(pos))
+                except ValueError:
+                    positions.append(np.nan)
             else:
-                # 'S_620' -> 'S620', pos=620
-                psite = str(psite)
-                if "_" in psite:
-                    aa, pos = psite.split("_", 1)
-                    residues_raw.append(f"{aa}{pos}")
-                    try:
-                        positions.append(int(pos))
-                    except ValueError:
-                        positions.append(np.nan)
-                else:
-                    residues_raw.append(psite)
-                    m = re.match(r"[A-Z]([0-9]+)", psite)
-                    positions.append(int(m.group(1)) if m else np.nan)
+                residues_raw.append(psite)
+                m = re.match(r"[A-Z]([0-9]+)", psite)
+                positions.append(int(m.group(1)) if m else np.nan)
     else:
         raise ValueError("Need either 'Residue' or 'Psite' column in data.")
 
@@ -150,16 +155,35 @@ def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
     # ---- build site IDs 'PROT_RES' ----
     sites = [f"{p}_{r}" for p, r in zip(proteins_raw, residues_raw)]
 
-    # ---- unique proteins & indices ----
+    # ---- unique proteins & indices (only proteins with at least one site) ----
     proteins = sorted(set(proteins_raw))
     prot_index = {p: k for k, p in enumerate(proteins)}
     site_prot_idx = np.array([prot_index[p] for p in proteins_raw], dtype=int)
 
-    # ---- time-series matrix ----
-    Y = df[value_cols].values.astype(float)
+    # ---- site-level time-series matrix ----
+    Y = df_sites[value_cols].values.astype(float)
     t = np.array(timepoints, dtype=float)
 
-    return sites, proteins, site_prot_idx, positions, t, Y
+    # ---- protein-level abundance series from rows with empty site ----
+    A_data = None
+    A_proteins = None
+
+    if not df_prot.empty:
+        A_rows = []
+        A_prots = []
+        for p, sub in df_prot.groupby(prot_col):
+            p_str = str(p)
+            # only keep proteins that have at least one phosphosite in the model
+            if p_str not in prot_index:
+                continue
+            A_prots.append(p_str)
+            A_rows.append(sub[value_cols].values.astype(float).mean(axis=0))
+
+        if A_rows:
+            A_data = np.vstack(A_rows)                # (P,T)
+            A_proteins = np.array(A_prots, dtype=object)
+
+    return sites, proteins, site_prot_idx, positions, t, Y, A_data, A_proteins
 
 
 def scale_fc_to_unit_interval(Y):
@@ -345,67 +369,84 @@ def sat(x):
     """
     return np.tanh(x)
 
-
+@njit(cache=True, parallel=False, fastmath=True)
 def network_rhs(x, t, params, Cg, Cl, site_prot_idx, K, K_site_kin):
     """
     RHS for ODE system:
 
     x = [ S_0..S_{K-1},
           A_0..A_{K-1},
+          Kdyn_0..Kdyn_{M-1},
           p_0..p_{N-1} ]
     """
     N = Cg.shape[0]
+    M = K_site_kin.shape[1]
 
-    k_act = params["k_act"]
+    k_act   = params["k_act"]
     k_deact = params["k_deact"]
-    s_prod = params["s_prod"]
-    d_deg = params["d_deg"]
-    beta_g = params["beta_g"]
-    beta_l = params["beta_l"]
-    alpha = params["alpha"]
-    k_off = params["k_off"]
+    s_prod  = params["s_prod"]
+    d_deg   = params["d_deg"]
+    beta_g  = params["beta_g"]
+    beta_l  = params["beta_l"]
+    alpha   = params["alpha"]
+    kK_act   = params["kK_act"]      # NEW
+    kK_deact = params["kK_deact"]    # NEW
+    k_off   = params["k_off"]
 
-    S = x[:K]
-    A = x[K:2*K]
-    p = x[2*K:2*K + N]
+    # unpack state
+    S    = x[:K]
+    A    = x[K:2*K]
+    Kdyn = x[2*K:2*K+M]
+    p    = x[2*K+2*K+0: 2*K+M+N] if False else x[2*K+M:2*K+M+N]  # clarity only
+    p    = x[2*K+M:2*K+M+N]
 
-    # Activation dynamics
+    # --- protein activation ---
     dS = k_act * (1.0 - S) - k_deact * S
 
-    # Abundance dynamics (TF input folded into s_prod)
+    # --- abundance dynamics ---
     dA = s_prod - d_deg * A
 
-    # Crosstalk terms (global + local, then saturate)
+    # --- crosstalk terms (global + local, then saturate) ---
     coup_g = beta_g * (Cg @ p)
     coup_l = beta_l * (Cl @ p)
     coup_raw = coup_g + coup_l
     coup = sat(coup_raw)
 
-    # Effective kinase on-rate per site via kinase–site matrix
-    # k_on_eff_i = (K_site_kin @ alpha)_i
-    k_on_eff = K_site_kin @ alpha  # shape (N,)
+    # --- kinase dynamics ---
+    # Use K_site_kin^T as a simple regulation matrix: kinase sees the sites it acts on
+    R = K_site_kin.T      # shape (M, N)
+    u = R @ p             # pooled phospho-signal per kinase (M,)
+
+    # simple tanh-driven activation around [0,1]
+    dK = kK_act * np.tanh(u) * (1.0 - Kdyn) - kK_deact * Kdyn
+
+    # --- effective on-rate per site, modulated by dynamic Kdyn ---
+    # k_on_eff_i = sum_m K_site_kin[i,m] * alpha_m * Kdyn_m
+    k_on_eff = K_site_kin @ (alpha * Kdyn)   # (N,)
 
     # Map protein indices for each site
     S_local = S[site_prot_idx]
     A_local = A[site_prot_idx]
 
-    v_on = (k_on_eff * S_local * A_local + coup) * (1.0 - p)
+    v_on  = (k_on_eff * S_local * A_local + coup) * (1.0 - p)
     v_off = k_off * p
-    dp = v_on - v_off
+    dp    = v_on - v_off
 
-    dx = np.empty_like(x)
-    dx[:K] = dS
-    dx[K:2*K] = dA
-    dx[2*K:2*K + N] = dp
+    # pack derivative
+    dx = np.empty(2*K + M + N, dtype=float)
+    dx[:K]           = dS
+    dx[K:2*K]        = dA
+    dx[2*K:2*K+M]    = dK
+    dx[2*K+M:]       = dp
     return dx
 
 
-@njit(cache=True)
+@njit(cache=True, parallel=True, fastmath=True)
 def decode_theta_core(theta, K, M, N):
     """
     Decode log-parameters from theta.
 
-    theta layout:
+    NEW theta layout:
       [ log_k_act_k (K),
         log_k_deact_k (K),
         log_s_prod_k (K),
@@ -413,13 +454,17 @@ def decode_theta_core(theta, K, M, N):
         log_beta_g,
         log_beta_l,
         log_alpha_m (M),
+        log_kK_act_m (M),
+        log_kK_deact_m (M),
         log_k_off_i (N) ]
 
     Returns
     -------
     k_act, k_deact, s_prod, d_deg,
     beta_g, beta_l,
-    alpha, k_off
+    alpha,
+    kK_act, kK_deact,
+    k_off
     """
     idx0 = 0
 
@@ -444,27 +489,38 @@ def decode_theta_core(theta, K, M, N):
     log_alpha = theta[idx0:idx0 + M]
     idx0 += M
 
+    # NEW: kinase dynamics parameters
+    log_kK_act = theta[idx0:idx0 + M]
+    idx0 += M
+
+    log_kK_deact = theta[idx0:idx0 + M]
+    idx0 += M
+
+    # per-site off-rates
     log_k_off = theta[idx0:idx0 + N]
 
-    k_act = np.exp(log_k_act)
+    k_act   = np.exp(log_k_act)
     k_deact = np.exp(log_k_deact)
-    s_prod = np.exp(log_s_prod)
-    d_deg = np.exp(log_d_deg)
-    beta_g = np.exp(log_beta_g)
-    beta_l = np.exp(log_beta_l)
-    alpha = np.exp(log_alpha)
-    k_off = np.exp(log_k_off)
+    s_prod  = np.exp(log_s_prod)
+    d_deg   = np.exp(log_d_deg)
+    beta_g  = np.exp(log_beta_g)
+    beta_l  = np.exp(log_beta_l)
+    alpha   = np.exp(log_alpha)
+    kK_act   = np.exp(log_kK_act)
+    kK_deact = np.exp(log_kK_deact)
+    k_off   = np.exp(log_k_off)
 
     return (k_act, k_deact,
             s_prod, d_deg,
             beta_g, beta_l,
-            alpha, k_off)
-
+            alpha,
+            kK_act, kK_deact,
+            k_off)
 
 def simulate_p(t, Cg, Cl, P_data, theta,
                site_prot_idx, K, K_site_kin):
     """
-    Simulate p(t) given theta.
+    Simulate p(t) given theta with dynamic kinase states.
 
     theta layout:
       [log_k_act_k (K),
@@ -474,6 +530,8 @@ def simulate_p(t, Cg, Cl, P_data, theta,
        log_beta_g,
        log_beta_l,
        log_alpha_m (M),
+       log_kK_act_m (M),
+       log_kK_deact_m (M),
        log_k_off_i (N)]
 
     Returns
@@ -487,26 +545,32 @@ def simulate_p(t, Cg, Cl, P_data, theta,
     (k_act, k_deact,
      s_prod, d_deg,
      beta_g, beta_l,
-     alpha, k_off) = decode_theta_core(theta, K, M, N)
+     alpha,
+     kK_act, kK_deact,
+     k_off) = decode_theta_core(theta, K, M, N)
 
     params = {
-        "k_act": k_act,
+        "k_act":   k_act,
         "k_deact": k_deact,
-        "s_prod": s_prod,
-        "d_deg": d_deg,
-        "beta_g": float(beta_g),
-        "beta_l": float(beta_l),
-        "alpha": alpha,
-        "k_off": k_off,
+        "s_prod":  s_prod,
+        "d_deg":   d_deg,
+        "beta_g":  float(beta_g),
+        "beta_l":  float(beta_l),
+        "alpha":   alpha,
+        "kK_act":   kK_act,
+        "kK_deact": kK_deact,
+        "k_off":   k_off,
     }
 
     # Initial conditions:
-    #   S_k(0) = 0
-    #   A_k(0) = 1
-    #   p_i(0) = data at t0
-    x0 = np.zeros(2 * K + N, dtype=float)
-    x0[K:2*K] = 1.0     # initial abundance
-    x0[2*K:] = P_data[:, 0]
+    #   S_k(0)    = 0
+    #   A_k(0)    = 1
+    #   Kdyn_m(0) = 1
+    #   p_i(0)    = data at t0
+    x0 = np.zeros(2 * K + M + N, dtype=float)
+    x0[K:2*K]        = 1.0      # A_k(0)
+    x0[2*K:2*K+M]    = 1.0      # Kdyn_m(0)
+    x0[2*K+M:]       = P_data[:, 0]
 
     X = odeint(
         network_rhs,
@@ -514,9 +578,9 @@ def simulate_p(t, Cg, Cl, P_data, theta,
         t,
         args=(params, Cg, Cl, site_prot_idx, K, K_site_kin)
     )
-    P_sim = X[:, 2*K:].T
+    # X shape: (T, 2K + M + N); p are last N columns
+    P_sim = X[:, 2*K+M:].T
     return P_sim, params
-
 
 # ------------------------------------------------------------
 #  FITTING
@@ -547,7 +611,7 @@ def fit_network(t, Cg, Cl, P_data,
         beta_g, beta_l
 
       Per-kinase (m = 0..M-1):
-        alpha_m
+        alpha_m, kK_act_m, kK_deact_m
 
       Per-site (i = 0..N-1):
         k_off_i
@@ -556,14 +620,19 @@ def fit_network(t, Cg, Cl, P_data,
     M = K_site_kin.shape[1]
 
     # Initial guesses
-    k_act0 = np.full(K, 1.0)
+    k_act0   = np.full(K, 1.0)
     k_deact0 = np.full(K, 0.01)
-    s_prod0 = np.full(K, 0.1)
-    d_deg0 = np.full(K, 0.01)
-    beta_g0 = 0.05
-    beta_l0 = 0.05
-    alpha0 = np.full(M, 0.1)
-    k_off0 = np.full(N, 0.05)
+    s_prod0  = np.full(K, 0.1)
+    d_deg0   = np.full(K, 0.01)
+    beta_g0  = 0.05
+    beta_l0  = 0.05
+    alpha0   = np.full(M, 0.1)
+
+    # NEW: kinase dynamics guesses
+    kK_act0   = np.full(M, 0.5)
+    kK_deact0 = np.full(M, 0.1)
+
+    k_off0  = np.full(N, 0.05)
 
     theta0 = np.concatenate([
         np.log(k_act0),
@@ -573,6 +642,8 @@ def fit_network(t, Cg, Cl, P_data,
         np.log([beta_g0]),
         np.log([beta_l0]),
         np.log(alpha0),
+        np.log(kK_act0),
+        np.log(kK_deact0),
         np.log(k_off0),
     ])
 
@@ -598,7 +669,6 @@ def fit_network(t, Cg, Cl, P_data,
     )
 
     return theta_opt, params_decoded, P_sim, res
-
 
 # ------------------------------------------------------------
 #  HELPERS: CROSSTALK RESTRICTION, PLOTTING
@@ -687,9 +757,9 @@ def main():
 
     os.makedirs(args.outdir, exist_ok=True)
 
-    # 1) Load full data
+    # 1) Load full data (sites + optional protein abundance rows)
     (sites, proteins, site_prot_idx,
-     positions, t, Y) = load_site_data(args.data)
+     positions, t, Y, A_data, A_proteins) = load_site_data(args.data)
     print(f"[*] Loaded {len(sites)} sites from {len(proteins)} proteins, "
           f"{Y.shape[1]} timepoints.")
 
@@ -721,12 +791,40 @@ def main():
         )
         proteins = proteins_used
 
+        # also restrict A_data/A_proteins to the new protein set
+        if A_data is not None and A_proteins is not None:
+            mask_A = np.array([p in prot_index for p in A_proteins], dtype=bool)
+            A_data = A_data[mask_A]
+            A_proteins = A_proteins[mask_A]
+
         print(f"[*] Restricted sites via crosstalk TSV: "
               f"{n_before} -> {n_after} sites, {len(proteins)} proteins.")
 
-    # 2) Scale FC -> p in [0,1]
+    # Map protein-abundance rows to protein indices (after any restriction)
+    if A_data is not None and A_proteins is not None and len(A_data) > 0:
+        prot_index = {p: k for k, p in enumerate(proteins)}
+        mask_A = np.array([p in prot_index for p in A_proteins], dtype=bool)
+        A_data = A_data[mask_A]
+        A_proteins = A_proteins[mask_A]
+        if len(A_data) > 0:
+            prot_idx_for_A = np.array([prot_index[p] for p in A_proteins], dtype=int)
+        else:
+            prot_idx_for_A = None
+    else:
+        prot_idx_for_A = None
+
+    # 2) Scale FC -> p in [0,1] for sites
     P_scaled, baselines, amplitudes = scale_fc_to_unit_interval(Y)
-    print("[*] Scaled FC data to p in [0,1].")
+    print("[*] Scaled site-level FC data to p in [0,1].")
+
+    # 2b) Scale protein-level FC -> A_scaled in [0,1] (if present)
+    if A_data is not None and prot_idx_for_A is not None and len(A_data) > 0:
+        A_scaled, A_baselines, A_amplitudes = scale_fc_to_unit_interval(A_data)
+        print(f"[*] Scaled protein-level FC data for {A_data.shape[0]} proteins.")
+    else:
+        A_scaled = None
+        A_baselines = None
+        A_amplitudes = None
 
     # 3) Build C matrices from DBs (on the filtered site set)
     Cg, Cl = build_C_matrices_from_db(
@@ -751,10 +849,11 @@ def main():
         print("[*] No --kinase-tsv supplied. Using identity matrix: "
               "one pseudo-kinase per site.")
 
-    # 5) Fit network
+    # 5) Fit network (sites + optional abundance)
     K = len(proteins)
     theta_opt, params_decoded, P_sim, result = fit_network(
-        t, Cg, Cl, P_scaled, site_prot_idx, K, K_site_kin
+        t, Cg, Cl, P_scaled, site_prot_idx, K, K_site_kin,
+        A_scaled=A_scaled, prot_idx_for_A=prot_idx_for_A, w_A=1.0
     )
 
     print("[*] Optimization finished.")
@@ -779,6 +878,11 @@ def main():
         "k_off": params_decoded["k_off"],
         "baselines": baselines,
         "amplitudes": amplitudes,
+        # NEW: protein-abundance related outputs
+        "A_proteins": np.array([] if A_proteins is None else A_proteins,
+                               dtype=object),
+        "A_baselines": np.array([] if A_baselines is None else A_baselines),
+        "A_amplitudes": np.array([] if A_amplitudes is None else A_amplitudes),
     }
     params_path = os.path.join(args.outdir, "fitted_params.npz")
     np.savez(params_path, **out_params)
