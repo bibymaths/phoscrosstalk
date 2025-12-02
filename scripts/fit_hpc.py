@@ -69,12 +69,32 @@ from typing import Dict, Iterable, List, Tuple
 import numpy as np
 import pandas as pd
 import networkx as nx
+from mpi4py import MPI
+from pymoo.core.problem import Problem
+from pymoo.optimize import minimize
+from pymoo.termination import get_termination
+from pymoo.termination.default import DefaultSingleObjectiveTermination
+from pymoo.algorithms.soo.nonconvex.ga import GA
 
-from matplotlib import pyplot as plt
 from numba import njit
 from scipy.integrate import solve_ivp
-from scipy.optimize import minimize
+# from scipy.optimize import minimize
 from scipy.sparse import csr_matrix
+
+import matplotlib
+matplotlib.use("Agg")
+from matplotlib import pyplot as plt
+
+# Global MPI context
+COMM = MPI.COMM_WORLD
+RANK = COMM.Get_rank()
+SIZE = COMM.Get_size()
+
+
+def mpi_print(*args, **kwargs):
+    """Print only from rank 0 to avoid SLURM/MPI spam."""
+    if RANK == 0:
+        print(*args, **kwargs)
 
 # ------------------------------------------------------------
 #  TIMEPOINTS & DATA
@@ -762,6 +782,39 @@ def objective_slsqp(theta, t, Cg, Cl, P_data,
 
     return loss_p + w_A * loss_A + reg + reg_net
 
+def make_eval_theta(
+    t, Cg, Cl, P_data,
+    site_prot_idx, K, K_site_kin,
+    A_scaled, prot_idx_for_A, w_A,
+    W_data,
+    P_flat, A_flat, W_flat,
+    N, T,
+    L_alpha,
+    lambda_net,
+    reg_lambda=1e-4,
+):
+    """
+    Capture all shared data and return eval_theta(theta) -> scalar J.
+
+    This reuses your existing objective_slsqp, just binding all arguments
+    except theta.
+    """
+    def eval_theta(theta: np.ndarray) -> float:
+        return float(
+            objective_slsqp(
+                theta,
+                t, Cg, Cl, P_data,
+                site_prot_idx, K, K_site_kin,
+                A_scaled, prot_idx_for_A, w_A,
+                W_data,
+                P_flat, A_flat, W_flat,
+                N, T,
+                reg_lambda,
+                L_alpha,
+                lambda_net,
+            )
+        )
+    return eval_theta
 
 def fit_network(t, Cg, Cl, P_data,
                 site_prot_idx, K, K_site_kin,
@@ -845,7 +898,121 @@ def fit_network(t, Cg, Cl, P_data,
 
     return theta_opt, params_decoded, P_sim, res
 
+class PhosProblem(Problem):
+    """
+    Pymoo problem: minimize J(theta).
 
+    This is *vectorized* over a population X (shape: [pop_size, n_var]).
+    """
+
+    def __init__(self, n_var: int,
+                 xl: np.ndarray,
+                 xu: np.ndarray,
+                 eval_theta,
+                 **kwargs):
+        super().__init__(
+            n_var=n_var,
+            n_obj=1,
+            n_ieq_constr=0,
+            xl=xl,
+            xu=xu,
+            elementwise=False,   # evaluate whole population in one call
+            **kwargs
+        )
+        self.eval_theta = eval_theta
+
+    def _evaluate(self, X, out, *args, **kwargs):
+        # X: (pop_size, n_var)
+        pop_size = X.shape[0]
+        F = np.empty((pop_size, 1), dtype=float)
+        for i in range(pop_size):
+            F[i, 0] = self.eval_theta(X[i])
+        out["F"] = F
+
+def run_pymoo_mpi_ga(
+    theta0: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+    eval_theta,
+    pop_size: int = 64,
+    n_gen: int = 200,
+):
+    """
+    Run a GA-based global optimization with pymoo on each MPI rank
+    (island model), then pick the globally best theta using MPI.
+    """
+
+    # Use global COMM/RANK/SIZE so SLURM-aware behavior is consistent
+    comm = COMM
+    rank = RANK
+    size = SIZE
+
+    n_var = theta0.size
+
+    xl = lower.astype(float)
+    xu = upper.astype(float)
+
+    problem = PhosProblem(
+        n_var=n_var,
+        xl=xl,
+        xu=xu,
+        eval_theta=eval_theta,
+    )
+
+    # Rank-specific seed, but set via numpy global RNG for old pymoo
+    seed = 42 + rank
+    np.random.seed(seed)
+
+    algorithm = GA(
+        pop_size=pop_size,
+        eliminate_duplicates=True,
+    )
+
+    termination = DefaultSingleObjectiveTermination(
+        xtol=1e-8,
+        cvtol=1e-6,
+        ftol=1e-6,
+        period=20,
+        n_max_gen=1000,
+        n_max_evals=100000
+    )
+
+    if rank == 0:
+        print(f"[*] MPI+pymoo: starting GA on {size} ranks, pop_size={pop_size}, n_gen={n_gen}")
+
+    def ga_callback(algorithm):
+        """Print progress every generation from rank 0 only."""
+        gen = algorithm.n_gen
+        if RANK == 0 and gen % 5 == 0:  # adjust frequency
+            best = algorithm.pop.get("F").min()
+            mpi_print(f"[gen {gen}] best J = {best:.4g}")
+
+    res = minimize(
+        problem,
+        algorithm,
+        termination,
+        verbose=False,  # disable pymoo’s own noisy print
+        callback=ga_callback,  # our MPI-safe progress
+    )
+
+    # Local best
+    local_best_theta = res.X.copy()
+    local_best_J = float(res.F[0, 0])
+
+    # Gather best from all ranks
+    all_J = comm.allgather(local_best_J)
+    all_theta = comm.allgather(local_best_theta)
+
+    if rank == 0:
+        best_rank = int(np.argmin(all_J))
+        global_best_J = all_J[best_rank]
+        global_best_theta = all_theta[best_rank]
+
+        print(f"[*] MPI+pymoo global best J = {global_best_J:.4g} (from rank {best_rank})")
+
+        return global_best_theta, global_best_J
+    else:
+        return None, None
 # ------------------------------------------------------------
 #  HELPERS: CROSSTALK RESTRICTION, PLOTTING
 # ------------------------------------------------------------
@@ -943,6 +1110,26 @@ def main():
         default=0.0,
         help="Strength of α network prior using unified kinase graph (default 0)."
     )
+    # --- HPC/MPI controls ---
+    parser.add_argument(
+        "--optimizer",
+        choices=["ga", "slsqp"],
+        default="ga",
+        help="Use 'ga' for MPI+pymoo GA (island model) or 'slsqp' for single-rank SciPy SLSQP."
+    )
+    parser.add_argument(
+        "--ga-pop-size",
+        type=int,
+        default=64,
+        help="Population size for GA when --optimizer ga (default 64)."
+    )
+    parser.add_argument(
+        "--ga-n-gen",
+        type=int,
+        default=200,
+        help="Number of generations for GA when --optimizer ga (default 200)."
+    )
+
     args = parser.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
@@ -1086,69 +1273,176 @@ def main():
     else:
         A_flat = None
 
-    theta_opt, params_decoded, P_sim, result = fit_network(
-        t, Cg, Cl, P_scaled, site_prot_idx, K, K_site_kin,
-        A_scaled=A_scaled, prot_idx_for_A=prot_idx_for_A, w_A=1.0,
-        W_data=W_data,
-        P_flat=P_flat, A_flat=A_flat, W_flat=W_flat,
-        N=N, T=T,
-        L_alpha=L_alpha,
-        lambda_net=args.lambda_net
-    )
+    # ---- choose optimizer: SLSQP (old) or MPI+pymoo GA (new) ----
+    use_pymoo_mpi = (args.optimizer == "ga")
+
+    if not use_pymoo_mpi:
+        # If running under MPI with SLSQP, only rank 0 should do any work.
+        if args.optimizer == "slsqp" and SIZE > 1 and RANK != 0:
+            mpi_print(f"[rank {RANK}] exiting early (SLSQP runs only on rank 0).")
+            return
+
+        # Original SLSQP fit (single rank, enforced above)
+        theta_opt, params_decoded, P_sim, result = fit_network(
+            t, Cg, Cl, P_scaled, site_prot_idx, K, K_site_kin,
+            A_scaled=A_scaled, prot_idx_for_A=prot_idx_for_A, w_A=1.0,
+            W_data=W_data,
+            P_flat=P_flat, A_flat=A_flat, W_flat=W_flat,
+            N=N, T=T,
+            L_alpha=L_alpha,
+            lambda_net=args.lambda_net,
+        )
+        final_cost = result.fun
+        success = result.success
+        msg = result.message
+
+    else:
+        # ---- MPI + pymoo GA fit ----
+        # 1) Rebuild theta0, lower, upper exactly as in fit_network
+        M = K_site_kin.shape[1]
+
+        k_act0   = np.full(K, 1.0)
+        k_deact0 = np.full(K, 0.01)
+        s_prod0  = np.full(K, 0.1)
+        d_deg0   = np.full(K, 0.01)
+        beta_g0  = 0.05
+        beta_l0  = 0.05
+        alpha0   = np.full(M, 0.1)
+        kK_act0  = np.full(M, 0.5)
+        kK_deact0 = np.full(M, 0.1)
+        k_off0   = np.full(N, 0.05)
+
+        theta0 = np.concatenate([
+            np.log(k_act0),
+            np.log(k_deact0),
+            np.log(s_prod0),
+            np.log(d_deg0),
+            np.log([beta_g0]),
+            np.log([beta_l0]),
+            np.log(alpha0),
+            np.log(kK_act0),
+            np.log(kK_deact0),
+            np.log(k_off0),
+        ])
+
+        lower = np.log(1e-4) * np.ones_like(theta0)
+        upper = np.log(2.0)   * np.ones_like(theta0)
+
+        # 2) Build eval_theta wrapper
+        eval_theta = make_eval_theta(
+            t, Cg, Cl, P_scaled,
+            site_prot_idx, K, K_site_kin,
+            A_scaled, prot_idx_for_A, 1.0,
+            W_data,
+            P_flat, A_flat, W_flat,
+            N, T,
+            L_alpha,
+            args.lambda_net,
+            reg_lambda=1e-4,
+        )
+
+        # 3) Run MPI+pymoo GA
+        theta_best, J_best = run_pymoo_mpi_ga(
+            theta0=theta0,
+            lower=lower,
+            upper=upper,
+            eval_theta=eval_theta,
+            pop_size=args.ga_pop_size,
+            n_gen=args.ga_n_gen,
+        )
+
+        # Only rank 0 continues with decoding and saving
+        comm = MPI.COMM_WORLD
+        if comm.Get_rank() != 0:
+            # Other ranks should exit cleanly
+            return
+
+        theta_opt = theta_best
+        final_cost = J_best
+        success = True
+        msg = "MPI+pymoo GA finished"
+
+        # Decode params and simulate once more to get P_sim
+        M = K_site_kin.shape[1]
+        (k_act, k_deact,
+         s_prod, d_deg,
+         beta_g, beta_l,
+         alpha,
+         kK_act, kK_deact,
+         k_off) = decode_theta_core(theta_opt, K, M, N)
+
+        params_decoded = {
+            "k_act":   k_act,
+            "k_deact": k_deact,
+            "s_prod":  s_prod,
+            "d_deg":   d_deg,
+            "beta_g":  float(beta_g),
+            "beta_l":  float(beta_l),
+            "alpha":   alpha,
+            "kK_act":  kK_act,
+            "kK_deact": kK_deact,
+            "k_off":   k_off,
+        }
+
+        P_sim, A_sim, _ = simulate_p(
+            t, Cg, Cl, P_scaled, theta_opt, site_prot_idx, K, K_site_kin
+        )
+        result = None  # no SciPy result object here
 
     print("[*] Optimization finished.")
-    print(f"    Success: {result.success}, message: {result.message}")
-    print(f"    Final cost (J): {result.fun:.4g}")
+    print(f"    Success: {success}, message: {msg}")
+    print(f"    Final cost (J): {final_cost:.4g}")
 
-    # 6) Save parameters & mappings
-    out_params = {
-        "proteins": np.array(proteins, dtype=object),
-        "sites": np.array(sites, dtype=object),
-        "kinases": np.array(kinases, dtype=object),
-        "K_site_kin": K_site_kin,
-        "site_prot_idx": site_prot_idx,
-        "positions": positions,
-        "k_act": params_decoded["k_act"],
-        "k_deact": params_decoded["k_deact"],
-        "s_prod": params_decoded["s_prod"],
-        "d_deg": params_decoded["d_deg"],
-        "beta_g": params_decoded["beta_g"],
-        "beta_l": params_decoded["beta_l"],
-        "alpha": params_decoded["alpha"],
-        "k_off": params_decoded["k_off"],
-        "baselines": baselines,
-        "amplitudes": amplitudes,
-        "A_proteins": np.array([] if A_proteins is None else A_proteins,
-                               dtype=object),
-        "A_baselines": np.array([] if A_baselines is None else A_baselines),
-        "A_amplitudes": np.array([] if A_amplitudes is None else A_amplitudes),
-    }
-    params_path = os.path.join(args.outdir, "fitted_params.npz")
-    np.savez(params_path, **out_params)
-    print(f"[*] Saved parameters to {params_path}")
+    if RANK == 0:
+        # 6) Save parameters & mappings
+        out_params = {
+            "proteins": np.array(proteins, dtype=object),
+            "sites": np.array(sites, dtype=object),
+            "kinases": np.array(kinases, dtype=object),
+            "K_site_kin": K_site_kin,
+            "site_prot_idx": site_prot_idx,
+            "positions": positions,
+            "k_act": params_decoded["k_act"],
+            "k_deact": params_decoded["k_deact"],
+            "s_prod": params_decoded["s_prod"],
+            "d_deg": params_decoded["d_deg"],
+            "beta_g": params_decoded["beta_g"],
+            "beta_l": params_decoded["beta_l"],
+            "alpha": params_decoded["alpha"],
+            "k_off": params_decoded["k_off"],
+            "baselines": baselines,
+            "amplitudes": amplitudes,
+            "A_proteins": np.array([] if A_proteins is None else A_proteins,
+                                   dtype=object),
+            "A_baselines": np.array([] if A_baselines is None else A_baselines),
+            "A_amplitudes": np.array([] if A_amplitudes is None else A_amplitudes),
+        }
+        params_path = os.path.join(args.outdir, "fitted_params.npz")
+        np.savez(params_path, **out_params)
+        mpi_print(f"[*] Saved parameters to {params_path}")
 
-    # 7) Reconstruct FC fits and save TSV
-    N_sites, T_points = Y.shape
-    Y_sim = np.zeros_like(Y)
-    for i in range(N_sites):
-        Y_sim[i] = baselines[i] + amplitudes[i] * P_sim[i]
+        # 7) Reconstruct FC fits and save TSV
+        N_sites, T_points = Y.shape
+        Y_sim = np.zeros_like(Y)
+        for i in range(N_sites):
+            Y_sim[i] = baselines[i] + amplitudes[i] * P_sim[i]
 
-    df_out = pd.DataFrame({
-        "Protein": [s.split("_", 1)[0] for s in sites],
-        "Residue": [s.split("_", 1)[1] for s in sites],
-    })
-    for j in range(T_points):
-        df_out[f"data_t{j}"] = Y[:, j]
-        df_out[f"sim_t{j}"] = Y_sim[:, j]
+        df_out = pd.DataFrame({
+            "Protein": [s.split("_", 1)[0] for s in sites],
+            "Residue": [s.split("_", 1)[1] for s in sites],
+        })
+        for j in range(T_points):
+            df_out[f"data_t{j}"] = Y[:, j]
+            df_out[f"sim_t{j}"] = Y_sim[:, j]
 
-    tsv_path = os.path.join(args.outdir, "fit_timeseries.tsv")
-    df_out.to_csv(tsv_path, sep="\t", index=False)
-    print(f"[*] Saved simulated vs data time series to {tsv_path}")
+        tsv_path = os.path.join(args.outdir, "fit_timeseries.tsv")
+        df_out.to_csv(tsv_path, sep="\t", index=False)
+        mpi_print(f"[*] Saved simulated vs data time series to {tsv_path}")
 
-    # 8) Goodness of fit plot
-    gof_path = os.path.join(args.outdir, "goodness_of_fit.png")
-    plot_goodness_of_fit(Y, Y_sim, gof_path)
-    print("[*] Done.")
+        # 8) Goodness of fit plot
+        gof_path = os.path.join(args.outdir, "goodness_of_fit.png")
+        plot_goodness_of_fit(Y, Y_sim, gof_path)
+        mpi_print("[*] Done.")
 
 
 if __name__ == "__main__":
