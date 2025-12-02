@@ -54,7 +54,7 @@ import re
 
 from matplotlib import pyplot as plt
 from numba import njit
-from scipy.integrate import odeint
+from scipy.integrate import odeint, solve_ivp
 from scipy.optimize import minimize
 from scipy.sparse import csr_matrix
 
@@ -186,32 +186,48 @@ def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
     return sites, proteins, site_prot_idx, positions, t, Y, A_data, A_proteins
 
 
-def scale_fc_to_unit_interval(Y):
+def scale_fc_to_unit_interval(Y, use_log=False, high_percentile=90.0):
     """
     Per site transform FC -> p in [0,1].
 
-    p_i(t) = (y_i(t) - y_i(0)) / (max_t y_i(t) - y_i(0))
+    Optionally:
+      - use_log=True: log1p-transform FC before scaling
+      - high_percentile: use e.g. 90th percentile instead of strict max
+                         to avoid a single extreme point dominating.
+
+    p_i(t) = (y_i(t) - y_i(0)) / (P_y - y_i(0))
 
     Returns
     -------
     P          : (N,T) scaled p in [0,1]
-    baselines  : (N,) y_i(0)
-    amplitudes : (N,) max_t y_i(t) - y_i(0)
+    baselines  : (N,) y_i(0)          (in transformed space if use_log)
+    amplitudes : (N,) P_y - y_i(0)
     """
     N, T = Y.shape
-    P = np.zeros_like(Y)
-    baselines = np.zeros(N)
-    amplitudes = np.zeros(N)
+    P = np.zeros_like(Y, dtype=float)
+    baselines = np.zeros(N, dtype=float)
+    amplitudes = np.zeros(N, dtype=float)
     eps = 1e-6
 
     for i in range(N):
-        y = Y[i]
+        y_raw = Y[i].astype(float)
+
+        # optional log transform to reduce skew
+        if use_log:
+            y = np.log1p(y_raw)  # monotonic, keeps order
+        else:
+            y = y_raw
+
         b = y[0]
-        A = y.max() - b
+        # use percentile instead of strict max to avoid one crazy timepoint
+        P_y = np.percentile(y, high_percentile)
+        A = P_y - b
         if A < eps:
             A = 1.0
+
         p = (y - b) / A
         p = np.clip(p, 0.0, 1.0)
+
         P[i] = p
         baselines[i] = b
         amplitudes[i] = A
@@ -357,6 +373,18 @@ def load_kinase_site_matrix(path, sites):
 
     return K_site_kin, kinases
 
+def preprocess_rowwise(Y):
+    """
+    Generic row-wise preprocessing for raw time-series Y (N x T).
+
+    Here: simple min-max normalisation per row to [0,1].
+    You can swap in log, clipping, etc. inside this function.
+    """
+    eps = 1e-8
+    Y_min = Y.min(axis=1, keepdims=True)
+    Y_max = Y.max(axis=1, keepdims=True)
+    return (Y - Y_min) / (Y_max - Y_min + eps)
+
 
 # ------------------------------------------------------------
 #  ODE MODEL
@@ -369,8 +397,7 @@ def sat(x):
     """
     return np.tanh(x)
 
-@njit(cache=True, parallel=False, fastmath=True)
-def network_rhs(x, t, params, Cg, Cl, site_prot_idx, K, K_site_kin):
+def network_rhs(x, t, params, Cg, Cl, site_prot_idx, K, K_site_kin, R):
     """
     RHS for ODE system:
 
@@ -414,7 +441,7 @@ def network_rhs(x, t, params, Cg, Cl, site_prot_idx, K, K_site_kin):
 
     # --- kinase dynamics ---
     # Use K_site_kin^T as a simple regulation matrix: kinase sees the sites it acts on
-    R = K_site_kin.T      # shape (M, N)
+    # R = K_site_kin.T      # shape (M, N)
     u = R @ p             # pooled phospho-signal per kinase (M,)
 
     # simple tanh-driven activation around [0,1]
@@ -440,8 +467,7 @@ def network_rhs(x, t, params, Cg, Cl, site_prot_idx, K, K_site_kin):
     dx[2*K+M:]       = dp
     return dx
 
-
-@njit(cache=True, parallel=True, fastmath=True)
+@njit(cache=True, fastmath=True)
 def decode_theta_core(theta, K, M, N):
     """
     Decode log-parameters from theta.
@@ -522,21 +548,10 @@ def simulate_p(t, Cg, Cl, P_data, theta,
     """
     Simulate p(t) given theta with dynamic kinase states.
 
-    theta layout:
-      [log_k_act_k (K),
-       log_k_deact_k (K),
-       log_s_prod_k (K),
-       log_d_deg_k (K),
-       log_beta_g,
-       log_beta_l,
-       log_alpha_m (M),
-       log_kK_act_m (M),
-       log_kK_deact_m (M),
-       log_k_off_i (N)]
-
     Returns
     -------
-    P_sim  : (N,T) simulated p
+    P_sim  : (N,T) simulated phosphorylation fractions
+    A_sim  : (K,T) simulated protein abundance
     params : dict of decoded (non-log) parameters
     """
     N, T = P_data.shape
@@ -561,6 +576,10 @@ def simulate_p(t, Cg, Cl, P_data, theta,
         "kK_deact": kK_deact,
         "k_off":   k_off,
     }
+    R = K_site_kin.T
+
+    def _rhs(t_curr, x_curr, params, Cg, Cl, site_prot_idx, K, K_site_kin):
+        return network_rhs(x_curr, t_curr, params, Cg, Cl, site_prot_idx, K, K_site_kin, R)
 
     # Initial conditions:
     #   S_k(0)    = 0
@@ -572,15 +591,33 @@ def simulate_p(t, Cg, Cl, P_data, theta,
     x0[2*K:2*K+M]    = 1.0      # Kdyn_m(0)
     x0[2*K+M:]       = P_data[:, 0]
 
-    X = odeint(
-        network_rhs,
-        x0,
-        t,
-        args=(params, Cg, Cl, site_prot_idx, K, K_site_kin)
+    sol = solve_ivp(
+        fun=_rhs,
+        t_span=(float(t[0]), float(t[-1])),
+        y0=x0,
+        t_eval=t,
+        args=(params, Cg, Cl, site_prot_idx, K, K_site_kin),
+        # method="BDF",       # stiff solver: try "BDF" or "Radau" or "LSODA"
+        # rtol=1e-4,
+        # atol=1e-6,
     )
-    # X shape: (T, 2K + M + N); p are last N columns
-    P_sim = X[:, 2*K+M:].T
-    return P_sim, params
+    # X = odeint(
+    #     network_rhs,
+    #     x0,
+    #     t,
+    #     args=(params, Cg, Cl, site_prot_idx, K, K_site_kin, R),
+    #     rtol=1e-4,
+    #     atol=1e-6,
+    #     mxstep=1000,
+    # )
+
+    # X shape: (T, 2K + M + N)
+    # A_sim = X[:, K:2*K].T          # (K,T)
+    # P_sim = X[:, 2*K+M:].T         # (N,T)
+    X = sol.y.T
+    A_sim = X[:, K:2*K].T          # (K,T)
+    P_sim = X[:, 2*K+M:].T         # (N,T)
+    return P_sim, A_sim, params
 
 # ------------------------------------------------------------
 #  FITTING
@@ -588,19 +625,68 @@ def simulate_p(t, Cg, Cl, P_data, theta,
 
 def objective_slsqp(theta, t, Cg, Cl, P_data,
                     site_prot_idx, K, K_site_kin,
-                    reg_lambda=1e-3):
+                    A_scaled=None, prot_idx_for_A=None, w_A=1.0,
+                    W_data=None,
+                    P_flat=None, A_flat=None, W_flat=None,
+                    N=None, T=None,
+                    reg_lambda=1e-4):
     """
-    Scalar objective for SLSQP:
-      J(theta) = ||P_sim - P_data||^2 + reg_lambda * ||theta||^2
+    J(theta) = ||P_sim - P_data||^2
+               + w_A * ||A_sim(proteins_with_data) - A_scaled||^2
+               + reg_lambda * ||theta||^2
+
+    Uses pre-flattened views to minimise Python overhead.
     """
-    P_sim, _ = simulate_p(
+    if N is None or T is None:
+        N, T = P_data.shape
+    # integrate ODE
+    P_sim, A_sim, _ = simulate_p(
         t, Cg, Cl, P_data, theta, site_prot_idx, K, K_site_kin
     )
-    return np.sum((P_data - P_sim) ** 2) + reg_lambda * np.sum(theta ** 2)
+
+    # ----- phosphorylation loss -----
+    if P_flat is None:
+        # fallback: no precomputed flat arrays
+        diff_p = (P_sim - P_data).ravel()
+        if W_data is None:
+            loss_p = diff_p @ diff_p
+        else:
+            w_flat = W_data.ravel()
+            diff_p *= np.sqrt(w_flat)
+            loss_p = diff_p @ diff_p
+    else:
+        # use pre-flattened data
+        diff_p = P_sim.ravel() - P_flat  # allocates one vector
+        if W_flat is None:
+            loss_p = diff_p @ diff_p
+        else:
+            # in-place weight: diff_p <- sqrt(w) * diff_p
+            np.multiply(diff_p, np.sqrt(W_flat), out=diff_p)
+            loss_p = diff_p @ diff_p
+
+    # ----- optional abundance loss -----
+    loss_A = 0.0
+    if A_scaled is not None and prot_idx_for_A is not None and len(prot_idx_for_A) > 0:
+        # A_sim: (K,T); take only rows with data
+        A_model = A_sim[prot_idx_for_A, :]  # (P,T)
+        if A_flat is None:
+            diff_A = (A_model - A_scaled).ravel()
+        else:
+            diff_A = A_model.ravel() - A_flat
+        loss_A = diff_A @ diff_A
+
+    # ----- regularisation -----
+    reg = reg_lambda * (theta @ theta)
+
+    return loss_p + w_A * loss_A + reg
 
 
 def fit_network(t, Cg, Cl, P_data,
-                site_prot_idx, K, K_site_kin):
+                site_prot_idx, K, K_site_kin,
+                A_scaled=None, prot_idx_for_A=None, w_A=1.0,
+                W_data=None,
+                P_flat=None, A_flat=None, W_flat=None,
+                N=None, T=None):
     """
     Fit parameters with SLSQP:
 
@@ -615,8 +701,11 @@ def fit_network(t, Cg, Cl, P_data,
 
       Per-site (i = 0..N-1):
         k_off_i
+
+      Plus optional protein-abundance loss if A_scaled is given.
     """
-    N, T = P_data.shape
+    if N is None or T is None:
+        N, T = P_data.shape
     M = K_site_kin.shape[1]
 
     # Initial guesses
@@ -628,7 +717,7 @@ def fit_network(t, Cg, Cl, P_data,
     beta_l0  = 0.05
     alpha0   = np.full(M, 0.1)
 
-    # NEW: kinase dynamics guesses
+    # kinase dynamics guesses
     kK_act0   = np.full(M, 0.5)
     kK_deact0 = np.full(M, 0.1)
 
@@ -648,13 +737,18 @@ def fit_network(t, Cg, Cl, P_data,
     ])
 
     lower = np.log(1e-4) * np.ones_like(theta0)
-    upper = np.log(10.0) * np.ones_like(theta0)
+    upper = np.log(2.0) * np.ones_like(theta0)
     bounds = list(zip(lower, upper))
 
     res = minimize(
         objective_slsqp,
         theta0,
-        args=(t, Cg, Cl, P_data, site_prot_idx, K, K_site_kin),
+        args=(t, Cg, Cl, P_data,
+              site_prot_idx, K, K_site_kin,
+              A_scaled, prot_idx_for_A, w_A,
+              W_data,
+              P_flat, A_flat, W_flat,
+              N, T),
         method="SLSQP",
         bounds=bounds,
         options={
@@ -664,11 +758,13 @@ def fit_network(t, Cg, Cl, P_data,
     )
 
     theta_opt = res.x
-    P_sim, params_decoded = simulate_p(
+    P_sim, A_sim, params_decoded = simulate_p(
         t, Cg, Cl, P_data, theta_opt, site_prot_idx, K, K_site_kin
     )
 
+    # we don’t return A_sim yet to keep the external API unchanged
     return theta_opt, params_decoded, P_sim, res
+
 
 # ------------------------------------------------------------
 #  HELPERS: CROSSTALK RESTRICTION, PLOTTING
@@ -763,6 +859,13 @@ def main():
     print(f"[*] Loaded {len(sites)} sites from {len(proteins)} proteins, "
           f"{Y.shape[1]} timepoints.")
 
+    # --- PREPROCESS raw site-level data row-wise to [0,1] ---
+    Y = preprocess_rowwise(Y)
+
+    # --- PREPROCESS protein-level abundance data ---
+    if A_data is not None:
+        A_data = preprocess_rowwise(A_data)
+
     # 1b) Optionally restrict to sites present in crosstalk TSV
     if args.crosstalk_tsv is not None:
         allowed_sites = load_allowed_sites_from_crosstalk(args.crosstalk_tsv)
@@ -814,17 +917,35 @@ def main():
         prot_idx_for_A = None
 
     # 2) Scale FC -> p in [0,1] for sites
-    P_scaled, baselines, amplitudes = scale_fc_to_unit_interval(Y)
+    P_scaled, baselines, amplitudes = scale_fc_to_unit_interval(
+        Y, use_log=False, high_percentile=90.0
+    )
     print("[*] Scaled site-level FC data to p in [0,1].")
 
     # 2b) Scale protein-level FC -> A_scaled in [0,1] (if present)
     if A_data is not None and prot_idx_for_A is not None and len(A_data) > 0:
-        A_scaled, A_baselines, A_amplitudes = scale_fc_to_unit_interval(A_data)
+        A_scaled, A_baselines, A_amplitudes = scale_fc_to_unit_interval(
+            A_data, use_log=False, high_percentile=90.0
+        )
         print(f"[*] Scaled protein-level FC data for {A_data.shape[0]} proteins.")
     else:
         A_scaled = None
         A_baselines = None
         A_amplitudes = None
+
+    # 2c) Build weights for phosphorylation loss:
+    # emphasise higher FC points (in original FC space Y)
+    # w_fac controls how strongly high FC are weighted
+    w_fac = 3.0  # tune (0 = no weighting, >0 = more emphasis)
+    Y_min = Y.min()
+    Y_max = Y.max()
+    denom = (Y_max - Y_min) if (Y_max > Y_min) else 1.0
+
+    # normalised FC in [0,1]
+    Y_norm = (Y - Y_min) / denom
+
+    # weights ≥ 1, larger for bigger FC
+    W_data = 1.0 + w_fac * Y_norm
 
     # 3) Build C matrices from DBs (on the filtered site set)
     Cg, Cl = build_C_matrices_from_db(
@@ -851,9 +972,24 @@ def main():
 
     # 5) Fit network (sites + optional abundance)
     K = len(proteins)
+
+    # Precompute flattened views for speed in objective
+    N, T = P_scaled.shape
+    P_flat = P_scaled.ravel().copy()
+    W_flat = W_data.ravel().copy() if W_data is not None else None
+
+    if A_scaled is not None and prot_idx_for_A is not None:
+        # build a flattened A_data view in the same ordering used in objective
+        A_flat = A_scaled.ravel().copy()
+    else:
+        A_flat = None
+
     theta_opt, params_decoded, P_sim, result = fit_network(
         t, Cg, Cl, P_scaled, site_prot_idx, K, K_site_kin,
-        A_scaled=A_scaled, prot_idx_for_A=prot_idx_for_A, w_A=1.0
+        A_scaled=A_scaled, prot_idx_for_A=prot_idx_for_A, w_A=1.0,
+        W_data=W_data,
+        P_flat=P_flat, A_flat=A_flat, W_flat=W_flat,
+        N=N, T=T
     )
 
     print("[*] Optimization finished.")
