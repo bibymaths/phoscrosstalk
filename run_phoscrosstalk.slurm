@@ -32,7 +32,7 @@ export OPENBLAS_NUM_THREADS=1
 echo "Starting MPI job with $SLURM_NTASKS tasks..."
 
 mpiexec -n $SLURM_NTASKS python -m mpi4py.futures scripts/fit_hpc.py \
-  --data data/input1.csv \
+  --data data/filtered_input1.csv \
   --ptm-intra data/ptm_intra.db \
   --ptm-inter data/ptm_inter.db \
   --kea-ks-table data/ks_psite_table.tsv \
