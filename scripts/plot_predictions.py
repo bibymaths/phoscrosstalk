@@ -17,7 +17,7 @@ import os
 
 def main():
     parser = argparse.ArgumentParser(description="Plot individual proteins (model vs data) + their phosphosites")
-    parser.add_argument("--sim", default= "../network_fit_intelbounds/fit_timeseries.tsv", help="Path to fit_timeseries.tsv")
+    parser.add_argument("--sim", default= "../network_fit_pymoo/reg0p001_L25p0_lnet0p001/fit_timeseries.tsv", help="Path to fit_timeseries.tsv")
     parser.add_argument("--outdir", default="protein_plots", help="Output directory for PNGs")
     args = parser.parse_args()
 

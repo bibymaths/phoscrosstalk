@@ -356,6 +356,9 @@ def decode_theta(theta):
             gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net)
 
 def network_rhs(x, t, theta, Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha, kin_to_prot_idx):
+    # clip negative states to zero
+    x = np.maximum(x, 0.0)
+
     K = GLOBAL_K
     M = GLOBAL_M
     N = GLOBAL_N
@@ -561,7 +564,7 @@ def main():
     parser.add_argument("--lambda-net", type=float, default=0.0)
     parser.add_argument("--length-scale", type=float, default=50.0)
     parser.add_argument("--reg-lambda", type=float, default=0.01, help="L2 regularization lambda")
-    parser.add_argument("--pop-size", type=int, default=200, help="Population size multiplier for CMA-ES")
+    parser.add_argument("--pop-size", type=int, default=100, help="Population size multiplier for CMA-ES")
     parser.add_argument("--cores", type=int, default=60, help="Number of cores for multiprocessing")
     args = parser.parse_args()
 
