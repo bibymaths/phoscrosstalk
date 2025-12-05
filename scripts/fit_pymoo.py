@@ -466,7 +466,7 @@ class NetworkOptimizationProblem(ElementwiseProblem):
                  **kwargs):
 
         n_var = len(xl)
-        super().__init__(n_var=n_var, n_obj=3, n_ieq_constr=3, xl=xl, xu=xu, **kwargs)
+        super().__init__(n_var=n_var, n_obj=3, n_ieq_constr=0, xl=xl, xu=xu, **kwargs)
 
         self.t = t
         self.P_data = P_data
@@ -539,26 +539,26 @@ class NetworkOptimizationProblem(ElementwiseProblem):
 
         out["F"] = np.array([f1, f2, f3])
 
-        # --------- PARAMETER INEQUALITY CONSTRAINTS (G <= 0) ---------
-
-        # 1) degradation slower than deactivation: d_deg[k] <= rho * k_deact[k]
-        rho = 0.2
-        c_degrade = np.max(d_deg - rho * k_deact)
-
-        # 2) alpha L2 norm cap: ||alpha||_2 <= alpha_max
-        alpha_max = 20.0
-        c_alpha_norm = np.linalg.norm(alpha) - alpha_max
-
-        # 3) kinase time scales ~ signaling time scale
-        k_act_mean = np.mean(k_act)
-        r = 10.0  # one order of magnitude
-        c_kK_upper = np.max(kK_act - r * k_act_mean)
-        c_kK_lower = np.max((k_act_mean / r) - kK_act)
-        c_kK_deact_upper = np.max(kK_deact - r * k_act_mean)
-        c_kK_deact_lower = np.max((k_act_mean / r) - kK_deact)
-        c_kK = max(c_kK_upper, c_kK_lower, c_kK_deact_upper, c_kK_deact_lower)
-
-        out["G"] = np.array([c_degrade, c_alpha_norm, c_kK])
+        # # --------- PARAMETER INEQUALITY CONSTRAINTS (G <= 0) ---------
+        #
+        # # 1) degradation slower than deactivation: d_deg[k] <= rho * k_deact[k]
+        # rho = 0.2
+        # c_degrade = np.max(d_deg - rho * k_deact)
+        #
+        # # 2) alpha L2 norm cap: ||alpha||_2 <= alpha_max
+        # alpha_max = 20.0
+        # c_alpha_norm = np.linalg.norm(alpha) - alpha_max
+        #
+        # # 3) kinase time scales ~ signaling time scale
+        # k_act_mean = np.mean(k_act)
+        # r = 10.0  # one order of magnitude
+        # c_kK_upper = np.max(kK_act - r * k_act_mean)
+        # c_kK_lower = np.max((k_act_mean / r) - kK_act)
+        # c_kK_deact_upper = np.max(kK_deact - r * k_act_mean)
+        # c_kK_deact_lower = np.max((k_act_mean / r) - kK_deact)
+        # c_kK = max(c_kK_upper, c_kK_lower, c_kK_deact_upper, c_kK_deact_lower)
+        #
+        # out["G"] = np.array([c_degrade, c_alpha_norm, c_kK])
 
 def bio_score(theta):
     (k_act, k_deact, s_prod, d_deg,
