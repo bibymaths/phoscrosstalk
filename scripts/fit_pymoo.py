@@ -22,8 +22,6 @@ import pandas as pd
 from matplotlib import pyplot as plt
 
 # Pymoo Algorithm imports
-from pymoo.algorithms.soo.nonconvex.cmaes import CMAES
-from pymoo.algorithms.soo.nonconvex.isres import ISRES
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.algorithms.moo.nsga3 import NSGA3
 from pymoo.algorithms.moo.unsga3 import UNSGA3
@@ -343,47 +341,94 @@ def decode_theta(theta):
     return (k_act, k_deact, s_prod, d_deg, beta_g, beta_l, alpha, kK_act, kK_deact, k_off)
 
 
-def network_rhs(x, t, theta, Cg, Cl, site_prot_idx, K_site_kin, R):
-    """
-    RHS compatible with scipy.integrate.odeint.
-    Signature must be func(x, t, *args).
-    """
+def network_rhs(x, t, theta, Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha, kin_to_prot_idx):
     K = GLOBAL_K
     M = GLOBAL_M
     N = GLOBAL_N
 
-    (k_act, k_deact, s_prod, d_deg, beta_g, beta_l, alpha, kK_act, kK_deact, k_off) = decode_theta(theta)
+    (k_act, k_deact, s_prod, d_deg,
+     beta_g, beta_l, alpha,
+     kK_act, kK_deact, k_off) = decode_theta(theta)
 
-    S = x[0:K]
-    A = x[K:2 * K]
-    Kdyn = x[2 * K:2 * K + M]
-    p = x[2 * K + M:2 * K + M + N]
+    S    = x[0:K]
+    A    = x[K:2*K]
+    Kdyn = x[2*K:2*K+M]
+    p    = x[2*K+M:2*K+M+N]
 
-    dS = k_act * (1.0 - S) - k_deact * S
-    dA = s_prod - d_deg * A
+    # ---------- summaries ----------
+    p_sum   = np.bincount(site_prot_idx, weights=p, minlength=K)
+    p_count = np.bincount(site_prot_idx, minlength=K)
+    p_mean_by_prot = p_sum / np.maximum(p_count, 1)
 
-    coup_g = beta_g * (Cg @ p)
-    coup_l = beta_l * (Cl @ p)
-    coup = np.tanh(coup_g + coup_l)
+    p_kin = R @ p  # M-dim
 
-    u = R @ p
-    dK = kK_act * np.tanh(u) * (1.0 - Kdyn) - kK_deact * Kdyn
+    # site-level context
+    coup_g_sites = Cg @ p
+    coup_l_sites = Cl @ p
+    coup_sites   = np.tanh(beta_g * coup_g_sites + beta_l * coup_l_sites)
 
+    ctx_sum   = np.bincount(site_prot_idx, weights=coup_sites, minlength=K)
+    ctx_mean_by_prot = ctx_sum / np.maximum(p_count, 1)
+
+    # ---------- S dynamics ----------
+    gamma_S_p   = 1.0
+    gamma_S_ctx = 0.5
+
+    effective_drive_S = 1.0 + gamma_S_p * p_mean_by_prot + gamma_S_ctx * ctx_mean_by_prot
+    effective_drive_S = np.clip(effective_drive_S, 0.0, 10.0)
+
+    dS = k_act * effective_drive_S * (1.0 - S) - k_deact * S
+
+    # ---------- A dynamics ----------
+    gamma_A_S = 0.5
+    gamma_A_p = 0.5
+
+    s_eff = s_prod * (1.0 + gamma_A_S * S)
+    s_eff = np.clip(s_eff, 0.0, 10.0)
+
+    deg_mod = 1.0 + gamma_A_p * p_mean_by_prot
+    deg_mod = np.clip(deg_mod, 0.0, 10.0)
+
+    dA = s_eff - d_deg * deg_mod * A
+
+    # ---------- Kdyn dynamics ----------
+    gamma_K_net = 0.5
+    gamma_K_S   = 0.3
+    gamma_K_A   = 0.3
+
+    u_sub = p_kin
+    u_net = -gamma_K_net * (L_alpha @ Kdyn)
+
+    S_for_kin = np.zeros(M)
+    A_for_kin = np.zeros(M)
+    for j in range(M):
+        p_idx = kin_to_prot_idx[j]
+        if p_idx >= 0:
+            S_for_kin[j] = S[p_idx]
+            A_for_kin[j] = A[p_idx]
+
+    u_SA = gamma_K_S * S_for_kin + gamma_K_A * A_for_kin
+
+    u_total = u_sub + u_net + u_SA
+    u_total = np.clip(u_total, -10.0, 10.0)
+
+    dK = kK_act * np.tanh(u_total) * (1.0 - Kdyn) - kK_deact * Kdyn
+
+    # ---------- p dynamics ----------
     k_on_eff = K_site_kin @ (alpha * Kdyn)
-    S_local = S[site_prot_idx]
-    A_local = A[site_prot_idx]
+    S_local  = S[site_prot_idx]
+    A_local  = A[site_prot_idx]
 
-    v_on = (k_on_eff * S_local * A_local + coup) * (1.0 - p)
+    v_on  = (k_on_eff * S_local * A_local + coup_sites) * (1.0 - p)
     v_off = k_off * p
-    dp = v_on - v_off
+    dp    = v_on - v_off
 
     return np.concatenate([dS, dA, dK, dp])
 
-
-def simulate_p_scipy(t_arr, P_data0, theta, Cg, Cl, site_prot_idx, K_site_kin, R):
-    """
-    Simulates using scipy.integrate.odeint (LSODA).
-    """
+def simulate_p_scipy(t_arr, P_data0, theta,
+                     Cg, Cl, site_prot_idx,
+                     K_site_kin, R,
+                     L_alpha, kin_to_prot_idx):
     K = GLOBAL_K
     M = GLOBAL_M
     N = GLOBAL_N
@@ -394,15 +439,18 @@ def simulate_p_scipy(t_arr, P_data0, theta, Cg, Cl, site_prot_idx, K_site_kin, R
     x0[2 * K:2 * K + M] = 1.0
     x0[2 * K + M:] = P_data0[:, 0]
 
-    # odeint(func, y0, t, args=())
-    # Note: t_arr must be sorted and start with the initial time for x0.
-    xs = odeint(network_rhs, x0, t_arr, args=(theta, Cg, Cl, site_prot_idx, K_site_kin, R))
+    xs = odeint(
+        network_rhs,
+        x0,
+        t_arr,
+        args=(theta, Cg, Cl, site_prot_idx,
+              K_site_kin, R, L_alpha, kin_to_prot_idx)
+    )
 
     A_sim = xs[:, K:2 * K].T
     P_sim = xs[:, 2 * K + M:].T
 
     return P_sim, A_sim
-
 
 # ------------------------------------------------------------
 #  PYMOO PROBLEM DEFINITION
@@ -411,14 +459,14 @@ def simulate_p_scipy(t_arr, P_data0, theta, Cg, Cl, site_prot_idx, K_site_kin, R
 class NetworkOptimizationProblem(ElementwiseProblem):
     def __init__(self,
                  t, P_data, Cg, Cl, site_prot_idx, K_site_kin, R,
-                 A_scaled, prot_idx_for_A, W_data, W_data_prot, L_alpha,
+                 A_scaled, prot_idx_for_A, W_data, W_data_prot,
+                 L_alpha, kin_to_prot_idx,
                  lambda_net, reg_lambda,
                  xl, xu,
                  **kwargs):
 
         n_var = len(xl)
-        # 3 objectives, 3 inequality constraints
-        super().__init__(n_var=n_var, n_obj=3, n_ieq_constr=0, xl=xl, xu=xu, **kwargs)
+        super().__init__(n_var=n_var, n_obj=3, n_ieq_constr=3, xl=xl, xu=xu, **kwargs)
 
         self.t = t
         self.P_data = P_data
@@ -432,10 +480,10 @@ class NetworkOptimizationProblem(ElementwiseProblem):
         self.W_data = W_data
         self.W_data_prot = W_data_prot
         self.L_alpha = L_alpha
+        self.kin_to_prot_idx = kin_to_prot_idx
         self.lambda_net = lambda_net
         self.reg_lambda = reg_lambda
 
-        # precompute sizes for normalization
         self.n_p = max(1, self.P_data.size)
         self.n_A = max(1, self.A_scaled.size)
         self.n_var = n_var
@@ -447,7 +495,8 @@ class NetworkOptimizationProblem(ElementwiseProblem):
         P_sim, A_sim = simulate_p_scipy(
             self.t, self.P_data, theta,
             self.Cg, self.Cl, self.site_prot_idx,
-            self.K_site_kin, self.R
+            self.K_site_kin, self.R,
+            self.L_alpha, self.kin_to_prot_idx
         )
 
         # ---- safety check: explosion / NaNs ----
@@ -490,26 +539,26 @@ class NetworkOptimizationProblem(ElementwiseProblem):
 
         out["F"] = np.array([f1, f2, f3])
 
-        # # --------- PARAMETER INEQUALITY CONSTRAINTS (G <= 0) ---------
-        #
-        # # 1) degradation slower than deactivation: d_deg[k] <= rho * k_deact[k]
-        # rho = 0.2
-        # c_degrade = np.max(d_deg - rho * k_deact)
-        #
-        # # 2) alpha L2 norm cap: ||alpha||_2 <= alpha_max
-        # alpha_max = 20.0
-        # c_alpha_norm = np.linalg.norm(alpha) - alpha_max
-        #
-        # # 3) kinase time scales ~ signaling time scale
-        # k_act_mean = np.mean(k_act)
-        # r = 10.0  # one order of magnitude
-        # c_kK_upper = np.max(kK_act - r * k_act_mean)
-        # c_kK_lower = np.max((k_act_mean / r) - kK_act)
-        # c_kK_deact_upper = np.max(kK_deact - r * k_act_mean)
-        # c_kK_deact_lower = np.max((k_act_mean / r) - kK_deact)
-        # c_kK = max(c_kK_upper, c_kK_lower, c_kK_deact_upper, c_kK_deact_lower)
-        #
-        # out["G"] = np.array([c_degrade, c_alpha_norm, c_kK])
+        # --------- PARAMETER INEQUALITY CONSTRAINTS (G <= 0) ---------
+
+        # 1) degradation slower than deactivation: d_deg[k] <= rho * k_deact[k]
+        rho = 0.2
+        c_degrade = np.max(d_deg - rho * k_deact)
+
+        # 2) alpha L2 norm cap: ||alpha||_2 <= alpha_max
+        alpha_max = 20.0
+        c_alpha_norm = np.linalg.norm(alpha) - alpha_max
+
+        # 3) kinase time scales ~ signaling time scale
+        k_act_mean = np.mean(k_act)
+        r = 10.0  # one order of magnitude
+        c_kK_upper = np.max(kK_act - r * k_act_mean)
+        c_kK_lower = np.max((k_act_mean / r) - kK_act)
+        c_kK_deact_upper = np.max(kK_deact - r * k_act_mean)
+        c_kK_deact_lower = np.max((k_act_mean / r) - kK_deact)
+        c_kK = max(c_kK_upper, c_kK_lower, c_kK_deact_upper, c_kK_deact_lower)
+
+        out["G"] = np.array([c_degrade, c_alpha_norm, c_kK])
 
 def bio_score(theta):
     (k_act, k_deact, s_prod, d_deg,
@@ -529,102 +578,6 @@ def bio_score(theta):
     term2 = (np.log10(median_t_protein) - np.log10(T_protein_prior))**2
 
     return term1 + term2
-
-# Single objective problem with inequality constraints works with ISRES only
-
-# class NetworkOptimizationProblem(ElementwiseProblem):
-#     def __init__(self,
-#                  t, P_data, Cg, Cl, site_prot_idx, K_site_kin, R,
-#                  A_scaled, prot_idx_for_A, W_data, W_data_prot, L_alpha,
-#                  lambda_net, reg_lambda,
-#                  xl, xu,
-#                  **kwargs):
-#
-#         n_var = len(xl)
-#         super().__init__(n_var=n_var, n_obj=1, n_ieq_constr=3, xl=xl, xu=xu, **kwargs)
-#
-#         self.t = t
-#         self.P_data = P_data
-#         self.Cg = Cg
-#         self.Cl = Cl
-#         self.site_prot_idx = site_prot_idx
-#         self.K_site_kin = K_site_kin
-#         self.R = R
-#         self.A_scaled = A_scaled
-#         self.prot_idx_for_A = prot_idx_for_A
-#         self.W_data = W_data
-#         self.W_data_prot = W_data_prot
-#         self.L_alpha = L_alpha
-#         self.lambda_net = lambda_net
-#         self.reg_lambda = reg_lambda
-#
-#     def _evaluate(self, x, out, *args, **kwargs):
-#         theta = x
-#
-#         # Simulation
-#         P_sim, A_sim = simulate_p_scipy(
-#             self.t, self.P_data, theta,
-#             self.Cg, self.Cl, self.site_prot_idx,
-#             self.K_site_kin, self.R
-#         )
-#
-#         # Site loss
-#         diff_p = (self.P_data - P_sim) * np.sqrt(self.W_data)
-#
-#         # Clip residuals to avoid absurd values dominating numerically
-#         diff_p = np.clip(diff_p, -1e6, 1e6)
-#         loss_p = np.square(diff_p, dtype=np.float64).sum()
-#
-#         # Protein abundance loss
-#         if self.A_scaled.size > 0:
-#             A_model = A_sim[self.prot_idx_for_A, :]
-#             diff_A = (self.A_scaled - A_model) * np.sqrt(self.W_data_prot)
-#             diff_A = np.clip(diff_A, -1e6, 1e6)
-#             loss_A = np.square(diff_A, dtype=np.float64).sum()
-#         else:
-#             loss_A = 0.0
-#
-#
-#         # L2 Reg on params
-#         reg = self.reg_lambda * np.dot(theta, theta)
-#
-#         # Network Reg
-#         (k_act, k_deact, s_prod, d_deg, beta_g, beta_l, alpha, kK_act, kK_deact, k_off) = decode_theta(theta)
-#         reg_net = self.lambda_net * (alpha @ (self.L_alpha @ alpha))
-#
-#         total_loss = loss_p + loss_A + reg + reg_net
-#
-#         # Normalize by number of data points and output
-#         # (to keep loss scale consistent across datasets)
-#
-#         n_data_points = self.P_data.size + self.A_scaled.size
-#         if n_data_points > 0:
-#             total_loss /= n_data_points
-#
-#         # Pymoo expects minimization
-#         out["F"] = total_loss
-#
-#         # --------- PARAMETER INEQUALITY CONSTRAINTS (G <= 0) ---------
-#
-#         # 1) degradation slower than deactivation: d_deg[k] <= rho * k_deact[k]
-#         rho = 0.2
-#         c_degrade = np.max(d_deg - rho * k_deact)
-#
-#         # 2) alpha L2 norm cap: ||alpha||_2 <= alpha_max
-#         alpha_max = 20.0
-#         c_alpha_norm = np.linalg.norm(alpha) - alpha_max
-#
-#         # 3) kinase time scales ~ signaling time scale
-#         k_act_mean = np.mean(k_act)
-#         r = 10.0  # one order of magnitude
-#         c_kK_upper = np.max(kK_act - r * k_act_mean)
-#         c_kK_lower = np.max((k_act_mean / r) - kK_act)
-#         c_kK_deact_upper = np.max(kK_deact - r * k_act_mean)
-#         c_kK_deact_lower = np.max((k_act_mean / r) - kK_deact)
-#         c_kK = max(c_kK_upper, c_kK_lower, c_kK_deact_upper, c_kK_deact_lower)
-#
-#         out["G"] = np.array([c_degrade, c_alpha_norm, c_kK])
-#
 
 # ------------------------------------------------------------
 #  MAIN
@@ -741,6 +694,13 @@ def main():
     if args.unified_graph_pkl and args.lambda_net > 0:
         L_alpha = build_alpha_laplacian_from_unified_graph(args.unified_graph_pkl, kinases)
 
+    # After you have `proteins` and `kinases`
+    prot_map_all = {p: i for i, p in enumerate(proteins)}
+    kin_to_prot_idx = np.array(
+        [prot_map_all.get(k, -1) for k in kinases],
+        dtype=int
+    )
+
     # Globals
     global GLOBAL_K, GLOBAL_M, GLOBAL_N
     GLOBAL_K, GLOBAL_N = len(proteins), len(sites)
@@ -829,21 +789,11 @@ def main():
     problem = NetworkOptimizationProblem(
         t, P_scaled, Cg, Cl, site_prot_idx, K_site_kin, R,
         A_scaled, prot_idx_for_A, W_data, W_data_prot, L_alpha,
+        kin_to_prot_idx,
         args.lambda_net, 1e-4,
         xl, xu,
         elementwise_runner=runner
     )
-
-    # Termination for single objective
-
-    # termination = DefaultSingleObjectiveTermination(
-    #     xtol=1e-8,
-    #     cvtol=1e-6,
-    #     ftol=1e-6,
-    #     period=20,
-    #     n_max_gen=1000,
-    #     n_max_evals=100000
-    # )
 
     # Termination for multi-objective
 
@@ -851,29 +801,13 @@ def main():
         xtol=1e-8,
         cvtol=1e-6,
         ftol=0.0025,
-        period=30,
+        period=10,
         n_max_gen=1000,
         n_max_evals=100000
     )
 
     print(f"[*] Starting Optimization...")
 
-    # -------------------------------
-    # Single Objective Algorithms
-    # -------------------------------
-
-    # Covariance matrix adaptation evolution strategy (CMA-ES)
-
-    # algorithm = CMAES(
-    #     # x0=np.random.random(problem.n_var),
-    #     parallelize=True,
-    #     incpopsize=args.pop_size,
-    #     restarts=50,
-    # )
-
-    # Improved Stochastic Ranking Evolution Strategy (ISRES)
-
-    # algorithm = ISRES(n_offsprings=500, rule=1.0 / 7.0, gamma=0.85, alpha=0.2)
 
     # -------------------------------
     # Multi-Objective Algorithms
@@ -907,8 +841,6 @@ def main():
 
     print(f"[*] Optimization finished. Time: {res.exec_time}")
 
-    # theta_opt = res.X
-
     F = res.F  # (n_points, 3) Pareto front in objective space
     X = res.X  # decision variables on Pareto front
 
@@ -932,7 +864,11 @@ def main():
     print(f"    Final Loss (F): {F_best}")
 
     # Final Simulation and Saving
-    P_sim, A_sim = simulate_p_scipy(t, P_scaled, theta_opt, Cg, Cl, site_prot_idx, K_site_kin, R)
+    P_sim, A_sim = simulate_p_scipy(
+        t, P_scaled, theta_opt,
+        Cg, Cl, site_prot_idx, K_site_kin, R,
+        L_alpha, kin_to_prot_idx
+    )
 
     # Save
     (k_act, k_deact, s_prod, d_deg, beta_g, beta_l, alpha, kK_act, kK_deact, k_off) = decode_theta(theta_opt)
