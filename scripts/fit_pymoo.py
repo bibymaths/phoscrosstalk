@@ -16,14 +16,13 @@ import re
 import sqlite3
 import pickle
 import multiprocessing
-
+import math
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
+import seaborn as sns
 
 # Pymoo Algorithm imports
-from pymoo.algorithms.soo.nonconvex.cmaes import CMAES
-from pymoo.algorithms.soo.nonconvex.isres import ISRES
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.algorithms.moo.nsga3 import NSGA3
 from pymoo.algorithms.moo.unsga3 import UNSGA3
@@ -33,10 +32,11 @@ from pymoo.operators.sampling.lhs import LHS
 from pymoo.optimize import minimize
 from pymoo.core.problem import ElementwiseProblem
 from pymoo.parallelization.starmap import StarmapParallelization
-from pymoo.termination.default import DefaultSingleObjectiveTermination, DefaultMultiObjectiveTermination
+from pymoo.termination.default import DefaultMultiObjectiveTermination
 
 import warnings
 from scipy.integrate import odeint
+from numba import njit
 from scipy.integrate import ODEintWarning
 
 warnings.filterwarnings("ignore", category=ODEintWarning)
@@ -57,6 +57,15 @@ DEFAULT_TIMEPOINTS = np.array(
 
 EPS = 1e-8
 
+
+@njit(cache=True, fastmath=True)
+def clip_scalar(x, lo, hi):
+    if x < lo:
+        return lo
+    elif x > hi:
+        return hi
+    else:
+        return x
 
 def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
     """
@@ -302,122 +311,386 @@ def build_alpha_laplacian_from_unified_graph(pkl_path, kinases, weight_attr="wei
 #  NUMPY/SCIPY ODE MODEL
 # ------------------------------------------------------------
 
-def decode_theta(theta):
-    K = GLOBAL_K
-    M = GLOBAL_M
-    N = GLOBAL_N
+@njit(cache=True, fastmath=True)
+def decode_theta(theta, K, M, N):
     idx0 = 0
 
-    log_k_act = theta[idx0:idx0 + K];
-    idx0 += K
-    log_k_deact = theta[idx0:idx0 + K];
-    idx0 += K
-    log_s_prod = theta[idx0:idx0 + K];
-    idx0 += K
-    log_d_deg = theta[idx0:idx0 + K];
-    idx0 += K
-    log_beta_g = theta[idx0];
-    idx0 += 1
-    log_beta_l = theta[idx0];
-    idx0 += 1
-    log_alpha = theta[idx0:idx0 + M];
-    idx0 += M
-    log_kK_act = theta[idx0:idx0 + M];
-    idx0 += M
-    log_kK_deact = theta[idx0:idx0 + M];
-    idx0 += M
-    log_k_off = theta[idx0:idx0 + N]
+    # protein rates (arrays) – KEEP np.clip here
+    log_k_act   = theta[idx0:idx0 + K]; idx0 += K
+    log_k_deact = theta[idx0:idx0 + K]; idx0 += K
+    log_s_prod  = theta[idx0:idx0 + K]; idx0 += K
+    log_d_deg   = theta[idx0:idx0 + K]; idx0 += K
 
-    # Numpy exp and clip
-    k_act = np.exp(np.clip(log_k_act, -20, 10))
-    k_deact = np.exp(np.clip(log_k_deact, -20, 10))
-    s_prod = np.exp(np.clip(log_s_prod, -20, 10))
-    d_deg = np.exp(np.clip(log_d_deg, -20, 10))
-    beta_g = np.exp(np.clip(log_beta_g, -20, 10))
-    beta_l = np.exp(np.clip(log_beta_l, -20, 10))
-    alpha = np.exp(np.clip(log_alpha, -20, 10))
-    kK_act = np.exp(np.clip(log_kK_act, -20, 10))
-    kK_deact = np.exp(np.clip(log_kK_deact, -20, 10))
-    k_off = np.exp(np.clip(log_k_off, -20, 10))
+    # coupling (scalars)
+    log_beta_g  = theta[idx0]; idx0 += 1
+    log_beta_l  = theta[idx0]; idx0 += 1
 
-    return (k_act, k_deact, s_prod, d_deg, beta_g, beta_l, alpha, kK_act, kK_deact, k_off)
+    # kinase params (arrays)
+    log_alpha    = theta[idx0:idx0 + M]; idx0 += M
+    log_kK_act   = theta[idx0:idx0 + M]; idx0 += M
+    log_kK_deact = theta[idx0:idx0 + M]; idx0 += M
 
+    # site params (array)
+    log_k_off = theta[idx0:idx0 + N]; idx0 += N
 
-def network_rhs(x, t, theta, Cg, Cl, site_prot_idx, K_site_kin, R):
+    # raw gamma (array of 4 scalars)
+    raw_gamma = theta[idx0:idx0 + 4]
+
+    # ---- arrays: np.clip is fine in numba ----
+    k_act   = np.exp(np.clip(log_k_act,   -20.0, 10.0))
+    k_deact = np.exp(np.clip(log_k_deact, -20.0, 10.0))
+    s_prod  = np.exp(np.clip(log_s_prod,  -20.0, 10.0))
+    d_deg   = np.exp(np.clip(log_d_deg,   -20.0, 10.0))
+
+    alpha    = np.exp(np.clip(log_alpha,    -20.0, 10.0))
+    kK_act   = np.exp(np.clip(log_kK_act,   -20.0, 10.0))
+    kK_deact = np.exp(np.clip(log_kK_deact, -20.0, 10.0))
+    k_off    = np.exp(np.clip(log_k_off,    -20.0, 10.0))
+
+    # ---- scalars: use clip_scalar + math.exp ----
+    beta_g = math.exp(clip_scalar(log_beta_g, -20.0, 10.0))
+    beta_l = math.exp(clip_scalar(log_beta_l, -20.0, 10.0))
+
+    # ---- gamma mapping (scalar operations are fine) ----
+    gamma_S_p  = 2.0 * np.tanh(raw_gamma[0])
+    gamma_A_S  = 2.0 * np.tanh(raw_gamma[1])
+    gamma_A_p  = 2.0 * np.tanh(raw_gamma[2])
+    gamma_K_net= 2.0 * np.tanh(raw_gamma[3])
+
+    return (k_act, k_deact, s_prod, d_deg,
+            beta_g, beta_l, alpha,
+            kK_act, kK_deact, k_off,
+            gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net)
+
+@njit(cache=True, fastmath=True)
+def network_rhs_nb_core(x, t, theta,
+                        Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
+                        kin_to_prot_idx,
+                        receptor_mask_prot, receptor_mask_kin,
+                        K, M, N):
     """
-    RHS compatible with scipy.integrate.odeint.
-    Signature must be func(x, t, *args).
+    Numba-compiled RHS core (distributive mechanism) with:
+      - explicit stimulus u(t) (step at t=0)
+      - kinase ↔ protein coupling via kin_to_prot_idx
+      - phosphorylation depending on protein abundance A
+      - receptor vs downstream hierarchy via masks
     """
+
+    # enforce non-negative state
+    x = np.maximum(x, 0.0)
+
+    (k_act, k_deact, s_prod, d_deg,
+     beta_g, beta_l, alpha,
+     kK_act, kK_deact, k_off,
+     gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net) = decode_theta(theta, K, M, N)
+
+    # unpack state
+    S    = x[0:K]
+    A    = x[K:2 * K]
+    Kdyn = x[2 * K:2 * K + M]
+    p    = x[2 * K + M:2 * K + M + N]
+
+    # -----------------------------------
+    # external stimulus: step at t = 0
+    # u(t) = 0 for t < 0 (pre-equilibration),
+    # u(t) = 1 for t >= 0 (stimulated)
+    # -----------------------------------
+    if t < 0.0:
+        u = 0.0
+    else:
+        u = 1.0
+
+    # ---------- site-level global + local context ----------
+    coup_g = beta_g * (Cg @ p)         # (N,)
+    coup_l = beta_l * (Cl @ p)         # (N,)
+    coup   = np.tanh(coup_g + coup_l)  # (N,)
+    coup_pos = np.maximum(coup, 0.0)
+
+    # per-protein aggregates
+    num_p  = np.zeros(K)
+    num_c  = np.zeros(K)
+    den    = np.zeros(K)
+
+    for i in range(N):
+        prot = site_prot_idx[i]
+        num_p[prot] += p[i]
+        num_c[prot] += coup[i]
+        den[prot]   += 1.0
+
+    mean_p_per_prot   = np.zeros(K)
+    mean_ctx_per_prot = np.zeros(K)
+    for k in range(K):
+        if den[k] > 0.0:
+            mean_p_per_prot[k]   = num_p[k] / den[k]
+            mean_ctx_per_prot[k] = num_c[k] / den[k]
+        else:
+            mean_p_per_prot[k]   = 0.0
+            mean_ctx_per_prot[k] = 0.0
+
+    # ---------- 1) S dynamics ----------
+    # baseline drive from phospho + context
+    D_S = 1.0 + gamma_S_p * mean_p_per_prot + mean_ctx_per_prot
+
+    # add external input only for receptor proteins
+    for k in range(K):
+        if receptor_mask_prot[k] == 1:
+            D_S[k] += u
+
+        if D_S[k] < 0.0:
+            D_S[k] = 0.0
+
+    dS = np.empty(K)
+    for k in range(K):
+        dS[k] = k_act[k] * D_S[k] * (1.0 - S[k]) - k_deact[k] * S[k]
+
+    # ---------- 2) A dynamics ----------
+    # abundance modulated by S (activation), but can be extended later
+    s_eff = np.empty(K)
+    for k in range(K):
+        s_eff[k] = s_prod[k] * (1.0 + gamma_A_S * S[k])
+        if s_eff[k] < 0.0:
+            s_eff[k] = 0.0
+
+    dA = np.empty(K)
+    for k in range(K):
+        dA[k] = s_eff[k] - d_deg[k] * A[k]
+
+    # ---------- 3) Kdyn dynamics ----------
+    # substrate signal
+    u_sub = R @ p  # (M,)
+
+    # kinase network / Laplacian
+    if L_alpha.shape[0] > 0:
+        u_net = -(L_alpha @ Kdyn)
+    else:
+        u_net = np.zeros(M)
+
+    # base drive from substrate + network
+    U = u_sub + gamma_K_net * u_net
+
+    # couple kinase activity to host protein S and A
+    for m in range(M):
+        prot = kin_to_prot_idx[m]
+        if prot >= 0:
+            # S- and A-driven modulation (reuse gammas you already have)
+            U[m] += gamma_A_S * S[prot] + gamma_A_p * A[prot]
+
+        # external stimulus directly to receptor kinases
+        if receptor_mask_kin[m] == 1:
+            U[m] += u
+
+    dK = np.empty(M)
+    for m in range(M):
+        # bounded activation via tanh
+        act_term = np.tanh(U[m])
+        dK[m] = kK_act[m] * act_term * (1.0 - Kdyn[m]) - kK_deact[m] * Kdyn[m]
+
+    # ---------- 4) p dynamics (distributive, now A-dependent) ----------
+    # effective on-rate, combining site→kinase, alpha, and Kdyn
+    k_on_eff = K_site_kin @ (alpha * Kdyn)   # (N,)
+
+    dp = np.empty(N)
+    for i in range(N):
+
+        # TEMP: ignore abundance dependence to decouple P from A for fitting
+        # saturating abundance factor: A/(1+A) to avoid crazy rates
+        # prot = site_prot_idx[i]
+        # A_local = A[prot]
+        # A_factor = A_local / (1.0 + A_local)
+        # v_on  = k_on_eff[i] * (1.0 + coup_pos[i]) * A_factor * (1.0 - p[i])
+        v_on  = k_on_eff[i] * (1.0 + coup_pos[i]) * (1.0 - p[i])
+        v_off = k_off[i] * p[i]
+        dp[i] = v_on - v_off
+
+    # pack
+    dx = np.empty(2 * K + M + N)
+    dx[0:K]                     = dS
+    dx[K:2 * K]                 = dA
+    dx[2 * K:2 * K + M]         = dK
+    dx[2 * K + M:2 * K + M + N] = dp
+
+    return dx
+
+def network_rhs(x, t, theta, Cg, Cl, site_prot_idx, K_site_kin,
+                R, L_alpha, kin_to_prot_idx,
+                receptor_mask_prot, receptor_mask_kin,
+                mech="distributive"):
+
     K = GLOBAL_K
     M = GLOBAL_M
     N = GLOBAL_N
 
-    (k_act, k_deact, s_prod, d_deg, beta_g, beta_l, alpha, kK_act, kK_deact, k_off) = decode_theta(theta)
+    return network_rhs_nb_core(
+        x, t, theta,
+        Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
+        kin_to_prot_idx,
+        receptor_mask_prot, receptor_mask_kin,
+        K, M, N
+    )
 
-    S = x[0:K]
-    A = x[K:2 * K]
-    Kdyn = x[2 * K:2 * K + M]
-    p = x[2 * K + M:2 * K + M + N]
-
-    dS = k_act * (1.0 - S) - k_deact * S
-    dA = s_prod - d_deg * A
-
-    coup_g = beta_g * (Cg @ p)
-    coup_l = beta_l * (Cl @ p)
-    coup = np.tanh(coup_g + coup_l)
-
-    u = R @ p
-    dK = kK_act * np.tanh(u) * (1.0 - Kdyn) - kK_deact * Kdyn
-
-    k_on_eff = K_site_kin @ (alpha * Kdyn)
-    S_local = S[site_prot_idx]
-    A_local = A[site_prot_idx]
-
-    v_on = (k_on_eff * S_local * A_local + coup) * (1.0 - p)
-    v_off = k_off * p
-    dp = v_on - v_off
-
-    return np.concatenate([dS, dA, dK, dp])
-
-
-def simulate_p_scipy(t_arr, P_data0, theta, Cg, Cl, site_prot_idx, K_site_kin, R):
+def simulate_p_scipy(t_arr, P_data0, theta,
+                     Cg, Cl, site_prot_idx,
+                     K_site_kin, R,
+                     L_alpha, kin_to_prot_idx,
+                     receptor_mask_prot, receptor_mask_kin,
+                     T_pre=200.0, n_pre_steps=50):
     """
-    Simulates using scipy.integrate.odeint (LSODA).
+    Simulate with:
+      - pre-equilibration from t=-T_pre to 0 with u(t)=0
+      - main simulation from t_arr[0] (should be 0) onwards with u(t)=1
     """
+
     K = GLOBAL_K
     M = GLOBAL_M
     N = GLOBAL_N
     state_dim = 2 * K + M + N
 
+    # initial guess: S=0, A=1, Kdyn=1, p = data at t0
     x0 = np.zeros((state_dim,))
-    x0[K:2 * K] = 1.0
+    # x0[K:2 * K] = 1.0
+    x0[K:2 * K] = 0.0
     x0[2 * K:2 * K + M] = 1.0
     x0[2 * K + M:] = P_data0[:, 0]
 
-    # odeint(func, y0, t, args=())
-    # Note: t_arr must be sorted and start with the initial time for x0.
-    xs = odeint(network_rhs, x0, t_arr, args=(theta, Cg, Cl, site_prot_idx, K_site_kin, R))
+    # ---------- pre-equilibrate ----------
+    if T_pre > 0.0 and n_pre_steps > 1:
+        t_pre = np.linspace(-T_pre, 0.0, n_pre_steps)
+
+        xs_pre = odeint(
+            network_rhs,
+            x0,
+            t_pre,
+            args=(theta, Cg, Cl, site_prot_idx,
+                  K_site_kin, R, L_alpha, kin_to_prot_idx,
+                  receptor_mask_prot, receptor_mask_kin)
+        )
+        x0 = xs_pre[-1]
+
+    # ---------- main simulation ----------
+    xs = odeint(
+        network_rhs,
+        x0,
+        t_arr,
+        args=(theta, Cg, Cl, site_prot_idx,
+              K_site_kin, R, L_alpha, kin_to_prot_idx,
+              receptor_mask_prot, receptor_mask_kin)
+    )
 
     A_sim = xs[:, K:2 * K].T
     P_sim = xs[:, 2 * K + M:].T
 
     return P_sim, A_sim
 
-
 # ------------------------------------------------------------
 #  PYMOO PROBLEM DEFINITION
 # ------------------------------------------------------------
+@njit(cache=True, fastmath=True)
+def compute_objectives_nb(theta,
+                          P_data, P_sim,
+                          A_scaled, A_sim,
+                          W_data, W_data_prot, prot_idx_for_A,
+                          L_alpha, lambda_net, reg_lambda,
+                          n_p, n_A, n_var,
+                          K, M, N):
+    """
+    Numba-compiled objective computation:
+
+    - f1: phosphosite fit
+    - f2: protein abundance fit
+    - f3: regularization + network regularization
+    """
+
+    # decode parameters (Numba version)
+    (k_act, k_deact, s_prod, d_deg,
+     beta_g, beta_l, alpha,
+     kK_act, kK_deact, k_off,
+     gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net) = decode_theta(theta, K, M, N)
+
+    # -------------------------
+    # 1) phosphosite loss f1
+    # -------------------------
+    N_sites, T = P_data.shape
+    loss_p = 0.0
+
+    for i in range(N_sites):
+        for j in range(T):
+            w = W_data[i, j]
+            # sqrt on the fly for numba
+            w_sqrt = np.sqrt(w)
+            diff = (P_data[i, j] - P_sim[i, j]) * w_sqrt
+
+            # clip (same logic as np.clip)
+            if diff > 1e6:
+                diff = 1e6
+            elif diff < -1e6:
+                diff = -1e6
+
+            loss_p += diff * diff
+
+    f1 = loss_p / n_p
+
+    # -------------------------
+    # 2) protein loss f2
+    # -------------------------
+    loss_A = 0.0
+
+    if A_scaled.size > 0:
+        K_prot_obs, T_A = A_scaled.shape
+        for k in range(K_prot_obs):
+            p_idx = prot_idx_for_A[k]
+            for j in range(T_A):
+                w = W_data_prot[k, j]
+                w_sqrt = np.sqrt(w)
+                diffA = (A_scaled[k, j] - A_sim[p_idx, j]) * w_sqrt
+
+                if diffA > 1e6:
+                    diffA = 1e6
+                elif diffA < -1e6:
+                    diffA = -1e6
+
+                loss_A += diffA * diffA
+
+        f2 = loss_A / n_A
+    else:
+        f2 = 0.0
+
+    # -------------------------
+    # 3) regularization f3
+    # -------------------------
+    # L2 on theta
+    reg = reg_lambda * np.dot(theta, theta)
+
+    # network regularization on alpha: alpha^T L_alpha alpha
+    # y = L_alpha @ alpha
+    M_kin = alpha.shape[0]
+    y = np.zeros(M_kin)
+    for i in range(M_kin):
+        acc = 0.0
+        for j in range(M_kin):
+            acc += L_alpha[i, j] * alpha[j]
+        y[i] = acc
+
+    net_quad = 0.0
+    for i in range(M_kin):
+        net_quad += alpha[i] * y[i]
+
+    reg_net = lambda_net * net_quad
+
+    f3 = (reg + reg_net) / n_var
+
+    return f1, f2, f3
 
 class NetworkOptimizationProblem(ElementwiseProblem):
     def __init__(self,
                  t, P_data, Cg, Cl, site_prot_idx, K_site_kin, R,
-                 A_scaled, prot_idx_for_A, W_data, W_data_prot, L_alpha,
+                 A_scaled, prot_idx_for_A, W_data, W_data_prot,
+                 L_alpha, kin_to_prot_idx,
                  lambda_net, reg_lambda,
+                 receptor_mask_prot, receptor_mask_kin,
                  xl, xu,
                  **kwargs):
 
         n_var = len(xl)
-        # 3 objectives, 3 inequality constraints
         super().__init__(n_var=n_var, n_obj=3, n_ieq_constr=0, xl=xl, xu=xu, **kwargs)
 
         self.t = t
@@ -432,10 +705,12 @@ class NetworkOptimizationProblem(ElementwiseProblem):
         self.W_data = W_data
         self.W_data_prot = W_data_prot
         self.L_alpha = L_alpha
+        self.kin_to_prot_idx = kin_to_prot_idx
         self.lambda_net = lambda_net
         self.reg_lambda = reg_lambda
+        self.receptor_mask_prot = receptor_mask_prot
+        self.receptor_mask_kin  = receptor_mask_kin
 
-        # precompute sizes for normalization
         self.n_p = max(1, self.P_data.size)
         self.n_A = max(1, self.A_scaled.size)
         self.n_var = n_var
@@ -443,11 +718,13 @@ class NetworkOptimizationProblem(ElementwiseProblem):
     def _evaluate(self, x, out, *args, **kwargs):
         theta = x
 
-        # --- simulate ---
+        # --- simulate (still Python + odeint) ---
         P_sim, A_sim = simulate_p_scipy(
             self.t, self.P_data, theta,
             self.Cg, self.Cl, self.site_prot_idx,
-            self.K_site_kin, self.R
+            self.K_site_kin, self.R,
+            self.L_alpha, self.kin_to_prot_idx,
+            self.receptor_mask_prot, self.receptor_mask_kin
         )
 
         # ---- safety check: explosion / NaNs ----
@@ -456,175 +733,55 @@ class NetworkOptimizationProblem(ElementwiseProblem):
             np.max(np.abs(P_sim)) > 1e6 or
             np.max(np.abs(A_sim)) > 1e6):
 
-            # terrible but finite point; constraints 0 so dominated
             out["F"] = np.array([1e12, 1e12, 1e12])
-            # out["G"] = np.zeros(3)
             return
 
-        # ---- objective 1: phosphosite fit ----
-        diff_p = (self.P_data - P_sim) * np.sqrt(self.W_data)
-        diff_p = np.clip(diff_p, -1e6, 1e6)
-        loss_p = np.square(diff_p, dtype=np.float64).sum()
-        f1 = loss_p / self.n_p
+        # -----------------------
+        # JIT'ed objective core
+        # -----------------------
+        K = GLOBAL_K
+        M = GLOBAL_M
+        N = GLOBAL_N
 
-        # ---- objective 2: protein abundance fit ----
-        if self.A_scaled.size > 0:
-            A_model = A_sim[self.prot_idx_for_A, :]
-            diff_A = (self.A_scaled - A_model) * np.sqrt(self.W_data_prot)
-            diff_A = np.clip(diff_A, -1e6, 1e6)
-            loss_A = np.square(diff_A, dtype=np.float64).sum()
-        else:
-            loss_A = 0.0
-        f2 = loss_A / self.n_A
+        f1, f2, f3 = compute_objectives_nb(
+            theta,
+            self.P_data, P_sim,
+            self.A_scaled, A_sim,
+            self.W_data, self.W_data_prot, self.prot_idx_for_A,
+            self.L_alpha, self.lambda_net, self.reg_lambda,
+            self.n_p, self.n_A, self.n_var,
+            K, M, N
+        )
 
-        # ---- regularization terms ----
-        (k_act, k_deact, s_prod, d_deg,
-         beta_g, beta_l, alpha,
-         kK_act, kK_deact, k_off) = decode_theta(theta)
+        out["F"] = np.array([f1, f2, f3], dtype=float)
 
-        reg = self.reg_lambda * np.dot(theta, theta)
-        reg_net = self.lambda_net * (alpha @ (self.L_alpha @ alpha))
 
-        # objective 3: model/network complexity
-        f3 = (reg + reg_net) / self.n_var
-
-        out["F"] = np.array([f1, f2, f3])
-
-        # # --------- PARAMETER INEQUALITY CONSTRAINTS (G <= 0) ---------
-        #
-        # # 1) degradation slower than deactivation: d_deg[k] <= rho * k_deact[k]
-        # rho = 0.2
-        # c_degrade = np.max(d_deg - rho * k_deact)
-        #
-        # # 2) alpha L2 norm cap: ||alpha||_2 <= alpha_max
-        # alpha_max = 20.0
-        # c_alpha_norm = np.linalg.norm(alpha) - alpha_max
-        #
-        # # 3) kinase time scales ~ signaling time scale
-        # k_act_mean = np.mean(k_act)
-        # r = 10.0  # one order of magnitude
-        # c_kK_upper = np.max(kK_act - r * k_act_mean)
-        # c_kK_lower = np.max((k_act_mean / r) - kK_act)
-        # c_kK_deact_upper = np.max(kK_deact - r * k_act_mean)
-        # c_kK_deact_lower = np.max((k_act_mean / r) - kK_deact)
-        # c_kK = max(c_kK_upper, c_kK_lower, c_kK_deact_upper, c_kK_deact_lower)
-        #
-        # out["G"] = np.array([c_degrade, c_alpha_norm, c_kK])
-
-def bio_score(theta):
+@njit(cache=True, fastmath=True)
+def bio_score_nb(theta, K, M, N):
     (k_act, k_deact, s_prod, d_deg,
      beta_g, beta_l, alpha,
-     kK_act, kK_deact, k_off) = decode_theta(theta)
+     kK_act, kK_deact, k_off,
+     gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net) = decode_theta(theta, K, M, N)
 
-    t_half_kinase = np.log(2) / kK_deact
-    t_half_protein = np.log(2) / d_deg
+    t_half_kinase = np.log(2.0) / kK_deact
+    t_half_protein = np.log(2.0) / d_deg
 
-    median_t_kinase = np.median(t_half_kinase)
-    median_t_protein = np.median(t_half_protein)
+    # median in numba: sort + pick middle
+    tk = np.sort(t_half_kinase)
+    tp = np.sort(t_half_protein)
+    median_t_kinase  = tk[len(tk) // 2]
+    median_t_protein = tp[len(tp) // 2]
 
-    T_kinase_prior = 10.0
-    T_protein_prior = 600.0
+    T_kinase_prior   = 10.0
+    T_protein_prior  = 600.0
 
-    term1 = (np.log10(median_t_kinase) - np.log10(T_kinase_prior))**2
+    term1 = (np.log10(median_t_kinase)  - np.log10(T_kinase_prior))**2
     term2 = (np.log10(median_t_protein) - np.log10(T_protein_prior))**2
 
     return term1 + term2
 
-# Single objective problem with inequality constraints works with ISRES only
-
-# class NetworkOptimizationProblem(ElementwiseProblem):
-#     def __init__(self,
-#                  t, P_data, Cg, Cl, site_prot_idx, K_site_kin, R,
-#                  A_scaled, prot_idx_for_A, W_data, W_data_prot, L_alpha,
-#                  lambda_net, reg_lambda,
-#                  xl, xu,
-#                  **kwargs):
-#
-#         n_var = len(xl)
-#         super().__init__(n_var=n_var, n_obj=1, n_ieq_constr=3, xl=xl, xu=xu, **kwargs)
-#
-#         self.t = t
-#         self.P_data = P_data
-#         self.Cg = Cg
-#         self.Cl = Cl
-#         self.site_prot_idx = site_prot_idx
-#         self.K_site_kin = K_site_kin
-#         self.R = R
-#         self.A_scaled = A_scaled
-#         self.prot_idx_for_A = prot_idx_for_A
-#         self.W_data = W_data
-#         self.W_data_prot = W_data_prot
-#         self.L_alpha = L_alpha
-#         self.lambda_net = lambda_net
-#         self.reg_lambda = reg_lambda
-#
-#     def _evaluate(self, x, out, *args, **kwargs):
-#         theta = x
-#
-#         # Simulation
-#         P_sim, A_sim = simulate_p_scipy(
-#             self.t, self.P_data, theta,
-#             self.Cg, self.Cl, self.site_prot_idx,
-#             self.K_site_kin, self.R
-#         )
-#
-#         # Site loss
-#         diff_p = (self.P_data - P_sim) * np.sqrt(self.W_data)
-#
-#         # Clip residuals to avoid absurd values dominating numerically
-#         diff_p = np.clip(diff_p, -1e6, 1e6)
-#         loss_p = np.square(diff_p, dtype=np.float64).sum()
-#
-#         # Protein abundance loss
-#         if self.A_scaled.size > 0:
-#             A_model = A_sim[self.prot_idx_for_A, :]
-#             diff_A = (self.A_scaled - A_model) * np.sqrt(self.W_data_prot)
-#             diff_A = np.clip(diff_A, -1e6, 1e6)
-#             loss_A = np.square(diff_A, dtype=np.float64).sum()
-#         else:
-#             loss_A = 0.0
-#
-#
-#         # L2 Reg on params
-#         reg = self.reg_lambda * np.dot(theta, theta)
-#
-#         # Network Reg
-#         (k_act, k_deact, s_prod, d_deg, beta_g, beta_l, alpha, kK_act, kK_deact, k_off) = decode_theta(theta)
-#         reg_net = self.lambda_net * (alpha @ (self.L_alpha @ alpha))
-#
-#         total_loss = loss_p + loss_A + reg + reg_net
-#
-#         # Normalize by number of data points and output
-#         # (to keep loss scale consistent across datasets)
-#
-#         n_data_points = self.P_data.size + self.A_scaled.size
-#         if n_data_points > 0:
-#             total_loss /= n_data_points
-#
-#         # Pymoo expects minimization
-#         out["F"] = total_loss
-#
-#         # --------- PARAMETER INEQUALITY CONSTRAINTS (G <= 0) ---------
-#
-#         # 1) degradation slower than deactivation: d_deg[k] <= rho * k_deact[k]
-#         rho = 0.2
-#         c_degrade = np.max(d_deg - rho * k_deact)
-#
-#         # 2) alpha L2 norm cap: ||alpha||_2 <= alpha_max
-#         alpha_max = 20.0
-#         c_alpha_norm = np.linalg.norm(alpha) - alpha_max
-#
-#         # 3) kinase time scales ~ signaling time scale
-#         k_act_mean = np.mean(k_act)
-#         r = 10.0  # one order of magnitude
-#         c_kK_upper = np.max(kK_act - r * k_act_mean)
-#         c_kK_lower = np.max((k_act_mean / r) - kK_act)
-#         c_kK_deact_upper = np.max(kK_deact - r * k_act_mean)
-#         c_kK_deact_lower = np.max((k_act_mean / r) - kK_deact)
-#         c_kK = max(c_kK_upper, c_kK_lower, c_kK_deact_upper, c_kK_deact_lower)
-#
-#         out["G"] = np.array([c_degrade, c_alpha_norm, c_kK])
-#
+def bio_score(theta):
+    return float(bio_score_nb(theta, GLOBAL_K, GLOBAL_M, GLOBAL_N))
 
 # ------------------------------------------------------------
 #  MAIN
@@ -641,8 +798,9 @@ def main():
     parser.add_argument("--kinase-tsv")
     parser.add_argument("--kea-ks-table")
     parser.add_argument("--unified-graph-pkl")
-    parser.add_argument("--lambda-net", type=float, default=0.0)
-    parser.add_argument("--pop-size", type=int, default=200, help="Population size multiplier for CMA-ES")
+    parser.add_argument("--lambda-net", type=float, default=0.0001, help="Laplacian regularization weight")
+    parser.add_argument("--reg-lambda", type=float, default=0.0001, help="L2 regularization weight")
+    parser.add_argument("--pop-size", type=int, default=100, help="Population size multiplier for CMA-ES")
     parser.add_argument("--cores", type=int, default=60, help="Number of cores for multiprocessing")
     args = parser.parse_args()
 
@@ -741,6 +899,33 @@ def main():
     if args.unified_graph_pkl and args.lambda_net > 0:
         L_alpha = build_alpha_laplacian_from_unified_graph(args.unified_graph_pkl, kinases)
 
+    # After you have `proteins` and `kinases`
+    prot_map_all = {p: i for i, p in enumerate(proteins)}
+    kin_to_prot_idx = np.array(
+        [prot_map_all.get(k, -1) for k in kinases],
+        dtype=int
+    )
+
+    # After you have `proteins` and `kinases`
+    prot_map_all = {p: i for i, p in enumerate(proteins)}
+    kin_to_prot_idx = np.array(
+        [prot_map_all.get(k, -1) for k in kinases],
+        dtype=int
+    )
+
+    # --- RECEPTOR / TOP-LAYER HIERARCHY ---
+    receptor_kinase_names = {"EGFR", "EPHA2", "ERBB4", "INSR", "RET"}
+
+    receptor_mask_prot = np.array(
+        [1 if p in {"EGFR", "ERBB2", "EPHA2", "MET"} else 0 for p in proteins],
+        dtype=np.int64
+    )
+
+    receptor_mask_kin = np.array(
+        [1 if k in receptor_kinase_names else 0 for k in kinases],
+        dtype=np.int64
+    )
+
     # Globals
     global GLOBAL_K, GLOBAL_M, GLOBAL_N
     GLOBAL_K, GLOBAL_N = len(proteins), len(sites)
@@ -748,77 +933,128 @@ def main():
 
     # Params and Bounds
     K, M, N = GLOBAL_K, GLOBAL_M, GLOBAL_N
-    dim = 4 * K + 2 + 3 * M + N
+    dim = 4 * K + 2 + 3 * M + N + 4
 
     # Init params for reference
     # Bounds: approx -11.5 (log 1e-5) to 2.3 (log 10)
-    low_b = np.log(1)
-    high_b = np.log(10)
-
-    xl = np.full(dim, low_b)
-    xu = np.full(dim, high_b)
+    # low_b = np.log(1)
+    # high_b = np.log(10)
+    #
+    # xl = np.full(dim, low_b)
+    # xu = np.full(dim, high_b)
 
     # # --- INTELLIGENT BOUNDS SETTING ---
     # # We create specific bounds for specific parameter types rather than one global bound.
     #
-    # xl = np.zeros(dim)
-    # xu = np.zeros(dim)
-    #
-    # idx = 0
-    #
-    # # 1. Protein Kinetics (K)
-    # # k_act (Activation): Allow range [1e-5, 100] - Can be fast
-    # xl[idx:idx + K] = np.log(1e-5);
-    # xu[idx:idx + K] = np.log(100.0);
-    # idx += K
-    #
-    # # k_deact (Deactivation): Allow range [1e-5, 100] - Can be fast
-    # xl[idx:idx + K] = np.log(1e-5);
-    # xu[idx:idx + K] = np.log(100.0);
-    # idx += K
-    #
-    # # s_prod (Synthesis): Allow range [1e-5, 10]
-    # xl[idx:idx + K] = np.log(1e-5);
-    # xu[idx:idx + K] = np.log(10.0);
-    # idx += K
-    #
-    # # d_deg (Degradation): *** RESTRICT THIS ***
-    # # Force degradation to be slow (e.g., max 0.5).
-    # # This forces the model to use PHOSPHORYLATION dynamics, not abundance destruction.
-    # xl[idx:idx + K] = np.log(1e-5);
-    # xu[idx:idx + K] = np.log(0.5);
-    # idx += K
-    #
-    # # 2. Coupling (2)
-    # xl[idx] = np.log(1e-5);
-    # xu[idx] = np.log(10.0);
-    # idx += 1  # beta_g
-    # xl[idx] = np.log(1e-5);
-    # xu[idx] = np.log(10.0);
-    # idx += 1  # beta_l
-    #
-    # # 3. Kinase Params (M)
-    # # Alpha (Global Strength): Allow high
-    # xl[idx:idx + M] = np.log(1e-5);
-    # xu[idx:idx + M] = np.log(100.0);
-    # idx += M
-    # # Kinase Act/Deact
-    # xl[idx:idx + M] = np.log(1e-5);
-    # xu[idx:idx + M] = np.log(100.0);
-    # idx += M
-    # xl[idx:idx + M] = np.log(1e-5);
-    # xu[idx:idx + M] = np.log(100.0);
-    # idx += M
-    #
-    # # 4. Site Params (N)
-    # # k_off (Phosphatase): Allow range [1e-5, 50] - High but not 100
-    # xl[idx:idx + N] = np.log(1e-5);
-    # xu[idx:idx + N] = np.log(50.0);
-    # idx += N
+    xl = np.zeros(dim)
+    xu = np.zeros(dim)
+
+    idx = 0
+
+    # 1. Protein Kinetics (K)
+    # k_act (Activation): Allow range [1e-5, 100] - Can be fast
+    xl[idx:idx + K] = np.log(1e-5);
+    xu[idx:idx + K] = np.log(100.0);
+    idx += K
+
+    # k_deact (Deactivation): Allow range [1e-5, 100] - Can be fast
+    xl[idx:idx + K] = np.log(1e-5);
+    xu[idx:idx + K] = np.log(100.0);
+    idx += K
+
+    # s_prod (Synthesis): Allow range [1e-5, 10]
+    xl[idx:idx + K] = np.log(1e-5);
+    xu[idx:idx + K] = np.log(10.0);
+    idx += K
+
+    # d_deg (Degradation): *** RESTRICT THIS ***
+    # Force degradation to be slow (e.g., max 0.5).
+    # This forces the model to use PHOSPHORYLATION dynamics, not abundance destruction.
+    xl[idx:idx + K] = np.log(1e-5);
+    xu[idx:idx + K] = np.log(2.0);
+    idx += K
+
+    # 2. Coupling (2)
+    xl[idx] = np.log(1e-5);
+    xu[idx] = np.log(10.0);
+    idx += 1  # beta_g
+    xl[idx] = np.log(1e-5);
+    xu[idx] = np.log(10.0);
+    idx += 1  # beta_l
+
+    # 3. Kinase Params (M)
+    # Alpha (Global Strength): Allow high
+    xl[idx:idx + M] = np.log(1e-5);
+    xu[idx:idx + M] = np.log(100.0);
+    idx += M
+    # Kinase Act/Deact
+    xl[idx:idx + M] = np.log(1e-5);
+    xu[idx:idx + M] = np.log(100.0);
+    idx += M
+    xl[idx:idx + M] = np.log(1e-5);
+    xu[idx:idx + M] = np.log(100.0);
+    idx += M
+
+    # 4. Site Params (N)
+    # k_off (Phosphatase): Allow range [1e-5, 50] - High but not 100
+    xl[idx:idx + N] = np.log(1e-5);
+    xu[idx:idx + N] = np.log(50.0);
+    idx += N
+
+    # 5. Gamma coupling parameters (4 scalars, raw space)
+    # order must match decode_theta: [gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net]
+    xl[idx:idx + 4] = -3.0   # tanh(-3..3) ~ [-0.995, 0.995], then * 2.0 → roughly [-2, 2]
+    xu[idx:idx + 4] =  3.0
+    idx += 4
+
+    # optional sanity check
+    assert idx == dim, f"Bounds indexing mismatch: idx={idx}, dim={dim}"
 
     # ----------------------------------------------------------
     # PYMOO SETUP
     # ----------------------------------------------------------
+    print("[*] Warming up Numba...")
+
+    K, M, N = GLOBAL_K, GLOBAL_M, GLOBAL_N
+    dim = 4 * K + 2 + 3 * M + N + 4
+
+    theta0 = np.zeros(dim, dtype=np.float64)
+    state_dim = 2 * K + M + N
+    x0 = np.zeros(state_dim, dtype=np.float64)
+
+    _ = decode_theta(theta0, K, M, N)
+
+    dx0 = network_rhs_nb_core(
+        x0, 0.0, theta0,
+        Cg.astype(np.float64),
+        Cl.astype(np.float64),
+        site_prot_idx.astype(np.int64),
+        K_site_kin.astype(np.float64),
+        R.astype(np.float64),
+        L_alpha.astype(np.float64),
+        kin_to_prot_idx.astype(np.int64),
+        receptor_mask_prot.astype(np.int64),
+        receptor_mask_kin.astype(np.int64),
+        K, M, N
+    )
+
+    # Also warm up objective
+    P_sim0 = np.zeros_like(P_scaled)
+    A_sim0 = np.zeros((K, P_scaled.shape[1]), dtype=np.float64)
+
+    _ = compute_objectives_nb(
+        theta0,
+        P_scaled, P_sim0,
+        A_scaled, A_sim0,
+        W_data, W_data_prot, prot_idx_for_A.astype(np.int64),
+        L_alpha, args.lambda_net, args.reg_lambda,
+        max(1, P_scaled.size),
+        max(1, A_scaled.size),
+        dim,
+        K, M, N
+    )
+
+    print("[*] Numba warm-up done.")
 
     # Initialize Pool
     print(f"[*] Initializing multiprocessing pool with {args.cores} cores...")
@@ -829,21 +1065,12 @@ def main():
     problem = NetworkOptimizationProblem(
         t, P_scaled, Cg, Cl, site_prot_idx, K_site_kin, R,
         A_scaled, prot_idx_for_A, W_data, W_data_prot, L_alpha,
-        args.lambda_net, 1e-4,
+        kin_to_prot_idx,
+        args.lambda_net, args.reg_lambda,
+        receptor_mask_prot, receptor_mask_kin,
         xl, xu,
         elementwise_runner=runner
     )
-
-    # Termination for single objective
-
-    # termination = DefaultSingleObjectiveTermination(
-    #     xtol=1e-8,
-    #     cvtol=1e-6,
-    #     ftol=1e-6,
-    #     period=20,
-    #     n_max_gen=1000,
-    #     n_max_evals=100000
-    # )
 
     # Termination for multi-objective
 
@@ -851,29 +1078,13 @@ def main():
         xtol=1e-8,
         cvtol=1e-6,
         ftol=0.0025,
-        period=30,
-        n_max_gen=1000,
+        period=10,
+        n_max_gen=500,
         n_max_evals=100000
     )
 
     print(f"[*] Starting Optimization...")
 
-    # -------------------------------
-    # Single Objective Algorithms
-    # -------------------------------
-
-    # Covariance matrix adaptation evolution strategy (CMA-ES)
-
-    # algorithm = CMAES(
-    #     # x0=np.random.random(problem.n_var),
-    #     parallelize=True,
-    #     incpopsize=args.pop_size,
-    #     restarts=50,
-    # )
-
-    # Improved Stochastic Ranking Evolution Strategy (ISRES)
-
-    # algorithm = ISRES(n_offsprings=500, rule=1.0 / 7.0, gamma=0.85, alpha=0.2)
 
     # -------------------------------
     # Multi-Objective Algorithms
@@ -907,35 +1118,322 @@ def main():
 
     print(f"[*] Optimization finished. Time: {res.exec_time}")
 
-    # theta_opt = res.X
+    # Objective set
+    F = res.F
 
-    F = res.F  # (n_points, 3) Pareto front in objective space
-    X = res.X  # decision variables on Pareto front
+    # Decision variables
+    X = res.X
 
-    # normalize objectives to [0,1]
-    F_norm = (F - F.min(axis=0)) / (np.ptp(F, axis=0) + 1e-12)
 
-    bio = np.array([bio_score(theta) for theta in X])
-    bio_norm = (bio - bio.min()) / (bio.max() - bio.min() + 1e-12)
 
-    alpha1, alpha2, alpha3, beta = 1.0, 1.0, 0.5, 1.0
+    # ----- SELECTION FOCUSING ON f1, f2 -----
+    f1 = F[:, 0]
+    f2 = F[:, 1]
+    f3 = F[:, 2]
 
-    J = (alpha1 * F_norm[:, 0] +
-         alpha2 * F_norm[:, 1] +
-         alpha3 * F_norm[:, 2] +
-         beta * bio_norm)
+    # Normalize first two objectives
+    eps = 1e-12
+    f1n = (f1 - f1.min()) / (f1.max() - f1.min() + eps)
+    f2n = (f2 - f2.min()) / (f2.max() - f2.min() + eps)
+
+    # Distance to ideal point (0,0) in the (f1,f2) plane
+    d12 = np.sqrt(f1n ** 2 + f2n ** 2)
+
+    f3n = (f3 - f3.min()) / (f3.max() - f3.min() + eps)
+
+    J = d12 + f3n
 
     best_idx = np.argmin(J)
     theta_opt = X[best_idx]
     F_best = F[best_idx]
 
+    print("[*] Best solution (prioritizing phosphosite + protein fit):")
+    print("    f1 (P-sites) =", F_best[0])
+    print("    f2 (protein) =", F_best[1])
+    print("    f3 (network complexity) =", F_best[2])
     print(f"    Final Loss (F): {F_best}")
 
+    # ----------------------------------------------------------
+    #  Pareto front statistics & export
+    # ----------------------------------------------------------
+    # F is (n_points, 3): [f1 (P-sites), f2 (proteins), f3 (complexity)]
+    f1 = F[:, 0]
+    f2 = F[:, 1]
+    f3 = F[:, 2]
+
+    def summarize(arr, name):
+        return {
+            "objective": name,
+            "min":   float(np.min(arr)),
+            "q25":   float(np.percentile(arr, 25)),
+            "median":float(np.median(arr)),
+            "mean":  float(np.mean(arr)),
+            "q75":   float(np.percentile(arr, 75)),
+            "max":   float(np.max(arr)),
+            "std":   float(np.std(arr)),
+        }
+
+    stats_rows = [
+        summarize(f1, "f1_P_sites"),
+        summarize(f2, "f2_protein"),
+        summarize(f3, "f3_complexity"),
+    ]
+
+    df_stats = pd.DataFrame(stats_rows)
+
+    print("\n[*] Pareto front objective stats:")
+    print(df_stats.to_string(index=False,
+                             float_format=lambda x: f"{x:10.4g}"))
+
+    # Save stats and full Pareto front
+    df_stats.to_csv(os.path.join(args.outdir, "pareto_stats.tsv"),
+                    sep="\t", index=False)
+
+    df_front = pd.DataFrame(
+        F,
+        columns=["f1_P_sites", "f2_protein", "f3_complexity"]
+    )
+    df_front.to_csv(os.path.join(args.outdir, "pareto_front.tsv"),
+                    sep="\t", index=False)
+
+    # Optional: also save scalarized score J for each solution (same J as below)
+    eps = 1e-12
+    f1n = (f1 - f1.min()) / (f1.max() - f1.min() + eps)
+    f2n = (f2 - f2.min()) / (f2.max() - f2.min() + eps)
+    d12 = np.sqrt(f1n ** 2 + f2n ** 2)
+    f3n = (f3 - f3.min()) / (f3.max() - f3.min() + eps)
+    J_all = d12 + f3n
+
+    df_front["J_scalarized"] = J_all
+    df_front.to_csv(os.path.join(args.outdir, "pareto_front_with_J.tsv"),
+                    sep="\t", index=False)
+
+    # ----------------------------------------------------------
+    #  Pareto Front: summary statistics & exports
+    # ----------------------------------------------------------
+    obj_names = ["f1_P_sites", "f2_protein", "f3_complexity"]
+
+    # 1) Basic stats for each objective
+    df_F = pd.DataFrame(F, columns=obj_names)
+
+    summary = pd.DataFrame({
+        "objective": obj_names,
+        "min":   df_F.min().values,
+        "max":   df_F.max().values,
+        "mean":  df_F.mean().values,
+        "median": df_F.median().values,
+        "std":   df_F.std(ddof=1).values,
+    })
+
+    print("\n=== Pareto Front: Objective Summary ===")
+    print(summary.to_string(index=False))
+
+    # 2) Index of best point for each single objective
+    best_idx_per_obj = {name: int(df_F[name].idxmin()) for name in obj_names}
+    print("\n=== Best index per objective (argmin) ===")
+    for name in obj_names:
+        idx_ = best_idx_per_obj[name]
+        print(f"  {name}: idx={idx_}, value={df_F.loc[idx_, name]:.6g}")
+
+    # 3) Pairwise correlations between objectives
+    corr = df_F.corr()
+    print("\n=== Correlation between objectives ===")
+    print(corr.to_string(float_format=lambda x: f"{x: .3f}"))
+
+    # 4) Simple spread metrics (range length in each objective)
+    spread = df_F.max() - df_F.min()
+    print("\n=== Objective spreads (max - min) ===")
+    for name in obj_names:
+        print(f"  {name}: spread={spread[name]:.6g}")
+
+    # 5) Compute the same "J" scalar you use for selecting a point
+    eps = 1e-12
+    f1 = F[:, 0]
+    f2 = F[:, 1]
+    f3 = F[:, 2]
+
+    f1n = (f1 - f1.min()) / (f1.max() - f1.min() + eps)
+    f2n = (f2 - f2.min()) / (f2.max() - f2.min() + eps)
+    d12 = np.sqrt(f1n ** 2 + f2n ** 2)
+
+    f3n = (f3 - f3.min()) / (f3.max() - f3.min() + eps)
+
+    J = d12 + f3n
+
+    print("\n=== J metric (combined distance + complexity) ===")
+    print(f"  J min:   {J.min():.6g}")
+    print(f"  J max:   {J.max():.6g}")
+    print(f"  J mean:  {J.mean():.6g}")
+    print(f"  J median:{np.median(J):.6g}")
+
+    # 6) Save everything to disk for later analysis
+    pareto_front_path = os.path.join(args.outdir, "pareto_front.tsv")
+    pareto_stats_path = os.path.join(args.outdir, "pareto_stats.tsv")
+    pareto_corr_path  = os.path.join(args.outdir, "pareto_objective_correlation.tsv")
+    pareto_npz_path   = os.path.join(args.outdir, "pareto_front.npz")
+
+    # Add J and index to df_F before saving
+    df_F_with_J = df_F.copy()
+    df_F_with_J["J"] = J
+    df_F_with_J["index"] = np.arange(len(df_F_with_J))
+
+    df_F_with_J.to_csv(pareto_front_path, sep="\t", index=False)
+    summary.to_csv(pareto_stats_path, sep="\t", index=False)
+    corr.to_csv(pareto_corr_path, sep="\t")
+
+    np.savez(
+        pareto_npz_path,
+        F=F,
+        X=X,
+        J=J,
+        obj_names=np.array(obj_names, dtype=object)
+    )
+
+    print(f"\n[*] Saved Pareto front to {pareto_front_path}")
+    print(f"[*] Saved Pareto stats  to {pareto_stats_path}")
+    print(f"[*] Saved Pareto corr   to {pareto_corr_path}")
+    print(f"[*] Saved Pareto NPZ    to {pareto_npz_path}\n")
+
+    # ----------------------------------------------------------
+    # Pareto front diagnostics & plots
+    # ----------------------------------------------------------
+    print("[*] Generating Pareto front diagnostics...")
+
+    # 1) Save raw Pareto front (decision variables + objectives)
+    pareto_npz_path = os.path.join(args.outdir, "pareto_front.npz")
+    np.savez(pareto_npz_path, X=X, F=F)
+    print(f"    Saved raw Pareto front to {pareto_npz_path}")
+
+    # 2) Basic statistics for each objective
+    obj_names = ["f1_Psites", "f2_proteins", "f3_complexity"]
+    stats_rows = []
+
+    for i, name in enumerate(obj_names):
+        vals = F[:, i]
+        row = {
+            "objective": name,
+            "min": float(vals.min()),
+            "q25": float(np.quantile(vals, 0.25)),
+            "median": float(np.median(vals)),
+            "q75": float(np.quantile(vals, 0.75)),
+            "max": float(vals.max()),
+            "mean": float(vals.mean()),
+            "std": float(vals.std()),
+        }
+        stats_rows.append(row)
+
+        print(
+            f"    {name}: "
+            f"min={row['min']:.3g}, "
+            f"q25={row['q25']:.3g}, "
+            f"median={row['median']:.3g}, "
+            f"q75={row['q75']:.3g}, "
+            f"max={row['max']:.3g}, "
+            f"mean={row['mean']:.3g}, "
+            f"std={row['std']:.3g}"
+        )
+
+    df_stats = pd.DataFrame(stats_rows)
+    stats_path = os.path.join(args.outdir, "pareto_stats.tsv")
+    df_stats.to_csv(stats_path, sep="\t", index=False)
+    print(f"    Saved objective statistics to {stats_path}")
+
+    # 3) Bio score for all Pareto points (kinase/protein half-life prior fit)
+    bio_scores = np.array([bio_score(theta) for theta in X], dtype=float)
+
+    df_pf = pd.DataFrame(
+        {
+            "f1_Psites": f1,
+            "f2_proteins": f2,
+            "f3_complexity": f3,
+            "bio_score": bio_scores,
+            "J_selection": J,
+        }
+    )
+    pareto_tsv_path = os.path.join(args.outdir, "pareto_points.tsv")
+    df_pf.to_csv(pareto_tsv_path, sep="\t", index=False)
+    print(f"    Saved Pareto point table to {pareto_tsv_path}")
+
+    # 4) Scatter plot: f1 vs f2 colored by f3, highlight chosen solution
+    plt.figure(figsize=(7, 6))
+    sc = plt.scatter(f1, f2, c=f3, cmap="viridis", alpha=0.7)
+    plt.colorbar(sc, label="f3 (network complexity)")
+    plt.scatter(
+        F_best[0],
+        F_best[1],
+        s=120,
+        facecolors="none",
+        edgecolors="red",
+        linewidths=2,
+        label="chosen solution",
+    )
+    plt.xlabel("f1: phosphosite loss")
+    plt.ylabel("f2: protein loss")
+    plt.title("Pareto front: f1 vs f2 (colored by f3)")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(args.outdir, "pareto_f1_f2.png"), dpi=300)
+    plt.close()
+
+    # 5) Histograms of each objective with chosen solution marked
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    for i, ax in enumerate(axes):
+        ax.hist(F[:, i], bins=30, alpha=0.8)
+        ax.axvline(F_best[i], color="red", linestyle="--", linewidth=2)
+        ax.set_title(obj_names[i])
+        ax.set_xlabel("value")
+        ax.set_ylabel("count")
+    fig.suptitle("Objective distributions across Pareto front", y=1.02)
+    fig.tight_layout()
+    fig.savefig(os.path.join(args.outdir, "pareto_objective_hists.png"), dpi=300)
+    plt.close(fig)
+
+    # 6) Parameter correlation heatmap across Pareto front
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    corr = np.corrcoef(X.T)
+    sns.heatmap(
+        corr,
+        ax=ax,
+        cmap="coolwarm",
+        center=0.0,
+        square=True,
+        xticklabels=False,
+        yticklabels=False,
+    )
+    ax.set_title("Parameter correlation heatmap across Pareto front")
+    fig.tight_layout()
+    fig.savefig(os.path.join(args.outdir, "pareto_param_corr.png"), dpi=300)
+    plt.close(fig)
+
+    # 7) (Optional) Relationship between combined f1/f2 distance and bio_score
+    #    – tells you whether more "biological" solutions are also near the knee.
+    plt.figure(figsize=(7, 5))
+    plt.scatter(d12, bio_scores, alpha=0.6)
+    plt.xlabel("d12 (normalized distance to ideal [f1,f2] = [0,0])")
+    plt.ylabel("bio_score (half-life prior mismatch)")
+    plt.title("Trade-off between phosphosite/protein fit and bio plausibility")
+    plt.tight_layout()
+    plt.savefig(os.path.join(args.outdir, "pareto_d12_vs_bioscore.png"), dpi=300)
+    plt.close()
+
+    print("[*] Pareto diagnostics written to disk.")
+
     # Final Simulation and Saving
-    P_sim, A_sim = simulate_p_scipy(t, P_scaled, theta_opt, Cg, Cl, site_prot_idx, K_site_kin, R)
+    P_sim, A_sim = simulate_p_scipy(
+        t, P_scaled, theta_opt,
+        Cg, Cl, site_prot_idx, K_site_kin, R,
+        L_alpha, kin_to_prot_idx,
+        receptor_mask_prot, receptor_mask_kin
+    )
 
     # Save
-    (k_act, k_deact, s_prod, d_deg, beta_g, beta_l, alpha, kK_act, kK_deact, k_off) = decode_theta(theta_opt)
+    (k_act, k_deact, s_prod, d_deg,
+     beta_g, beta_l, alpha,
+     kK_act, kK_deact, k_off,
+     gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net) = decode_theta(
+        theta_opt, GLOBAL_K, GLOBAL_M, GLOBAL_N
+    )
 
     np.savez(
         os.path.join(args.outdir, "fitted_params.npz"),
@@ -952,8 +1450,13 @@ def main():
         alpha=alpha,
         kK_act=kK_act,
         kK_deact=kK_deact,
-        k_off=k_off
+        k_off=k_off,
+        gamma_S_p=gamma_S_p,
+        gamma_A_S=gamma_A_S,
+        gamma_A_p=gamma_A_p,
+        gamma_K_net=gamma_K_net,
     )
+
     print(f"[*] Saved parameters with labels to {os.path.join(args.outdir, 'fitted_params.npz')}")
 
     # 1. Site-Level DataFrame
