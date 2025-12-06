@@ -1329,12 +1329,12 @@ def main():
             posinf=0.0,
             neginf=0.0,
         )
-    # ---- weights based on noise + early emphasis ----
 
-    # time weights
-    tau = 10.0
-    w_time = np.exp(-t / tau)
-    w_time /= w_time.mean()
+    # ---- weights based on noise; NO early emphasis ----
+
+    # time weights: uniform (no temporal bias)
+    w_time = np.ones_like(t, dtype=float)
+    w_time /= w_time.mean()  # keeps scale comparable to before
 
     # site weights
     logY = np.log1p(np.clip(Y, 1e-3, None))
@@ -1342,8 +1342,6 @@ def main():
     sigma_site = np.sqrt((diff ** 2).mean(axis=1) + 1e-8)
 
     w_site = 1.0 / (sigma_site ** 2 + 1e-4)
-
-    # cap extreme weights (sites that look perfectly flat)
     w_site = np.clip(w_site, 0.1, 20.0)
     w_site /= w_site.mean()
 
