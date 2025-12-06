@@ -15,18 +15,19 @@ from pymoo.termination.default import DefaultMultiObjectiveTermination
 from pymoo.parallelization import StarmapParallelization
 from pymoo.util.ref_dirs import get_reference_directions
 
-from config import ModelDims
-import data_loader
-from optimization import NetworkOptimizationProblem, create_bounds
 import analysis
+import data_loader
+from config import ModelDims
+from weighting import build_weight_matrices
+from optimization import NetworkOptimizationProblem, create_bounds
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Modular Phospho-Network Optimization")
+    parser = argparse.ArgumentParser(description="Global Phospho-Network Model Fitting")
     parser.add_argument("--data", required=True)
     parser.add_argument("--ptm-intra", required=True)
     parser.add_argument("--ptm-inter", required=True)
-    parser.add_argument("--outdir", default="network_fit_out")
+    parser.add_argument("--outdir", default="network_fit")
     parser.add_argument("--length-scale", type=float, default=50.0)
     parser.add_argument("--crosstalk-tsv")
     parser.add_argument("--kinase-tsv")
@@ -34,11 +35,14 @@ def main():
     parser.add_argument("--unified-graph-pkl")
     parser.add_argument("--lambda-net", type=float, default=0.0001)
     parser.add_argument("--reg-lambda", type=float, default=0.0001)
-    parser.add_argument("--gen", type=int, default=100)
-    parser.add_argument("--pop-size", type=int, default=100)
-    parser.add_argument("--cores", type=int, default=60)
+    parser.add_argument("--gen", type=int, default=500)
+    parser.add_argument("--pop-size", type=int, default=200)
+    parser.add_argument("--cores", type=int, default=os.cpu_count())
     parser.add_argument("--scale-mode", choices=["minmax", "none", "log-minmax"], default="minmax")
     parser.add_argument("--mechanism", choices=["dist", "seq", "rand"], default="dist")
+    parser.add_argument("--weight-scheme",
+                        choices=["uniform", "early_emphasis", "early_emphasis_moderate", "flat_no_noise"],
+                        default="uniform")
     args = parser.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
@@ -89,33 +93,12 @@ def main():
         A_bases, A_amps = np.array([]), np.array([])
 
     # 3. Weights
-    w_time = np.ones_like(t, dtype=float)
-    w_time /= w_time.mean()  # keeps scale comparable to before
-
-    # site weights
-    logY = np.log1p(np.clip(Y, 1e-3, None))
-    diff = np.diff(logY, axis=1)
-    sigma_site = np.sqrt((diff ** 2).mean(axis=1) + 1e-8)
-
-    w_site = 1.0 / (sigma_site ** 2 + 1e-4)
-    w_site = np.clip(w_site, 0.1, 20.0)
-    w_site /= w_site.mean()
-
-    # protein weights
-    if A_data is not None and len(A_data) > 0:
-        logA = np.log1p(np.clip(A_data, 1e-3, None))
-        diffA = np.diff(logA, axis=1)
-        sigma_prot = np.sqrt((diffA ** 2).mean(axis=1) + 1e-8)
-        w_prot = 1.0 / (sigma_prot ** 2 + 1e-4)
-        w_prot = np.clip(w_prot, 0.1, 20.0)
-        w_prot /= w_prot.mean()
-
-    W_data = np.outer(w_site, w_time)
-
-    if A_data is not None and len(A_data) > 0:
-        W_data_prot = np.outer(w_prot, w_time)
-    else:
-        W_data_prot = np.zeros((0, P_scaled.shape[1]))
+    W_data, W_data_prot = build_weight_matrices(
+        t=t,
+        Y=Y,
+        A_data=A_data,
+        scheme=args.weight_scheme
+    )
 
     # 4. Matrices & Graph
     Cg, Cl = data_loader.build_C_matrices_from_db(args.ptm_intra, args.ptm_inter, sites, site_prot_idx, positions,
@@ -189,6 +172,10 @@ def main():
         Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha, kin_to_prot_idx,
         receptor_mask_prot, receptor_mask_kin
     )
+
+    analysis.plot_fitted_simulation(args.outdir)
+    analysis.print_parameter_summary(args.outdir, X[best_idx], sites, proteins, kinases)
+
     print("[*] Done.")
 
 
