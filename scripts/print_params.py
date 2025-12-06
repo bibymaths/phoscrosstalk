@@ -11,7 +11,7 @@ import sys
 
 def main():
     parser = argparse.ArgumentParser(description="Inspect fitted parameters from NPZ")
-    parser.add_argument("--npz", default="../network_fit_pymoo/reg0p001_L25p0_lnet0p001/fitted_params.npz", help="Path to the NPZ file")
+    parser.add_argument("--npz", default="../network_fit/fitted_params.npz", help="Path to the NPZ file")
     args = parser.parse_args()
 
     try:
