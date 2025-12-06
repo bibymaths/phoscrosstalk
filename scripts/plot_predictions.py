@@ -98,7 +98,7 @@ def main():
 
         # ---- Format plot
         ax.set_title(f"{prot}", fontsize=14, weight="bold")
-        # ax.set_xscale("log")
+        ax.set_xscale("log")
         ax.grid(alpha=0.3)
         ax.set_xlabel("Time (min)")
         ax.set_ylabel("FC / Scaled abundance")
