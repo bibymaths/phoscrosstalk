@@ -8,7 +8,7 @@ import pandas as pd
 from matplotlib import pyplot as plt
 import seaborn as sns
 from core_mechanisms import decode_theta
-from config import ModelDims
+from config import ModelDims, DEFAULT_TIMEPOINTS
 from simulation import simulate_p_scipy
 from optimization import build_full_A0, bio_score
 
@@ -53,6 +53,55 @@ def plot_pareto_diagnostics(outdir, F, F_best, f1, f2, f3, X):
     fig.savefig(os.path.join(outdir, "pareto_param_corr.png"), dpi=300)
     plt.close(fig)
 
+def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
+    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+    params_decoded = decode_theta(theta_opt, K, M, N)
+
+    # Protein-specific parameters
+    df_prot = pd.DataFrame({
+        'Protein': proteins,
+        'k_act (Activation)': params_decoded[0],
+        'k_deact (Deactivation)': params_decoded[1],
+        's_prod (Synthesis)': params_decoded[2],
+        'd_deg (Degradation)': params_decoded[3]
+    })
+    df_prot.to_csv(os.path.join(outdir, "parameter_summary_proteins.tsv"), sep="\t", index=False)
+
+    # Kinase-specific parameters
+    df_kin = pd.DataFrame({
+        'Kinase': kinases,
+        'Alpha (Global Str)': params_decoded[6],
+        'kK_act (Kinase Act)': params_decoded[7],
+        'kK_deact (Kinase Deact)': params_decoded[8]
+    })
+    df_kin.to_csv(os.path.join(outdir, "parameter_summary_kinases.tsv"), sep="\t", index=False)
+
+    # Site-specific parameters
+    df_site = pd.DataFrame({
+        'Site': sites,
+        'k_off (Phosphatase Rate)': params_decoded[9]
+    })
+    df_site.to_csv(os.path.join(outdir, "parameter_summary_sites.tsv"), sep="\t", index=False)
+
+    # Global parameters
+    with open(os.path.join(outdir, "parameter_summary_global.txt"), "w") as f:
+        f.write("=== Global Coupling Parameters ===\n")
+        f.write(f"beta_g (Global Coupling): {params_decoded[4]:.5f}\n")
+        f.write(f"beta_l (Local Coupling):  {params_decoded[5]:.5f}\n")
+        f.write("-" * 40 + "\n")
+
+    # Print the summary to console as well
+    print("=== Parameter Summary ===")
+    print("\n--- Protein-specific Parameters ---")
+    print(df_prot.to_string(index=False))
+    print("\n--- Kinase-specific Parameters ---")
+    print(df_kin.to_string(index=False))
+    print("\n--- Site-specific Parameters ---")
+    print(df_site.to_string(index=False))
+    print("\n--- Global Coupling Parameters ---")
+    print(f"beta_g (Global Coupling): {params_decoded[4]:.5f}")
+    print(f"beta_l (Local Coupling):  {params_decoded[5]:.5f}")
+    print("-" * 40 + "\n")
 
 def save_fitted_simulation(outdir, theta_opt, t, sites, proteins, P_scaled, A_scaled,
                            prot_idx_for_A, baselines, amplitudes,
@@ -97,3 +146,60 @@ def save_fitted_simulation(outdir, theta_opt, t, sites, proteins, P_scaled, A_sc
 
     pd.concat([df_sites, df_prots], ignore_index=True).to_csv(os.path.join(outdir, "fit_timeseries.tsv"), sep="\t",
                                                               index=False)
+
+def plot_fitted_simulation(outdir):
+    # Load Data
+    df = pd.read_csv(os.path.join(outdir, "fit_timeseries.tsv"), sep="\t")
+    proteins = sorted(df["Protein"].unique())
+    print(f"[*] Found {len(proteins)} proteins")
+    df_sites = df[df["Type"] == "Phosphosite"].reset_index(drop=True)
+    df_prots = df[df["Type"] == "ProteinAbundance"].reset_index(drop=True)
+
+    sim_cols = [col for col in df.columns if col.startswith("sim_t")]
+    data_cols = [col for col in df.columns if col.startswith("data_t")]
+    t_vals = DEFAULT_TIMEPOINTS
+
+    # Plot per Protein
+    for prot in proteins:
+        print(f"   → Plotting {prot}")
+
+        plt.figure(figsize=(12, 8))
+        ax = plt.gca()
+
+        # ---- Protein abundance (if exists)
+        row_prot = df_prots[df_prots["Protein"] == prot]
+        if not row_prot.empty:
+            row_prot = row_prot.iloc[0]
+
+            y_sim = row_prot[sim_cols].values.astype(float)
+            y_dat = row_prot[data_cols].values.astype(float)
+            has_data = np.any(np.isfinite(y_dat))
+
+            ax.plot(t_vals, y_sim, "-", lw=3, color="blue", label="Protein (model)")
+            ax.scatter(t_vals, y_sim, color="blue", s=30)
+
+            if has_data:
+                ax.plot(t_vals, y_dat, "k--", lw=2, label="Protein (data)")
+                ax.scatter(t_vals, y_dat, color="black", s=35)
+
+        # ---- Phosphosites
+        sub = df_sites[df_sites["Protein"] == prot]
+
+        for _, row in sub.iterrows():
+            res = row["Residue"]
+            y_sim = row[sim_cols].values.astype(float)
+            y_dat = row[data_cols].values.astype(float)
+            has_data = np.any(np.isfinite(y_dat))
+
+            ax.plot(t_vals, y_sim, "-", alpha=0.7, lw=1.7, label=f"{res} (model)")
+            ax.scatter(t_vals, y_sim, s=20, alpha=0.7)
+
+            if has_data:
+                ax.plot(t_vals, y_dat, "o--", ms=4, alpha=0.7, label=f"{res} (data)")
+
+        # ---- Format plot
+        ax.set_title(f"{prot}", fontsize=14, weight="bold")
+        ax.set_xscale("log")
+        ax.grid(alpha=0.3)
+        ax.set_xlabel("Time (min)")
+        ax.set_ylabel("FC / Scaled abundance")
