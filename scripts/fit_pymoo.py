@@ -31,15 +31,18 @@ from pymoo.operators.sampling.lhs import LHS
 
 from pymoo.optimize import minimize
 from pymoo.core.problem import ElementwiseProblem
-from pymoo.parallelization.starmap import StarmapParallelization
+from pymoo.parallelization.joblib import JoblibParallelization
 from pymoo.termination.default import DefaultMultiObjectiveTermination
 
 import warnings
-from scipy.integrate import odeint
+from scipy.integrate import odeint, solve_ivp
 from numba import njit
 from scipy.integrate import ODEintWarning
 
 warnings.filterwarnings("ignore", category=ODEintWarning)
+warnings.filterwarnings("ignore", message="Excess work done on this call")
+warnings.filterwarnings("ignore", category=RuntimeWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 # Global dims
 GLOBAL_K = None
@@ -58,7 +61,7 @@ DEFAULT_TIMEPOINTS = np.array(
 EPS = 1e-8
 
 
-@njit(cache=True, fastmath=True)
+@njit(cache=True)
 def clip_scalar(x, lo, hi):
     if x < lo:
         return lo
@@ -311,7 +314,7 @@ def build_alpha_laplacian_from_unified_graph(pkl_path, kinases, weight_attr="wei
 #  NUMPY/SCIPY ODE MODEL
 # ------------------------------------------------------------
 
-@njit(cache=True, fastmath=True)
+@njit(cache=True)
 def decode_theta(theta, K, M, N):
     idx0 = 0
 
@@ -362,7 +365,7 @@ def decode_theta(theta, K, M, N):
             kK_act, kK_deact, k_off,
             gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net)
 
-@njit(cache=True, fastmath=True)
+@njit(cache=True)
 def network_rhs_nb_core(x, t, theta,
                         Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
                         kin_to_prot_idx,
@@ -395,10 +398,12 @@ def network_rhs_nb_core(x, t, theta,
     # u(t) = 0 for t < 0 (pre-equilibration),
     # u(t) = 1 for t >= 0 (stimulated)
     # -----------------------------------
-    if t < 0.0:
-        u = 0.0
-    else:
-        u = 1.0
+    # if t < 0.0:
+    #     u = 0.0
+    # else:
+    #     u = 1.0
+
+    u = 1.0 / (1.0 + np.exp(-(t) / 0.1))
 
     # ---------- site-level global + local context ----------
     coup_g = beta_g * (Cg @ p)         # (N,)
@@ -494,11 +499,11 @@ def network_rhs_nb_core(x, t, theta,
 
         # TEMP: ignore abundance dependence to decouple P from A for fitting
         # saturating abundance factor: A/(1+A) to avoid crazy rates
-        # prot = site_prot_idx[i]
-        # A_local = A[prot]
-        # A_factor = A_local / (1.0 + A_local)
-        # v_on  = k_on_eff[i] * (1.0 + coup_pos[i]) * A_factor * (1.0 - p[i])
-        v_on  = k_on_eff[i] * (1.0 + coup_pos[i]) * (1.0 - p[i])
+        prot = site_prot_idx[i]
+        A_local = A[prot]
+        A_factor = A_local / (1.0 + A_local)
+        v_on  = k_on_eff[i] * (1.0 + coup_pos[i]) * A_factor * (1.0 - p[i])
+        # v_on  = k_on_eff[i] * (1.0 + coup_pos[i]) * (1.0 - p[i])
         v_off = k_off[i] * p[i]
         dp[i] = v_on - v_off
 
@@ -528,16 +533,19 @@ def network_rhs(x, t, theta, Cg, Cl, site_prot_idx, K_site_kin,
         K, M, N
     )
 
-def simulate_p_scipy(t_arr, P_data0, theta,
+def simulate_p_scipy(t_arr, P_data0, A_data0, theta,
                      Cg, Cl, site_prot_idx,
                      K_site_kin, R,
                      L_alpha, kin_to_prot_idx,
                      receptor_mask_prot, receptor_mask_kin,
-                     T_pre=200.0, n_pre_steps=50):
+                     T_pre=50, n_pre_steps=20):
     """
     Simulate with:
-      - pre-equilibration from t=-T_pre to 0 with u(t)=0
+      - pre-equilibration from t = -T_pre to 0 with u(t)=0
       - main simulation from t_arr[0] (should be 0) onwards with u(t)=1
+
+    Default integrator: solve_ivp (LSODA).
+    You can quickly switch back to odeint by uncommenting the indicated blocks.
     """
 
     K = GLOBAL_K
@@ -545,37 +553,97 @@ def simulate_p_scipy(t_arr, P_data0, theta,
     N = GLOBAL_N
     state_dim = 2 * K + M + N
 
-    # initial guess: S=0, A=1, Kdyn=1, p = data at t0
+    # -----------------------------
+    # Initial state:
+    #   S = 0
+    #   A = 0  (or 1, but you currently use 0)
+    #   Kdyn = 1
+    #   p = first time point of data (scaled)
+    # -----------------------------
     x0 = np.zeros((state_dim,))
-    # x0[K:2 * K] = 1.0
     x0[K:2 * K] = 0.0
-    x0[2 * K:2 * K + M] = 1.0
+    # x0[K:2 * K] = A_data0[:, 0]
+    x0[2 * K:2 * K + M] = 0.0
     x0[2 * K + M:] = P_data0[:, 0]
 
-    # ---------- pre-equilibrate ----------
-    if T_pre > 0.0 and n_pre_steps > 1:
-        t_pre = np.linspace(-T_pre, 0.0, n_pre_steps)
+    # Wrapper for solve_ivp: f(t, x)
+    def rhs_ivp(t, x):
+        return network_rhs(
+            x, t, theta,
+            Cg, Cl, site_prot_idx,
+            K_site_kin, R, L_alpha, kin_to_prot_idx,
+            receptor_mask_prot, receptor_mask_kin,
+        )
 
+    # -------------------------------------------------
+    # 1) Pre-equilibration: t ∈ [-T_pre, 0]
+    # -------------------------------------------------
+    if T_pre > 0.0 and n_pre_steps > 1:
+        t_pre_eval = np.linspace(-T_pre, 0.0, n_pre_steps)
+
+        # --- DEFAULT: solve_ivp ---
+        # sol_pre = solve_ivp(
+        #     rhs_ivp,
+        #     (-T_pre, 0.0),
+        #     x0,
+        #     t_eval=t_pre_eval,
+        #     method="BDF",           # good for stiff systems & close to odeint
+        #     rtol=1e-6,
+        #     atol=1e-9,
+        # )
+        # if not sol_pre.success:
+        #     # If integration fails, bail out with NaNs so objective penalizes this theta
+        #     xs_pre = np.full((len(t_pre_eval), state_dim), np.nan, dtype=float)
+        # else:
+        #     xs_pre = sol_pre.y.T
+        #
+        # x0 = xs_pre[-1]
+
+        # --- ALTERNATIVE: use odeint instead of solve_ivp ---
         xs_pre = odeint(
             network_rhs,
             x0,
-            t_pre,
+            t_pre_eval,
             args=(theta, Cg, Cl, site_prot_idx,
                   K_site_kin, R, L_alpha, kin_to_prot_idx,
-                  receptor_mask_prot, receptor_mask_kin)
+                  receptor_mask_prot, receptor_mask_kin),
         )
         x0 = xs_pre[-1]
 
-    # ---------- main simulation ----------
+    # -------------------------------------------------
+    # 2) Main simulation: t ∈ [t_arr[0], t_arr[-1]]
+    # -------------------------------------------------
+    t0 = float(t_arr[0])
+    t1 = float(t_arr[-1])
+
+    # --- DEFAULT: solve_ivp ---
+    # sol = solve_ivp(
+    #     rhs_ivp,
+    #     (t0, t1),
+    #     x0,
+    #     t_eval=t_arr,
+    #     method="BDF",               # or "BDF"/"Radau" if very stiff
+    #     rtol=1e-6,
+    #     atol=1e-9,
+    # )
+    # if not sol.success:
+    #     xs = np.full((len(t_arr), state_dim), np.nan, dtype=float)
+    # else:
+    #     xs = sol.y.T
+
+    # --- ALTERNATIVE: use odeint instead of solve_ivp ---
     xs = odeint(
         network_rhs,
         x0,
         t_arr,
         args=(theta, Cg, Cl, site_prot_idx,
               K_site_kin, R, L_alpha, kin_to_prot_idx,
-              receptor_mask_prot, receptor_mask_kin)
+              receptor_mask_prot, receptor_mask_kin),
     )
 
+    # -------------------------------------------------
+    # 3) Unpack trajectories
+    # -------------------------------------------------
     A_sim = xs[:, K:2 * K].T
     P_sim = xs[:, 2 * K + M:].T
 
@@ -584,7 +652,7 @@ def simulate_p_scipy(t_arr, P_data0, theta,
 # ------------------------------------------------------------
 #  PYMOO PROBLEM DEFINITION
 # ------------------------------------------------------------
-@njit(cache=True, fastmath=True)
+@njit(cache=True)
 def compute_objectives_nb(theta,
                           P_data, P_sim,
                           A_scaled, A_sim,
@@ -680,6 +748,22 @@ def compute_objectives_nb(theta,
 
     return f1, f2, f3
 
+def build_full_A0(K, T, A_scaled, prot_idx_for_A):
+    """
+    Build a (K, T) abundance matrix from subset A_scaled (K_obs, T)
+    using mapping prot_idx_for_A (len = K_obs).
+
+    Unobserved proteins get zeros.
+    """
+    A0_full = np.zeros((K, T), dtype=float)
+
+    if A_scaled.size > 0:
+        for k, p_idx in enumerate(prot_idx_for_A):
+            # copy the whole time-course; simulate_p_scipy only uses [:, 0]
+            A0_full[p_idx, :] = A_scaled[k, :]
+
+    return A0_full
+
 class NetworkOptimizationProblem(ElementwiseProblem):
     def __init__(self,
                  t, P_data, Cg, Cl, site_prot_idx, K_site_kin, R,
@@ -719,11 +803,20 @@ class NetworkOptimizationProblem(ElementwiseProblem):
         theta = x
 
         # --- simulate (still Python + odeint) ---
+        K = GLOBAL_K
+        T = self.P_data.shape[1]
+
+        A0_full = build_full_A0(
+            K,
+            T,
+            self.A_scaled,
+            self.prot_idx_for_A
+        )
+
         P_sim, A_sim = simulate_p_scipy(
-            self.t, self.P_data, theta,
+            self.t, self.P_data, A0_full, theta,
             self.Cg, self.Cl, self.site_prot_idx,
-            self.K_site_kin, self.R,
-            self.L_alpha, self.kin_to_prot_idx,
+            self.K_site_kin, self.R, self.L_alpha, self.kin_to_prot_idx,
             self.receptor_mask_prot, self.receptor_mask_kin
         )
 
@@ -731,7 +824,8 @@ class NetworkOptimizationProblem(ElementwiseProblem):
         if (not np.all(np.isfinite(P_sim)) or
             not np.all(np.isfinite(A_sim)) or
             np.max(np.abs(P_sim)) > 1e6 or
-            np.max(np.abs(A_sim)) > 1e6):
+            np.max(np.abs(A_sim)) > 1e6 or
+            np.max(np.abs(theta)) > 1e3):
 
             out["F"] = np.array([1e12, 1e12, 1e12])
             return
@@ -756,7 +850,7 @@ class NetworkOptimizationProblem(ElementwiseProblem):
         out["F"] = np.array([f1, f2, f3], dtype=float)
 
 
-@njit(cache=True, fastmath=True)
+@njit(cache=True)
 def bio_score_nb(theta, K, M, N):
     (k_act, k_deact, s_prod, d_deg,
      beta_g, beta_l, alpha,
@@ -800,14 +894,17 @@ def main():
     parser.add_argument("--unified-graph-pkl")
     parser.add_argument("--lambda-net", type=float, default=0.0001, help="Laplacian regularization weight")
     parser.add_argument("--reg-lambda", type=float, default=0.0001, help="L2 regularization weight")
-    parser.add_argument("--pop-size", type=int, default=100, help="Population size multiplier for CMA-ES")
+    parser.add_argument("--pop-size", type=int, default=100, help="Population size")
     parser.add_argument("--cores", type=int, default=60, help="Number of cores for multiprocessing")
     args = parser.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
 
+    print(f"[*] Creating output directory at: {args.outdir}")
+
     # Load Data
     (sites, proteins, site_prot_idx, positions, t, Y, A_data, A_proteins) = load_site_data(args.data)
+
     print(f"[*] Loaded {len(sites)} sites, {len(proteins)} proteins.")
 
     # Crosstalk filtering
@@ -886,6 +983,8 @@ def main():
                                       args.length_scale)
     Cg, Cl = row_normalize(Cg), row_normalize(Cl)
 
+    print(f"[*] Built context matrices Cg and Cl with shape: {Cg.shape}, {Cl.shape}")
+
     if args.kinase_tsv:
         K_site_kin, kinases = load_kinase_site_matrix(args.kinase_tsv, sites)
     elif args.kea_ks_table:
@@ -894,6 +993,14 @@ def main():
         K_site_kin = np.eye(len(sites))
         kinases = [f"K_{i}" for i in range(len(sites))]
     R = K_site_kin.T
+
+
+    for i, site in enumerate(sites):
+        prot = proteins[site_prot_idx[i]]
+        kin_for_site = [kinases[m] for m in range(len(kinases)) if K_site_kin[i, m] > 0]
+        print(f"    Site: {site}, Protein: {prot}, Kinases: {kin_for_site}")
+
+    print(f"[*] Loaded kinase-site matrix with {len(kinases)} kinases.")
 
     L_alpha = np.zeros((len(kinases), len(kinases)))
     if args.unified_graph_pkl and args.lambda_net > 0:
@@ -935,17 +1042,11 @@ def main():
     K, M, N = GLOBAL_K, GLOBAL_M, GLOBAL_N
     dim = 4 * K + 2 + 3 * M + N + 4
 
-    # Init params for reference
-    # Bounds: approx -11.5 (log 1e-5) to 2.3 (log 10)
-    # low_b = np.log(1)
-    # high_b = np.log(10)
-    #
-    # xl = np.full(dim, low_b)
-    # xu = np.full(dim, high_b)
+    print(f"[*] Problem dimensions: K={K}, M={M}, N={N}, dim={dim}")
 
-    # # --- INTELLIGENT BOUNDS SETTING ---
-    # # We create specific bounds for specific parameter types rather than one global bound.
-    #
+    # --- INTELLIGENT BOUNDS SETTING ---
+    # We create specific bounds for specific parameter types rather than one global bound.
+
     xl = np.zeros(dim)
     xu = np.zeros(dim)
 
@@ -971,7 +1072,7 @@ def main():
     # Force degradation to be slow (e.g., max 0.5).
     # This forces the model to use PHOSPHORYLATION dynamics, not abundance destruction.
     xl[idx:idx + K] = np.log(1e-5);
-    xu[idx:idx + K] = np.log(2.0);
+    xu[idx:idx + K] = np.log(0.5);
     idx += K
 
     # 2. Coupling (2)
@@ -989,16 +1090,16 @@ def main():
     idx += M
     # Kinase Act/Deact
     xl[idx:idx + M] = np.log(1e-5);
-    xu[idx:idx + M] = np.log(100.0);
+    xu[idx:idx + M] = np.log(20.0);
     idx += M
     xl[idx:idx + M] = np.log(1e-5);
-    xu[idx:idx + M] = np.log(100.0);
+    xu[idx:idx + M] = np.log(20.0);
     idx += M
 
     # 4. Site Params (N)
     # k_off (Phosphatase): Allow range [1e-5, 50] - High but not 100
     xl[idx:idx + N] = np.log(1e-5);
-    xu[idx:idx + N] = np.log(50.0);
+    xu[idx:idx + N] = np.log(10.0);
     idx += N
 
     # 5. Gamma coupling parameters (4 scalars, raw space)
@@ -1007,11 +1108,10 @@ def main():
     xu[idx:idx + 4] =  3.0
     idx += 4
 
-    # optional sanity check
     assert idx == dim, f"Bounds indexing mismatch: idx={idx}, dim={dim}"
 
     # ----------------------------------------------------------
-    # PYMOO SETUP
+    # WARMP UP - JIT Compile
     # ----------------------------------------------------------
     print("[*] Warming up Numba...")
 
@@ -1056,10 +1156,21 @@ def main():
 
     print("[*] Numba warm-up done.")
 
+    # ----------------------------------------------------------
+    # Pymoo Problem Setup
+    # ----------------------------------------------------------
+
     # Initialize Pool
-    print(f"[*] Initializing multiprocessing pool with {args.cores} cores...")
-    pool = multiprocessing.Pool(args.cores)
-    runner = StarmapParallelization(pool.starmap)
+    # print(f"[*] Initializing multiprocessing pool with {args.cores} cores...")
+    # pool = multiprocessing.Pool(args.cores)
+    # runner = StarmapParallelization(pool.starmap)
+
+    runner = JoblibParallelization(
+        n_jobs=-1,  # Use all cores
+        backend="loky",  # Robust process-based backend
+        batch_size="auto",  # Automatic batching
+        pre_dispatch="2*n_jobs",  # Optimal pre-dispatching
+    )
 
     # Initialize Problem
     problem = NetworkOptimizationProblem(
@@ -1079,7 +1190,7 @@ def main():
         cvtol=1e-6,
         ftol=0.0025,
         period=10,
-        n_max_gen=500,
+        n_max_gen=100,
         n_max_evals=100000
     )
 
@@ -1113,8 +1224,8 @@ def main():
     )
 
     # Clean up pool
-    pool.close()
-    pool.join()
+    # pool.close()
+    # pool.join()
 
     print(f"[*] Optimization finished. Time: {res.exec_time}")
 
@@ -1123,8 +1234,6 @@ def main():
 
     # Decision variables
     X = res.X
-
-
 
     # ----- SELECTION FOCUSING ON f1, f2 -----
     f1 = F[:, 0]
@@ -1420,8 +1529,18 @@ def main():
     print("[*] Pareto diagnostics written to disk.")
 
     # Final Simulation and Saving
+    K = GLOBAL_K
+    T = P_scaled.shape[1]
+
+    A0_full = build_full_A0(
+        K,
+        T,
+        A_scaled,
+        prot_idx_for_A
+    )
+
     P_sim, A_sim = simulate_p_scipy(
-        t, P_scaled, theta_opt,
+        t, P_scaled, A0_full, theta_opt,
         Cg, Cl, site_prot_idx, K_site_kin, R,
         L_alpha, kin_to_prot_idx,
         receptor_mask_prot, receptor_mask_kin
