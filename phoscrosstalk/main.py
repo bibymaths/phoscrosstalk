@@ -300,7 +300,7 @@ def main():
         receptor_mask_prot, receptor_mask_kin
     )
 
-    analysis.plot_fitted_simulation(args.outdir, DEFAULT_TIMEPOINTS)
+    analysis.plot_fitted_simulation(args.outdir)
     analysis.print_parameter_summary(args.outdir, X[best_idx], proteins, kinases, sites)
     analysis.print_biological_scores(args.outdir, X)
     analysis.plot_biological_scores(args.outdir, X, F)
