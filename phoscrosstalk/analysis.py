@@ -105,18 +105,33 @@ def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
     print("-" * 40 + "\n")
 
 
-def save_fitted_simulation(outdir, theta_opt, t, sites, proteins, P_scaled, A_scaled,
-                           prot_idx_for_A, baselines, amplitudes,
-                           A_data, A_bases, A_amps, mechanism,
-                           Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha, kin_to_prot_idx,
-                           mask_p, mask_k):
+def save_fitted_simulation(
+    outdir,
+    theta_opt,
+    t,
+    sites,
+    proteins,
+    P_scaled,
+    A_scaled,
+    prot_idx_for_A,
+    baselines,
+    amplitudes,
+    Y,             # <--- add this: original site data (FC)
+    A_data, A_bases, A_amps,
+    mechanism,
+    Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha, kin_to_prot_idx,
+    mask_p, mask_k,
+):
     K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
 
-    # Save Params
+    # Save Params (unchanged)
     params_decoded = decode_theta(theta_opt, K, M, N)
-    param_names = ["k_act", "k_deact", "s_prod", "d_deg", "beta_g", "beta_l", "alpha",
-                   "kK_act", "kK_deact", "k_off", "gamma_S_p", "gamma_A_S", "gamma_A_p", "gamma_K_net"]
-
+    param_names = [
+        "k_act", "k_deact", "s_prod", "d_deg",
+        "beta_g", "beta_l",
+        "alpha", "kK_act", "kK_deact", "k_off",
+        "gamma_S_p", "gamma_A_S", "gamma_A_p", "gamma_K_net",
+    ]
     save_dict = {"theta": theta_opt, "proteins": np.array(proteins), "sites": np.array(sites)}
     for name, val in zip(param_names, params_decoded):
         save_dict[name] = val
@@ -124,13 +139,25 @@ def save_fitted_simulation(outdir, theta_opt, t, sites, proteins, P_scaled, A_sc
 
     # Re-simulate
     A0_full = build_full_A0(K, len(t), A_scaled, prot_idx_for_A)
-    P_sim, A_sim = simulate_p_scipy(t, P_scaled, A0_full, theta_opt, Cg, Cl, site_prot_idx,
-                                    K_site_kin, R, L_alpha, kin_to_prot_idx, mask_p, mask_k, mechanism)
+    P_sim, A_sim = simulate_p_scipy(
+        t, P_scaled, A0_full, theta_opt,
+        Cg, Cl, site_prot_idx,
+        K_site_kin, R, L_alpha, kin_to_prot_idx,
+        mask_p, mask_k,
+        mechanism,
+    )
 
-    # Rescale Sites
+    # Rescale Sites (model)
     Y_sim_rescaled = np.zeros_like(P_sim)
     for i in range(len(sites)):
         Y_sim_rescaled[i] = baselines[i] + amplitudes[i] * P_sim[i]
+
+    # Rescale Sites (data) – from original Y or from P_scaled if you prefer
+    Y_data_rescaled = Y  # if Y is already in FC units
+    # or:
+    # Y_data_rescaled = np.zeros_like(P_scaled)
+    # for i in range(len(sites)):
+    #     Y_data_rescaled[i] = baselines[i] + amplitudes[i] * P_scaled[i]
 
     # Rescale Proteins
     A_sim_rescaled = A_sim.copy()
@@ -138,50 +165,57 @@ def save_fitted_simulation(outdir, theta_opt, t, sites, proteins, P_scaled, A_sc
         for k, p_idx in enumerate(prot_idx_for_A):
             A_sim_rescaled[p_idx] = A_bases[k] + A_amps[k] * A_sim[p_idx]
 
-    # Save to DataFrame
-    sim_cols = [f"sim_t{int(time)}" for time in t]
-    data_cols = [f"data_t{int(time)}" for time in t]
+    # Column names – USE INDICES, NOT int(time)
+    T = len(t)
+    sim_cols  = [f"sim_t{j}"  for j in range(T)]
+    data_cols = [f"data_t{j}" for j in range(T)]
+
     records = []
+
+    # Phosphosites
     for i, site in enumerate(sites):
-        prot = site.split("_")[0]
-        residue = site.split("_")[1]
+        prot, residue = site.split("_", 1)
         record = {
             "Type": "Phosphosite",
             "Protein": prot,
-            "Residue": residue
+            "Residue": residue,
         }
-        for j, time in enumerate(t):
-            record[sim_cols[j]] = Y_sim_rescaled[i, j]
-            record[data_cols[j]] = np.nan  # Placeholder for data
+        for j in range(T):
+            record[sim_cols[j]]  = Y_sim_rescaled[i, j]
+            record[data_cols[j]] = Y_data_rescaled[i, j]
         records.append(record)
 
-    for k, p_idx in enumerate(prot_idx_for_A):
-        prot = proteins[p_idx]
-        record = {
-            "Type": "ProteinAbundance",
-            "Protein": prot,
-            "Residue": ""
-        }
-        for j, time in enumerate(t):
-            record[sim_cols[j]] = A_sim_rescaled[p_idx, j]
-            record[data_cols[j]] = A_data[k, j] if A_data.size > 0 else np.nan
-        records.append(record)
+    # Proteins
+    if A_data is not None and A_data.size > 0:
+        for k, p_idx in enumerate(prot_idx_for_A):
+            prot = proteins[p_idx]
+            record = {
+                "Type": "ProteinAbundance",
+                "Protein": prot,
+                "Residue": "",
+            }
+            for j in range(T):
+                record[sim_cols[j]]  = A_sim_rescaled[p_idx, j]
+                record[data_cols[j]] = A_data[k, j]
+            records.append(record)
 
     df_out = pd.DataFrame.from_records(records)
     df_out.to_csv(os.path.join(outdir, "fit_timeseries.tsv"), sep="\t", index=False)
 
 
-def plot_fitted_simulation(outdir):
-    # Load Data
+def plot_fitted_simulation(outdir, t=None):
     df = pd.read_csv(os.path.join(outdir, "fit_timeseries.tsv"), sep="\t")
-    proteins = sorted(df["Protein"].unique())
-    print(f"[*] Found {len(proteins)} proteins")
-    df_sites = df[df["Type"] == "Phosphosite"].reset_index(drop=True)
-    df_prots = df[df["Type"] == "ProteinAbundance"].reset_index(drop=True)
 
-    sim_cols = [col for col in df.columns if col.startswith("sim_t")]
-    data_cols = [col for col in df.columns if col.startswith("data_t")]
-    t_vals = DEFAULT_TIMEPOINTS
+    sim_cols  = sorted([c for c in df.columns if c.startswith("sim_t")],
+                       key=lambda x: int(x.split("t")[1]))
+    data_cols = sorted([c for c in df.columns if c.startswith("data_t")],
+                       key=lambda x: int(x.split("t")[1]))
+
+    if t is None:
+        # fallback if you don’t pass t explicitly
+        t_vals = DEFAULT_TIMEPOINTS[:len(sim_cols)]
+    else:
+        t_vals = np.array(t, dtype=float)
 
     # Plot per Protein
     for prot in proteins:
@@ -258,59 +292,55 @@ def plot_biological_scores(outdir, X, F):
     plt.close()
 
 def plot_goodness_of_fit(file, outdir):
-
     df = pd.read_csv(file, sep="\t")
 
-    sim_cols  = [c for c in df.columns if c.startswith("sim_t")]
-    data_cols = [c for c in df.columns if c.startswith("data_t")]
+    sim_cols  = sorted([c for c in df.columns if c.startswith("sim_t")],
+                       key=lambda x: int(x.split("t")[1]))
+    data_cols = sorted([c for c in df.columns if c.startswith("data_t")],
+                       key=lambda x: int(x.split("t")[1]))
 
-    # Construct labels
     labels = []
     for _, row in df.iterrows():
         if row["Type"] == "Phosphosite":
             labels.append(f"{row['Protein']}_{row['Residue']}")
         else:
             labels.append(f"{row['Protein']}_Abundance")
-
     df["Label"] = labels
 
-    # --- Prepare scatter plot ---
     plt.figure(figsize=(8, 8))
 
-    # Scatter by item
     for idx, row in df.iterrows():
         sim_vals  = row[sim_cols].values.astype(float)
         data_vals = row[data_cols].values.astype(float)
 
-        # Remove NaNs if protein abundances have missing time points
         mask = np.isfinite(sim_vals) & np.isfinite(data_vals)
+        if not np.any(mask):
+            continue
 
         if row["Type"] == "Phosphosite":
-            color = "green"
-            alpha = 0.35
+            color, alpha = "green", 0.35
         else:
-            color = "blue"
-            alpha = 0.55
+            color, alpha = "blue", 0.55
 
         plt.scatter(
             data_vals[mask],
             sim_vals[mask],
-            label=row["Label"] if idx < 15 else None,  # avoid clutter
+            label=row["Label"] if idx < 15 else None,
             alpha=alpha,
             color=color,
             s=30,
         )
 
-    # identity line
-    all_data = df[data_cols].values.flatten()
-    all_sim  = df[sim_cols].values.flatten()
-    max_val  = np.nanmax([all_data, all_sim])
-    plt.plot([0, max_val], [0, max_val], 'r--', lw=2)
+    all_data = df[data_cols].values.astype(float).flatten()
+    all_sim  = df[sim_cols].values.astype(float).flatten()
+    mask_all = np.isfinite(all_data) & np.isfinite(all_sim)
+    if np.any(mask_all):
+        max_val = max(all_data[mask_all].max(), all_sim[mask_all].max())
+        plt.plot([0, max_val], [0, max_val], "r--", lw=2)
 
     plt.xlabel("Observed")
     plt.ylabel("Simulated")
     plt.title("Goodness of Fit: Observed vs Simulated")
-
     plt.tight_layout()
-    plt.savefig(f'{outdir}/goodness_of_fit', dpi=300)
+    plt.savefig(os.path.join(outdir, "goodness_of_fit.png"), dpi=300)
     plt.close()
