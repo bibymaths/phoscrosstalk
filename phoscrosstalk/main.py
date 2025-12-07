@@ -20,7 +20,6 @@ from phoscrosstalk import data_loader
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.weighting import build_weight_matrices
 from phoscrosstalk.optimization import NetworkOptimizationProblem, create_bounds
-from phoscrosstalk.simulation import simulate_p_scipy
 
 
 def main():
@@ -171,6 +170,8 @@ def main():
     args = parser.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
+
+    results_dir = os.path.join(args.outdir)
     print(f"[*] Output directory: {args.outdir}")
 
     # 1. Load Data
@@ -288,15 +289,6 @@ def main():
                 (f3 - f3.min()) / (f3.max() - f3.min() + eps))
     best_idx = np.argmin(J)
 
-    P_sim, A_sim = simulate_p_scipy(
-        t, P_scaled, A_scaled, X[best_idx],
-        Cg, Cl, site_prot_idx,
-        K_site_kin, R,
-        L_alpha, kin_to_prot_idx,
-        receptor_mask_prot, receptor_mask_kin,
-        args.mechanism
-    )
-
     analysis.save_pareto_results(args.outdir, F, X, f1, f2, f3, J, F[best_idx])
     analysis.plot_pareto_diagnostics(args.outdir, F, F[best_idx], f1, f2, f3, X)
 
@@ -311,7 +303,7 @@ def main():
     analysis.print_parameter_summary(args.outdir, X[best_idx], proteins, kinases, sites)
     analysis.print_biological_scores(args.outdir, X)
     analysis.plot_biological_scores(args.outdir, X, F)
-    analysis.plot_goodness_of_fit(P_sim, P_scaled, A_sim, A_scaled, args.outdir)
+    analysis.plot_goodness_of_fit(f'{results_dir}/fit_timeseries.tsv', args.outdir)
 
     print("[*] Done.")
 

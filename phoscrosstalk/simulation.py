@@ -143,7 +143,7 @@ def fd_jacobian_nb_core(
     receptor_mask_kin,
     mech_code,
     K, M, N,
-    eps=1e-6
+    eps=1e-8
 ):
     """
     Finite-difference Jacobian of the numba RHS w.r.t. x.
