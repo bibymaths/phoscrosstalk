@@ -15,34 +15,159 @@ from pymoo.termination.default import DefaultMultiObjectiveTermination
 from pymoo.parallelization import StarmapParallelization
 from pymoo.util.ref_dirs import get_reference_directions
 
-import analysis
-import data_loader
-from config import ModelDims
-from weighting import build_weight_matrices
-from optimization import NetworkOptimizationProblem, create_bounds
+from phoscrosstalk import analysis
+from phoscrosstalk import data_loader
+from phoscrosstalk.config import ModelDims
+from phoscrosstalk.weighting import build_weight_matrices
+from phoscrosstalk.optimization import NetworkOptimizationProblem, create_bounds
+from phoscrosstalk.simulation import simulate_p_scipy
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Global Phospho-Network Model Fitting")
-    parser.add_argument("--data", required=True)
-    parser.add_argument("--ptm-intra", required=True)
-    parser.add_argument("--ptm-inter", required=True)
-    parser.add_argument("--outdir", default="network_fit")
-    parser.add_argument("--length-scale", type=float, default=50.0)
-    parser.add_argument("--crosstalk-tsv")
-    parser.add_argument("--kinase-tsv")
-    parser.add_argument("--kea-ks-table")
-    parser.add_argument("--unified-graph-pkl")
-    parser.add_argument("--lambda-net", type=float, default=0.0001)
-    parser.add_argument("--reg-lambda", type=float, default=0.0001)
-    parser.add_argument("--gen", type=int, default=500)
-    parser.add_argument("--pop-size", type=int, default=200)
-    parser.add_argument("--cores", type=int, default=os.cpu_count())
-    parser.add_argument("--scale-mode", choices=["minmax", "none", "log-minmax"], default="minmax")
-    parser.add_argument("--mechanism", choices=["dist", "seq", "rand"], default="dist")
-    parser.add_argument("--weight-scheme",
-                        choices=["uniform", "early_emphasis", "early_emphasis_moderate", "flat_no_noise"],
-                        default="uniform")
+    """
+    Command-line interface for running the global phospho-network model fitting
+    pipeline. This wrapper exposes all major configuration options for data
+    loading, model construction, weighting, and optimization.
+    """
+
+    parser = argparse.ArgumentParser(
+        prog="phoscrosstalk",
+        description=(
+            "Fit a global phospho-network ODE model using multi-objective "
+            "evolutionary optimization (pymoo). Supports multiple phosphorylation "
+            "mechanisms, flexible weighting schemes, kinase–substrate network "
+            "priors, and optional PTM crosstalk filtering."
+        ),
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    # ------------------------------------------------------------------
+    # INPUT DATA
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--data",
+        required=True,
+        help="CSV file containing time-series phosphorylation data."
+    )
+    parser.add_argument(
+        "--ptm-intra",
+        required=True,
+        help="SQLite DB containing intra-protein PTM relationships."
+    )
+    parser.add_argument(
+        "--ptm-inter",
+        required=True,
+        help="SQLite DB containing inter-protein PTM relationships."
+    )
+    parser.add_argument(
+        "--crosstalk-tsv",
+        help="Optional TSV listing PTM pairs to keep (crosstalk filtering)."
+    )
+
+    # ------------------------------------------------------------------
+    # KINASE–SUBSTRATE MAPPING
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--kinase-tsv",
+        help="TSV file mapping sites → kinases (weight column optional)."
+    )
+    parser.add_argument(
+        "--kea-ks-table",
+        help="Alternative KEA/KS mapping table if --kinase-tsv is not provided."
+    )
+    parser.add_argument(
+        "--unified-graph-pkl",
+        help="Pickled networkx graph of kinase–kinase relationships "
+             "used to build Laplacian regularizers."
+    )
+
+    # ------------------------------------------------------------------
+    # OUTPUT DIRECTORY
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--outdir",
+        default="network_fit",
+        help="Directory where results, logs, and Pareto front files are saved."
+    )
+
+    # ------------------------------------------------------------------
+    # MODEL CONFIGURATION
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--length-scale",
+        type=float,
+        default=50.0,
+        help="Length-scale for exponential local PTM decay on the protein domain."
+    )
+    parser.add_argument(
+        "--scale-mode",
+        choices=["minmax", "none", "log-minmax"],
+        default="minmax",
+        help="Method used to normalize/scale the experimental FC values."
+    )
+    parser.add_argument(
+        "--mechanism",
+        choices=["dist", "seq", "rand"],
+        default="dist",
+        help="Phosphorylation mechanism: distributive, sequential, or random/cooperative."
+    )
+    parser.add_argument(
+        "--weight-scheme",
+        choices=["uniform", "early_emphasis", "early_emphasis_moderate", "flat_no_noise"],
+        default="uniform",
+        help="Weighting strategy for time-series and site-level importance."
+    )
+
+    # ------------------------------------------------------------------
+    # REGULARIZATION
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--lambda-net",
+        type=float,
+        default=0.0001,
+        help="Laplacian regularization strength on kinase–kinase α parameters."
+    )
+    parser.add_argument(
+        "--reg-lambda",
+        type=float,
+        default=0.0001,
+        help="L2 regularization strength for all model parameters."
+    )
+
+    # ------------------------------------------------------------------
+    # OPTIMIZATION SETTINGS
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--gen",
+        type=int,
+        default=500,
+        help="Number of generations for the evolutionary optimizer."
+    )
+    parser.add_argument(
+        "--pop-size",
+        type=int,
+        default=100,
+        help="Population size for the multi-objective algorithm."
+    )
+    parser.add_argument(
+        "--cores",
+        type=int,
+        default=os.cpu_count(),
+        help="Number of CPU cores used for parallel model evaluations."
+    )
+
+    # ------------------------------------------------------------------
+    # META OPTIONS
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--version",
+        action="version",
+        version="Phospho-Network Model Fitting 1.0",
+    )
+    # ------------------------------------------------------------------
+    # PARSE ARGUMENTS
+    # ------------------------------------------------------------------
+
     args = parser.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
@@ -146,7 +271,7 @@ def main():
     )
 
     algorithm = UNSGA3(pop_size=args.pop_size, ref_dirs=get_reference_directions("das-dennis", 3, n_partitions=12))
-    termination = DefaultMultiObjectiveTermination(xtol=1e-8, cvtol=1e-6, ftol=0.0025, period=30, n_max_gen=args.gen)
+    termination = DefaultMultiObjectiveTermination(xtol=1e-8, cvtol=1e-6, ftol=0.0025, period=30, n_max_gen=args.gen, n_max_evals=100000)
 
     print("[*] Starting Optimization...")
     res = minimize(problem, algorithm, termination, seed=1, verbose=True)
@@ -160,8 +285,17 @@ def main():
     eps = 1e-12
     J = np.sqrt(
         ((f1 - f1.min()) / (f1.max() - f1.min() + eps)) ** 2 + ((f2 - f2.min()) / (f2.max() - f2.min() + eps)) ** 2) + (
-                    (f3 - f3.min()) / (f3.max() - f3.min() + eps))
+                (f3 - f3.min()) / (f3.max() - f3.min() + eps))
     best_idx = np.argmin(J)
+
+    P_sim, A_sim = simulate_p_scipy(
+        t, P_scaled, A_scaled, X[best_idx],
+        Cg, Cl, site_prot_idx,
+        K_site_kin, R,
+        L_alpha, kin_to_prot_idx,
+        receptor_mask_prot, receptor_mask_kin,
+        args.mechanism
+    )
 
     analysis.save_pareto_results(args.outdir, F, X, f1, f2, f3, J, F[best_idx])
     analysis.plot_pareto_diagnostics(args.outdir, F, F[best_idx], f1, f2, f3, X)
@@ -174,10 +308,17 @@ def main():
     )
 
     analysis.plot_fitted_simulation(args.outdir)
-    analysis.print_parameter_summary(args.outdir, X[best_idx], sites, proteins, kinases)
+    analysis.print_parameter_summary(args.outdir, X[best_idx], proteins, kinases, sites)
+    analysis.print_biological_scores(args.outdir, X)
+    analysis.plot_biological_scores(args.outdir, X, F)
+    analysis.plot_goodness_of_fit(P_sim, P_scaled, A_sim, A_scaled, args.outdir)
 
     print("[*] Done.")
 
 
 if __name__ == "__main__":
+    main()
+
+
+def cli():
     main()

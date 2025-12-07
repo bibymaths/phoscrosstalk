@@ -7,10 +7,10 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 import seaborn as sns
-from core_mechanisms import decode_theta
-from config import ModelDims, DEFAULT_TIMEPOINTS
-from simulation import simulate_p_scipy
-from optimization import build_full_A0, bio_score
+from phoscrosstalk.core_mechanisms import decode_theta
+from phoscrosstalk.config import ModelDims, DEFAULT_TIMEPOINTS
+from phoscrosstalk.simulation import simulate_p_scipy
+from phoscrosstalk.optimization import build_full_A0, bio_score
 
 
 def save_pareto_results(outdir, F, X, f1, f2, f3, J, F_best):
@@ -52,6 +52,7 @@ def plot_pareto_diagnostics(outdir, F, F_best, f1, f2, f3, X):
     sns.heatmap(np.corrcoef(X.T), ax=ax, cmap="coolwarm", center=0.0, square=True)
     fig.savefig(os.path.join(outdir, "pareto_param_corr.png"), dpi=300)
     plt.close(fig)
+
 
 def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
     K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
@@ -102,6 +103,7 @@ def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
     print(f"beta_g (Global Coupling): {params_decoded[4]:.5f}")
     print(f"beta_l (Local Coupling):  {params_decoded[5]:.5f}")
     print("-" * 40 + "\n")
+
 
 def save_fitted_simulation(outdir, theta_opt, t, sites, proteins, P_scaled, A_scaled,
                            prot_idx_for_A, baselines, amplitudes,
@@ -203,3 +205,58 @@ def plot_fitted_simulation(outdir):
         ax.grid(alpha=0.3)
         ax.set_xlabel("Time (min)")
         ax.set_ylabel("FC / Scaled abundance")
+        ax.legend(fontsize=8, loc="upper right", bbox_to_anchor=(1.25, 1.0))
+        plt.tight_layout()
+        plt.savefig(os.path.join(outdir, f"fit_{prot}.png"), dpi=300)
+        plt.close()
+
+def print_biological_scores(outdir, X):
+    bio_scores = np.array([bio_score(theta) for theta in X])
+
+    with open(os.path.join(outdir, "biological_scores.tsv"), "w") as f:
+        f.write("Index\tBio_Score\n")
+        for i, score in enumerate(bio_scores):
+            f.write(f"{i}\t{score:.6f}\n")
+
+    print("[*] Biological Scores:")
+    for i, score in enumerate(bio_scores):
+        print(f"   → Point {i}: Bio Score = {score:.6f}")
+
+def plot_biological_scores(outdir, X, F):
+    bio_scores = np.array([bio_score(theta) for theta in X])
+    plt.figure(figsize=(7, 6))
+    f1 = F[:, 0]
+    f2 = F[:, 1]
+    sc = plt.scatter(f1, f2, c=bio_scores, cmap="plasma", alpha=0.7)
+    plt.colorbar(sc, label="Biological Score")
+    plt.title("Biological Scores across Pareto Points")
+    plt.xlabel("f1")
+    plt.ylabel("f2")
+    plt.savefig(os.path.join(outdir, "biological_scores.png"), dpi=300)
+    plt.close()
+
+def plot_goodness_of_fit(P_sim, P_data, A_sim, A_data, outdir):
+    # Phosphosites
+    plt.figure(figsize=(8, 8))
+    plt.scatter(P_data.flatten(), P_sim.flatten(), alpha=0.5, color="green")
+    max_val = max(np.nanmax(P_data), np.nanmax(P_sim))
+    plt.plot([0, max_val], [0, max_val], 'r--', lw=2)
+    plt.xlabel("Observed Phosphosite FC")
+    plt.ylabel("Simulated Phosphosite FC")
+    plt.title("Goodness of Fit: Phosphosites")
+    plt.grid(alpha=0.3)
+    plt.savefig(os.path.join(outdir, "goodness_of_fit_phosphosites.png"), dpi=300)
+    plt.close()
+
+    # Proteins
+    plt.figure(figsize=(8, 8))
+    plt.scatter(A_data.flatten(), A_sim.flatten(), alpha=0.5, color="blue")
+    max_val = max(np.nanmax(A_data), np.nanmax(A_sim))
+    plt.plot([0, max_val], [0, max_val], 'r--', lw=2)
+    plt.xlabel("Observed Protein Abundance")
+    plt.ylabel("Simulated Protein Abundance")
+    plt.title("Goodness of Fit: Proteins")
+    plt.grid(alpha=0.3)
+    plt.savefig(os.path.join(outdir, "goodness_of_fit_proteins.png"), dpi=300)
+    plt.close()
+

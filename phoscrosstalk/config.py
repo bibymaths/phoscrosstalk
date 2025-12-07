@@ -4,6 +4,7 @@ Global configuration and state management for the Phospho-Network Model.
 """
 import numpy as np
 
+
 # Global dimensions container
 class ModelDims:
     K: int = None  # Number of Proteins
@@ -15,6 +16,7 @@ class ModelDims:
         cls.K = k
         cls.M = m
         cls.N = n
+
 
 DEFAULT_TIMEPOINTS = np.array(
     [0.0, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0, 16.0,

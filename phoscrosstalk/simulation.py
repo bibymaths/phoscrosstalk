@@ -4,8 +4,8 @@ Wrapper for scipy.integrate.odeint to simulate the network.
 """
 import numpy as np
 from scipy.integrate import odeint
-from core_mechanisms import network_rhs
-from config import ModelDims
+from phoscrosstalk.core_mechanisms import network_rhs
+from phoscrosstalk.config import ModelDims
 
 
 def simulate_p_scipy(t_arr, P_data0, A_data0, theta,
@@ -52,6 +52,7 @@ def simulate_p_scipy(t_arr, P_data0, A_data0, theta,
     P_sim = xs[:, 2 * K + M:].T
 
     return P_sim, A_sim
+
 
 def build_full_A0(K, T, A_scaled, prot_idx_for_A):
     """

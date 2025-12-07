@@ -5,9 +5,9 @@ Pymoo Problem definition, objective functions, and parameter bounds.
 import numpy as np
 from numba import njit
 from pymoo.core.problem import ElementwiseProblem
-from config import ModelDims
-from simulation import simulate_p_scipy
-from core_mechanisms import decode_theta
+from phoscrosstalk.config import ModelDims
+from phoscrosstalk.simulation import simulate_p_scipy
+from phoscrosstalk.core_mechanisms import decode_theta
 
 
 @njit(cache=True)
