@@ -2,11 +2,19 @@
 simulation.py
 Wrapper for scipy.integrate.odeint to simulate the network.
 """
+import warnings
+
 import numpy as np
-from scipy.integrate import odeint
-from phoscrosstalk.core_mechanisms import network_rhs
+from numba import njit
+from scipy.integrate import odeint, ODEintWarning
+
+from phoscrosstalk.core_mechanisms import network_rhs, rhs_nb_dispatch
 from phoscrosstalk.config import ModelDims
 
+warnings.filterwarnings("ignore", category=ODEintWarning)
+warnings.filterwarnings("ignore", message="Excess work done on this call")
+warnings.filterwarnings("ignore", category=RuntimeWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 def simulate_p_scipy(t_arr, P_data0, A_data0, theta,
                      Cg, Cl, site_prot_idx,
@@ -45,6 +53,8 @@ def simulate_p_scipy(t_arr, P_data0, A_data0, theta,
               K_site_kin, R, L_alpha, kin_to_prot_idx,
               receptor_mask_prot, receptor_mask_kin,
               mechanism),
+        Dfun=fd_jacobian,
+        col_deriv=False,
     )
 
     np.clip(xs, 1e-6, None, out=xs)
@@ -69,3 +79,113 @@ def build_full_A0(K, T, A_scaled, prot_idx_for_A):
             A0_full[p_idx, :] = A_scaled[k, :]
 
     return A0_full
+
+def fd_jacobian(
+    x,
+    t,
+    theta,
+    Cg, Cl,
+    site_prot_idx,
+    K_site_kin, R,
+    L_alpha,
+    kin_to_prot_idx,
+    receptor_mask_prot,
+    receptor_mask_kin,
+    mechanism: str,
+):
+    """
+    Python wrapper for fd_jacobian_nb_core so SciPy can call it.
+
+    This keeps the SciPy signature compatible with `network_rhs`.
+    """
+
+    # Map mechanism string → small int for numba
+    if mechanism == "dist":
+        mech_code = 0
+    elif mechanism == "seq":
+        mech_code = 1
+    elif mechanism == "rand":
+        mech_code = 2
+    else:  # fallback
+        mech_code = 0
+
+    # Ensure x is a contiguous float64 array
+    x_arr = np.asarray(x, dtype=np.float64)
+
+    return fd_jacobian_nb_core(
+        x_arr,
+        t,
+        theta,
+        Cg, Cl,
+        site_prot_idx,
+        K_site_kin, R,
+        L_alpha,
+        kin_to_prot_idx,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        mech_code,
+        ModelDims.K,
+        ModelDims.M,
+        ModelDims.N,
+    )
+
+@njit(cache=True, fastmath=True)
+def fd_jacobian_nb_core(
+    x,
+    t,
+    theta,
+    Cg, Cl,
+    site_prot_idx,
+    K_site_kin, R,
+    L_alpha,
+    kin_to_prot_idx,
+    receptor_mask_prot,
+    receptor_mask_kin,
+    mech_code,
+    K, M, N,
+    eps=1e-6
+):
+    """
+    Finite-difference Jacobian of the numba RHS w.r.t. x.
+
+    J[i, j] = d f_i / d x_j  (forward difference)
+    """
+
+    n = x.size
+    J = np.empty((n, n), dtype=np.float64)
+
+    # f(x)
+    f0 = rhs_nb_dispatch(
+        x, t, theta,
+        Cg, Cl, site_prot_idx,
+        K_site_kin, R, L_alpha,
+        kin_to_prot_idx,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        K, M, N,
+        mech_code,
+    )
+
+    # forward difference on each column j
+    for j in range(n):
+        x_pert = x.copy()
+        # scale step by magnitude of x_j
+        h = eps * max(1.0, abs(x[j]))
+        x_pert[j] += h
+
+        fj = rhs_nb_dispatch(
+            x_pert, t, theta,
+            Cg, Cl, site_prot_idx,
+            K_site_kin, R, L_alpha,
+            kin_to_prot_idx,
+            receptor_mask_prot,
+            receptor_mask_kin,
+            K, M, N,
+            mech_code,
+        )
+
+        # (f(x + h e_j) - f(x)) / h  → column j
+        for i in range(n):
+            J[i, j] = (fj[i] - f0[i]) / h
+
+    return J
