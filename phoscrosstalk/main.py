@@ -17,7 +17,7 @@ from pymoo.util.ref_dirs import get_reference_directions
 
 from phoscrosstalk import analysis
 from phoscrosstalk import data_loader
-from phoscrosstalk.config import ModelDims
+from phoscrosstalk.config import ModelDims, DEFAULT_TIMEPOINTS
 from phoscrosstalk.weighting import build_weight_matrices
 from phoscrosstalk.optimization import NetworkOptimizationProblem, create_bounds
 
@@ -276,7 +276,7 @@ def main():
 
     print("[*] Starting Optimization...")
     res = minimize(problem, algorithm, termination, seed=1, verbose=True)
-    pool.close();
+    pool.close()
     pool.join()
 
     # 8. Analysis & Saving
@@ -294,12 +294,13 @@ def main():
 
     analysis.save_fitted_simulation(
         args.outdir, X[best_idx], t, sites, proteins, P_scaled, A_scaled,
-        prot_idx_for_A, baselines, amplitudes, A_data, A_bases, A_amps, args.mechanism,
+        prot_idx_for_A, baselines, amplitudes,
+        Y, A_data, A_bases, A_amps, args.mechanism,
         Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha, kin_to_prot_idx,
         receptor_mask_prot, receptor_mask_kin
     )
 
-    analysis.plot_fitted_simulation(args.outdir)
+    analysis.plot_fitted_simulation(args.outdir, DEFAULT_TIMEPOINTS)
     analysis.print_parameter_summary(args.outdir, X[best_idx], proteins, kinases, sites)
     analysis.print_biological_scores(args.outdir, X)
     analysis.plot_biological_scores(args.outdir, X, F)
