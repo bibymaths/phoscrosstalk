@@ -1,11 +1,11 @@
 <svg width="760" height="200" xmlns="http://www.w3.org/2000/svg">
   <rect width="760" height="200" fill="#0d1117"/>
-  <text x="50%" y="38%" dominant-baseline="middle" text-anchor="middle"
-        font-family="MonoSpace" font-size="42" fill="#39d353">
+  <text x="50%" y="28%" dominant-baseline="middle" text-anchor="middle"
+        font-family="MonoSpace" font-size="42" fill="#f778ba">
       PhosCrosstalk
   </text>
-  <text x="50%" y="68%" dominant-baseline="middle" text-anchor="middle"
-        font-family="MonoSpace" font-size="20" fill="#58a6ff">
+  <text x="50%" y="95%" dominant-baseline="middle" text-anchor="middle"
+        font-family="MonoSpace" font-size="20" fill="#39d353">
       Global Crosstalk-Informed Phosphorylation ODE Modeling
   </text>
 

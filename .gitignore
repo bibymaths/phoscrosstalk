@@ -231,3 +231,4 @@ logs*/
 *.npz
 *.png
 *.svg
+*.txt
