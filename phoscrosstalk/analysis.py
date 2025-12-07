@@ -138,18 +138,38 @@ def save_fitted_simulation(outdir, theta_opt, t, sites, proteins, P_scaled, A_sc
         for k, p_idx in enumerate(prot_idx_for_A):
             A_sim_rescaled[p_idx] = A_bases[k] + A_amps[k] * A_sim[p_idx]
 
-    # Create DF
-    df_sites = pd.DataFrame({"Protein": [s.split("_")[0] for s in sites],
-                             "Residue": [s.split("_")[1] for s in sites], "Type": "Phosphosite"})
-    for j in range(len(t)): df_sites[f"sim_t{j}"] = Y_sim_rescaled[:, j]
-    for j in range(len(t)): df_sites[f"data_t{j}"] = P_scaled[:, j]
+    # Save to DataFrame
+    sim_cols = [f"sim_t{int(time)}" for time in t]
+    data_cols = [f"data_t{int(time)}" for time in t]
+    records = []
+    for i, site in enumerate(sites):
+        prot = site.split("_")[0]
+        residue = site.split("_")[1]
+        record = {
+            "Type": "Phosphosite",
+            "Protein": prot,
+            "Residue": residue
+        }
+        for j, time in enumerate(t):
+            record[sim_cols[j]] = Y_sim_rescaled[i, j]
+            record[data_cols[j]] = np.nan  # Placeholder for data
+        records.append(record)
 
-    df_prots = pd.DataFrame({"Protein": proteins, "Residue": "", "Type": "ProteinAbundance"})
-    for j in range(len(t)): df_prots[f"sim_t{j}"] = A_sim_rescaled[:, j]
-    for j in range(len(t)): df_prots[f"data_t{j}"] = A_data[:, j]
+    for k, p_idx in enumerate(prot_idx_for_A):
+        prot = proteins[p_idx]
+        record = {
+            "Type": "ProteinAbundance",
+            "Protein": prot,
+            "Residue": ""
+        }
+        for j, time in enumerate(t):
+            record[sim_cols[j]] = A_sim_rescaled[p_idx, j]
+            record[data_cols[j]] = A_data[k, j] if A_data.size > 0 else np.nan
+        records.append(record)
 
-    pd.concat([df_sites, df_prots], ignore_index=True).to_csv(os.path.join(outdir, "fit_timeseries.tsv"), sep="\t",
-                                                              index=False)
+    df_out = pd.DataFrame.from_records(records)
+    df_out.to_csv(os.path.join(outdir, "fit_timeseries.tsv"), sep="\t", index=False)
+
 
 def plot_fitted_simulation(outdir):
     # Load Data
@@ -237,28 +257,60 @@ def plot_biological_scores(outdir, X, F):
     plt.savefig(os.path.join(outdir, "biological_scores.png"), dpi=300)
     plt.close()
 
-def plot_goodness_of_fit(P_sim, P_data, A_sim, A_data, outdir):
-    # Phosphosites
-    plt.figure(figsize=(8, 8))
-    plt.scatter(P_data.flatten(), P_sim.flatten(), alpha=0.5, color="green")
-    max_val = max(np.nanmax(P_data), np.nanmax(P_sim))
-    plt.plot([0, max_val], [0, max_val], 'r--', lw=2)
-    plt.xlabel("Observed Phosphosite FC")
-    plt.ylabel("Simulated Phosphosite FC")
-    plt.title("Goodness of Fit: Phosphosites")
-    plt.grid(alpha=0.3)
-    plt.savefig(os.path.join(outdir, "goodness_of_fit_phosphosites.png"), dpi=300)
-    plt.close()
+def plot_goodness_of_fit(file, outdir):
 
-    # Proteins
-    plt.figure(figsize=(8, 8))
-    plt.scatter(A_data.flatten(), A_sim.flatten(), alpha=0.5, color="blue")
-    max_val = max(np.nanmax(A_data), np.nanmax(A_sim))
-    plt.plot([0, max_val], [0, max_val], 'r--', lw=2)
-    plt.xlabel("Observed Protein Abundance")
-    plt.ylabel("Simulated Protein Abundance")
-    plt.title("Goodness of Fit: Proteins")
-    plt.grid(alpha=0.3)
-    plt.savefig(os.path.join(outdir, "goodness_of_fit_proteins.png"), dpi=300)
-    plt.close()
+    df = pd.read_csv(file, sep="\t")
 
+    sim_cols  = [c for c in df.columns if c.startswith("sim_t")]
+    data_cols = [c for c in df.columns if c.startswith("data_t")]
+
+    # Construct labels
+    labels = []
+    for _, row in df.iterrows():
+        if row["Type"] == "Phosphosite":
+            labels.append(f"{row['Protein']}_{row['Residue']}")
+        else:
+            labels.append(f"{row['Protein']}_Abundance")
+
+    df["Label"] = labels
+
+    # --- Prepare scatter plot ---
+    plt.figure(figsize=(8, 8))
+
+    # Scatter by item
+    for idx, row in df.iterrows():
+        sim_vals  = row[sim_cols].values.astype(float)
+        data_vals = row[data_cols].values.astype(float)
+
+        # Remove NaNs if protein abundances have missing time points
+        mask = np.isfinite(sim_vals) & np.isfinite(data_vals)
+
+        if row["Type"] == "Phosphosite":
+            color = "green"
+            alpha = 0.35
+        else:
+            color = "blue"
+            alpha = 0.55
+
+        plt.scatter(
+            data_vals[mask],
+            sim_vals[mask],
+            label=row["Label"] if idx < 15 else None,  # avoid clutter
+            alpha=alpha,
+            color=color,
+            s=30,
+        )
+
+    # identity line
+    all_data = df[data_cols].values.flatten()
+    all_sim  = df[sim_cols].values.flatten()
+    max_val  = np.nanmax([all_data, all_sim])
+    plt.plot([0, max_val], [0, max_val], 'r--', lw=2)
+
+    plt.xlabel("Observed")
+    plt.ylabel("Simulated")
+    plt.title("Goodness of Fit: Observed vs Simulated")
+
+    plt.tight_layout()
+    plt.savefig(f'{outdir}/goodness_of_fit', dpi=300)
+    plt.close()
