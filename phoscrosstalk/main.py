@@ -271,7 +271,7 @@ def main():
     )
 
     algorithm = UNSGA3(pop_size=args.pop_size, ref_dirs=get_reference_directions("das-dennis", 3, n_partitions=12))
-    termination = DefaultMultiObjectiveTermination(xtol=1e-8, cvtol=1e-6, ftol=0.0025, period=30, n_max_gen=args.gen, n_max_evals=100000)
+    termination = DefaultMultiObjectiveTermination(xtol=1e-8, cvtol=1e-6, ftol=0.0025, period=30, n_max_gen=args.gen, n_max_evals=10000000)
 
     print("[*] Starting Optimization...")
     res = minimize(problem, algorithm, termination, seed=1, verbose=True)

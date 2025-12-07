@@ -142,9 +142,11 @@ def save_fitted_simulation(outdir, theta_opt, t, sites, proteins, P_scaled, A_sc
     df_sites = pd.DataFrame({"Protein": [s.split("_")[0] for s in sites],
                              "Residue": [s.split("_")[1] for s in sites], "Type": "Phosphosite"})
     for j in range(len(t)): df_sites[f"sim_t{j}"] = Y_sim_rescaled[:, j]
+    for j in range(len(t)): df_sites[f"data_t{j}"] = P_scaled[:, j]
 
     df_prots = pd.DataFrame({"Protein": proteins, "Residue": "", "Type": "ProteinAbundance"})
     for j in range(len(t)): df_prots[f"sim_t{j}"] = A_sim_rescaled[:, j]
+    for j in range(len(t)): df_prots[f"data_t{j}"] = A_data[:, j]
 
     pd.concat([df_sites, df_prots], ignore_index=True).to_csv(os.path.join(outdir, "fit_timeseries.tsv"), sep="\t",
                                                               index=False)

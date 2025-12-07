@@ -557,3 +557,50 @@ def network_rhs(x, t, theta, Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha, kin_
                                           receptor_mask_prot, receptor_mask_kin, K, M, N)
     else:
         raise ValueError(f"Unknown mechanism: {mech}")
+
+
+@njit(cache=True, fastmath=True)
+def rhs_nb_dispatch(
+    x,
+    t,
+    theta,
+    Cg, Cl,
+    site_prot_idx,
+    K_site_kin, R,
+    L_alpha,
+    kin_to_prot_idx,
+    receptor_mask_prot,
+    receptor_mask_kin,
+    K, M, N,
+    mech_code  # 0: dist, 1: seq, 2: rand
+):
+    if mech_code == 0:
+        return network_rhs_nb_core_distributive(
+            x, t, theta,
+            Cg, Cl, site_prot_idx,
+            K_site_kin, R, L_alpha,
+            kin_to_prot_idx,
+            receptor_mask_prot,
+            receptor_mask_kin,
+            K, M, N
+        )
+    elif mech_code == 1:
+        return network_rhs_nb_core_sequential(
+            x, t, theta,
+            Cg, Cl, site_prot_idx,
+            K_site_kin, R, L_alpha,
+            kin_to_prot_idx,
+            receptor_mask_prot,
+            receptor_mask_kin,
+            K, M, N
+        )
+    else:
+        return network_rhs_nb_core_random(
+            x, t, theta,
+            Cg, Cl, site_prot_idx,
+            K_site_kin, R, L_alpha,
+            kin_to_prot_idx,
+            receptor_mask_prot,
+            receptor_mask_kin,
+            K, M, N
+        )
