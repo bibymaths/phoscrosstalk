@@ -5,7 +5,7 @@ Numba-compiled Right-Hand Side (RHS) functions for ODE integration.
 import math
 import numpy as np
 from numba import njit
-from config import ModelDims
+from phoscrosstalk.config import ModelDims
 
 
 @njit(cache=True)
@@ -72,167 +72,285 @@ def decode_theta(theta, K, M, N):
 
 
 @njit(cache=True)
-def network_rhs_nb_core_distributive(x, t, theta, Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
-                                     kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin, K, M, N):
-    (k_act, k_deact, s_prod, d_deg, beta_g, beta_l, alpha, kK_act, kK_deact, k_off,
+def network_rhs_nb_core_distributive(x, t, theta,
+                        Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
+                        kin_to_prot_idx,
+                        receptor_mask_prot, receptor_mask_kin,
+                        K, M, N):
+    """
+    Numba-compiled RHS core (distributive mechanism) with:
+      - explicit stimulus u(t) (step at t=0)
+      - kinase ↔ protein coupling via kin_to_prot_idx
+      - phosphorylation depending on protein abundance A
+      - receptor vs downstream hierarchy via masks
+    """
+
+    (k_act, k_deact, s_prod, d_deg,
+     beta_g, beta_l, alpha,
+     kK_act, kK_deact, k_off,
      gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net) = decode_theta(theta, K, M, N)
 
+    # unpack state
     S = x[0:K]
     A = x[K:2 * K]
     Kdyn = x[2 * K:2 * K + M]
-    p = x[2 * K + M:2 * K + M + N].copy()
+    p = x[2 * K + M:2 * K + M + N]
+
+    p = p.copy()
     Kdyn = Kdyn.copy()
+    # -----------------------------------
+    # external stimulus: step at t = 0
+    # u(t) = 0 for t < 0 (pre-equilibration),
+    # u(t) = 1 for t >= 0 (stimulated)
+    # -----------------------------------
+    # if t == 0.0:
+    #     u = 0.0
+    # else:
+    #     u = 1.0
 
     u = 1.0 / (1.0 + np.exp(-(t) / 0.1))
 
-    coup_g = beta_g * (Cg @ p)
-    coup_l = beta_l * (Cl @ p)
-    coup = np.tanh(coup_g + coup_l)
+    # ---------- site-level global + local context ----------
+    coup_g = beta_g * (Cg @ p)  # (N,)
+    coup_l = beta_l * (Cl @ p)  # (N,)
+    coup = np.tanh(coup_g + coup_l)  # (N,)
     coup_pos = np.maximum(coup, 0.0)
 
-    num_p = np.zeros(K);
-    num_c = np.zeros(K);
+    # per-protein aggregates
+    num_p = np.zeros(K)
+    num_c = np.zeros(K)
     den = np.zeros(K)
+
     for i in range(N):
         prot = site_prot_idx[i]
-        num_p[prot] += p[i];
-        num_c[prot] += coup[i];
+        num_p[prot] += p[i]
+        num_c[prot] += coup[i]
         den[prot] += 1.0
 
-    mean_p_per_prot = np.zeros(K);
+    mean_p_per_prot = np.zeros(K)
     mean_ctx_per_prot = np.zeros(K)
     for k in range(K):
         if den[k] > 0.0:
             mean_p_per_prot[k] = num_p[k] / den[k]
             mean_ctx_per_prot[k] = num_c[k] / den[k]
+        else:
+            mean_p_per_prot[k] = 0.0
+            mean_ctx_per_prot[k] = 0.0
 
+    # ---------- 1) S dynamics ----------
+    # baseline drive from phospho + context
     D_S = 1.0 + gamma_S_p * mean_p_per_prot + mean_ctx_per_prot
+
+    # add external input only for receptor proteins
     for k in range(K):
-        if receptor_mask_prot[k] == 1: D_S[k] += u
-        if D_S[k] < 0.0: D_S[k] = 0.0
+        if receptor_mask_prot[k] == 1:
+            D_S[k] += u
+
+        if D_S[k] < 0.0:
+            D_S[k] = 0.0
 
     dS = np.empty(K)
     for k in range(K):
         dS[k] = k_act[k] * D_S[k] * (1.0 - S[k]) - k_deact[k] * S[k]
 
+    # ---------- 2) A dynamics ----------
+    # abundance modulated by S (activation), but can be extended later
     s_eff = np.empty(K)
     for k in range(K):
         s_eff[k] = s_prod[k] * (1.0 + gamma_A_S * S[k])
-        if s_eff[k] < 0.0: s_eff[k] = 0.0
+        if s_eff[k] < 0.0:
+            s_eff[k] = 0.0
 
     dA = np.empty(K)
     for k in range(K):
         dA[k] = s_eff[k] - d_deg[k] * A[k]
 
-    u_sub = R @ p
-    u_net = -(L_alpha @ Kdyn) if L_alpha.shape[0] > 0 else np.zeros(M)
+    # ---------- 3) Kdyn dynamics ----------
+    # substrate signal
+    u_sub = R @ p  # (M,)
+
+    # kinase network / Laplacian
+    if L_alpha.shape[0] > 0:
+        u_net = -(L_alpha @ Kdyn)
+    else:
+        u_net = np.zeros(M)
+
+    # base drive from substrate + network
     U = u_sub + gamma_K_net * u_net
+
+    # couple kinase activity to host protein S and A
     for m in range(M):
         prot = kin_to_prot_idx[m]
-        if prot >= 0: U[m] += gamma_A_S * S[prot] + gamma_A_p * A[prot]
-        if receptor_mask_kin[m] == 1: U[m] += u
+        if prot >= 0:
+            # S- and A-driven modulation (reuse gammas you already have)
+            U[m] += gamma_A_S * S[prot] + gamma_A_p * A[prot]
+
+        # external stimulus directly to receptor kinases
+        if receptor_mask_kin[m] == 1:
+            U[m] += u
+
+    dK = np.empty(M)
+    for m in range(M):
+        # bounded activation via tanh
+        act_term = np.tanh(U[m])
+        dK[m] = kK_act[m] * act_term * (1.0 - Kdyn[m]) - kK_deact[m] * Kdyn[m]
+
+    # ---------- 4) p dynamics (distributive, now A-dependent) ----------
+    # effective on-rate, combining site→kinase, alpha, and Kdyn
+    k_on_eff = K_site_kin @ (alpha * Kdyn)  # (N,)
+
+    dp = np.empty(N)
+    for i in range(N):
+        # TEMP: ignore abundance dependence to decouple P from A for fitting
+        # saturating abundance factor: A/(1+A) to avoid crazy rates
+        # prot = site_prot_idx[i]
+        # A_local = A[prot]
+        # A_factor = A_local / (1.0 + A_local)
+        # v_on  = k_on_eff[i] * (1.0 + coup_pos[i]) * A_factor * (1.0 - p[i])
+        v_raw = k_on_eff[i] * (1.0 + coup_pos[i]) * (1.0 - p[i])
+        # Saturate growth to kill runaway exponential
+        v_on = v_raw / (1.0 + abs(v_raw))
+        v_off = k_off[i] * p[i]
+        v_off = v_off / (1.0 + v_off)
+        dp[i] = v_on - v_off
+
+    # pack
+    dx = np.empty(2 * K + M + N)
+    dx[0:K] = dS
+    dx[K:2 * K] = dA
+    dx[2 * K:2 * K + M] = dK
+    dx[2 * K + M:2 * K + M + N] = dp
+
+    # ======= STABILITY CLIPPING =======
+    for k in range(K):
+        if S[k] < 0.0: S[k] = 0.0
+        if S[k] > 1.0: S[k] = 1.0
+
+    for k in range(K):
+        if A[k] < 0.0: A[k] = 0.0
+        if A[k] > 5.0: A[k] = 5.0  # abundance is normalized
+
+    for m in range(M):
+        if Kdyn[m] < 0.0: Kdyn[m] = 0.0
+        if Kdyn[m] > 1.0: Kdyn[m] = 1.0
+
+    for i in range(N):
+        if p[i] < 0.0: p[i] = 0.0
+        if p[i] > 1.0: p[i] = 1.0
+
+    return dx
+
+
+@njit(cache=True)
+def network_rhs_nb_core_sequential(x, t, theta,
+                                   Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
+                                   kin_to_prot_idx,
+                                   receptor_mask_prot, receptor_mask_kin,
+                                   K, M, N):
+    """
+    RHS core with SEQUENTIAL multi-site phosphorylation per protein.
+    Later sites on the same protein require the previous site (in index
+    order) to be phosphorylated to activate strongly.
+    """
+
+    (k_act, k_deact, s_prod, d_deg,
+     beta_g, beta_l, alpha,
+     kK_act, kK_deact, k_off,
+     gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net) = decode_theta(theta, K, M, N)
+
+    # unpack state
+    S = x[0:K]
+    A = x[K:2 * K]
+    Kdyn = x[2 * K:2 * K + M]
+    p = x[2 * K + M:2 * K + M + N]
+
+    p = p.copy()
+    Kdyn = Kdyn.copy()
+
+    # smooth external stimulus
+    u = 1.0 / (1.0 + np.exp(-(t) / 0.1))
+
+    # ---------- site-level global + local context ----------
+    coup_g = beta_g * (Cg @ p)      # (N,)
+    coup_l = beta_l * (Cl @ p)      # (N,)
+    coup = np.tanh(coup_g + coup_l) # (N,)
+    coup_pos = np.maximum(coup, 0.0)
+
+    # per-protein aggregates
+    num_p = np.zeros(K)
+    num_c = np.zeros(K)
+    den   = np.zeros(K)
+
+    for i in range(N):
+        prot = site_prot_idx[i]
+        num_p[prot] += p[i]
+        num_c[prot] += coup[i]
+        den[prot]   += 1.0
+
+    mean_p_per_prot   = np.zeros(K)
+    mean_ctx_per_prot = np.zeros(K)
+    for k in range(K):
+        if den[k] > 0.0:
+            mean_p_per_prot[k]   = num_p[k] / den[k]
+            mean_ctx_per_prot[k] = num_c[k] / den[k]
+        else:
+            mean_p_per_prot[k]   = 0.0
+            mean_ctx_per_prot[k] = 0.0
+
+    # ---------- 1) S dynamics ----------
+    D_S = 1.0 + gamma_S_p * mean_p_per_prot + mean_ctx_per_prot
+
+    for k in range(K):
+        if receptor_mask_prot[k] == 1:
+            D_S[k] += u
+        if D_S[k] < 0.0:
+            D_S[k] = 0.0
+
+    dS = np.empty(K)
+    for k in range(K):
+        dS[k] = k_act[k] * D_S[k] * (1.0 - S[k]) - k_deact[k] * S[k]
+
+    # ---------- 2) A dynamics ----------
+    s_eff = np.empty(K)
+    for k in range(K):
+        s_eff[k] = s_prod[k] * (1.0 + gamma_A_S * S[k])
+        if s_eff[k] < 0.0:
+            s_eff[k] = 0.0
+
+    dA = np.empty(K)
+    for k in range(K):
+        dA[k] = s_eff[k] - d_deg[k] * A[k]
+
+    # ---------- 3) Kdyn dynamics ----------
+    u_sub = R @ p  # (M,)
+
+    if L_alpha.shape[0] > 0:
+        u_net = -(L_alpha @ Kdyn)
+    else:
+        u_net = np.zeros(M)
+
+    U = u_sub + gamma_K_net * u_net
+
+    for m in range(M):
+        prot = kin_to_prot_idx[m]
+        if prot >= 0:
+            U[m] += gamma_A_S * S[prot] + gamma_A_p * A[prot]
+        if receptor_mask_kin[m] == 1:
+            U[m] += u
 
     dK = np.empty(M)
     for m in range(M):
         act_term = np.tanh(U[m])
         dK[m] = kK_act[m] * act_term * (1.0 - Kdyn[m]) - kK_deact[m] * Kdyn[m]
 
-    k_on_eff = K_site_kin @ (alpha * Kdyn)
-    dp = np.empty(N)
-    for i in range(N):
-        v_raw = k_on_eff[i] * (1.0 + coup_pos[i]) * (1.0 - p[i])
-        v_on = v_raw / (1.0 + abs(v_raw))
-        v_off = k_off[i] * p[i]
-        v_off = v_off / (1.0 + v_off)
-        dp[i] = v_on - v_off
+    # ---------- 4) p dynamics (SEQUENTIAL) ----------
+    # effective on-rate
+    k_on_eff = K_site_kin @ (alpha * Kdyn)  # (N,)
 
-    dx = np.empty(2 * K + M + N)
-    dx[0:K] = dS;
-    dx[K:2 * K] = dA;
-    dx[2 * K:2 * K + M] = dK;
-    dx[2 * K + M:] = dp
-
-    for k in range(K):
-        if S[k] < 0.0:
-            S[k] = 0.0
-        elif S[k] > 1.0:
-            S[k] = 1.0
-        if A[k] < 0.0:
-            A[k] = 0.0
-        elif A[k] > 5.0:
-            A[k] = 5.0
-    for m in range(M):
-        if Kdyn[m] < 0.0:
-            Kdyn[m] = 0.0
-        elif Kdyn[m] > 1.0:
-            Kdyn[m] = 1.0
-    for i in range(N):
-        if p[i] < 0.0:
-            p[i] = 0.0
-        elif p[i] > 1.0:
-            p[i] = 1.0
-    return dx
-
-
-@njit(cache=True)
-def network_rhs_nb_core_sequential(x, t, theta, Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
-                                   kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin, K, M, N):
-    # (Abbreviated for brevity - keeps logic of sequential phosphorylation)
-    # Using the same logic structure as distributive but with sequential gating
-    (k_act, k_deact, s_prod, d_deg, beta_g, beta_l, alpha, kK_act, kK_deact, k_off,
-     gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net) = decode_theta(theta, K, M, N)
-
-    S = x[0:K];
-    A = x[K:2 * K];
-    Kdyn = x[2 * K:2 * K + M];
-    p = x[2 * K + M:].copy();
-    Kdyn = Kdyn.copy()
-    u = 1.0 / (1.0 + np.exp(-(t) / 0.1))
-
-    # Context & Protein Aggregates
-    coup_g = beta_g * (Cg @ p);
-    coup_l = beta_l * (Cl @ p)
-    coup_pos = np.maximum(np.tanh(coup_g + coup_l), 0.0)
-
-    num_p = np.zeros(K);
-    num_c = np.zeros(K);
-    den = np.zeros(K)
-    for i in range(N):
-        prot = site_prot_idx[i]
-        num_p[prot] += p[i];
-        num_c[prot] += coup_pos[i];
-        den[prot] += 1.0  # Note: using coup_pos in sum for consistency with dist
-
-    mean_p_per_prot = np.zeros(K);
-    mean_ctx_per_prot = np.zeros(K)
-    for k in range(K):
-        if den[k] > 0.0:
-            mean_p_per_prot[k] = num_p[k] / den[k]
-            mean_ctx_per_prot[k] = num_c[k] / den[k]
-
-    # S, A, Kdyn Dynamics (Same as Distributive)
-    D_S = 1.0 + gamma_S_p * mean_p_per_prot + mean_ctx_per_prot
-    for k in range(K):
-        if receptor_mask_prot[k] == 1: D_S[k] += u
-        if D_S[k] < 0.0: D_S[k] = 0.0
-
-    dS = k_act * D_S * (1.0 - S) - k_deact * S
-    s_eff = np.maximum(s_prod * (1.0 + gamma_A_S * S), 0.0)
-    dA = s_eff - d_deg * A
-
-    u_sub = R @ p
-    u_net = -(L_alpha @ Kdyn) if L_alpha.shape[0] > 0 else np.zeros(M)
-    U = u_sub + gamma_K_net * u_net
-    for m in range(M):
-        prot = kin_to_prot_idx[m]
-        if prot >= 0: U[m] += gamma_A_S * S[prot] + gamma_A_p * A[prot]
-        if receptor_mask_kin[m] == 1: U[m] += u
-    dK = kK_act * np.tanh(U) * (1.0 - Kdyn) - kK_deact * Kdyn
-
-    # Sequential Logic
-    k_on_eff = K_site_kin @ (alpha * Kdyn)
+    # precompute predecessor index per site (per protein)
     prev_idx = np.empty(N, dtype=np.int64)
     last_idx = np.full(K, -1, dtype=np.int64)
+
     for i in range(N):
         prot = site_prot_idx[i]
         prev_idx[i] = last_idx[prot]
@@ -240,90 +358,190 @@ def network_rhs_nb_core_sequential(x, t, theta, Cg, Cl, site_prot_idx, K_site_ki
 
     dp = np.empty(N)
     for i in range(N):
+        prot = site_prot_idx[i]
         j_prev = prev_idx[i]
-        gate = 1.0 if j_prev == -1 else p[j_prev]
+
+        if j_prev == -1:
+            # first site on this protein: behaves like distributive
+            gate = 1.0
+        else:
+            # later sites gated by previous site's occupancy
+            gate = p[j_prev]
+
         v_raw = k_on_eff[i] * (1.0 + coup_pos[i]) * gate * (1.0 - p[i])
-        v_on = v_raw / (1.0 + abs(v_raw))
-        v_off = k_off[i] * p[i] / (1.0 + v_off)
+        v_on  = v_raw / (1.0 + abs(v_raw))
+        v_off = k_off[i] * p[i]
+        v_off = v_off / (1.0 + v_off)
         dp[i] = v_on - v_off
 
+    # pack
     dx = np.empty(2 * K + M + N)
-    dx[0:K] = dS;
-    dx[K:2 * K] = dA;
-    dx[2 * K:2 * K + M] = dK;
-    dx[2 * K + M:] = dp
-    # Stability Clipping omitted for brevity, logic identical to distributive
+    dx[0:K]               = dS
+    dx[K:2 * K]           = dA
+    dx[2 * K:2 * K + M]   = dK
+    dx[2 * K + M:]        = dp
+
+    # stability clipping on state variables (not on dx)
+    for k in range(K):
+        if S[k] < 0.0: S[k] = 0.0
+        if S[k] > 1.0: S[k] = 1.0
+
+    for k in range(K):
+        if A[k] < 0.0: A[k] = 0.0
+        if A[k] > 5.0: A[k] = 5.0
+
+    for m in range(M):
+        if Kdyn[m] < 0.0: Kdyn[m] = 0.0
+        if Kdyn[m] > 1.0: Kdyn[m] = 1.0
+
+    for i in range(N):
+        if p[i] < 0.0: p[i] = 0.0
+        if p[i] > 1.0: p[i] = 1.0
+
     return dx
 
-
 @njit(cache=True)
-def network_rhs_nb_core_random(x, t, theta, Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
-                               kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin, K, M, N):
-    # Random/Cooperative logic
-    (k_act, k_deact, s_prod, d_deg, beta_g, beta_l, alpha, kK_act, kK_deact, k_off,
+def network_rhs_nb_core_random(x, t, theta,
+                               Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
+                               kin_to_prot_idx,
+                               receptor_mask_prot, receptor_mask_kin,
+                               K, M, N):
+    """
+    RHS core with RANDOM / cooperative multi-site phosphorylation.
+    Sites on the same protein do not have a fixed order; their on-rate
+    increases with the mean phosphorylation level of that protein.
+    """
+
+    (k_act, k_deact, s_prod, d_deg,
+     beta_g, beta_l, alpha,
+     kK_act, kK_deact, k_off,
      gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net) = decode_theta(theta, K, M, N)
 
-    # State unpacking and S, A, Kdyn calc (Identical to Distributive)
-    S = x[0:K];
-    A = x[K:2 * K];
-    Kdyn = x[2 * K:2 * K + M];
-    p = x[2 * K + M:].copy();
-    Kdyn = Kdyn.copy()
-    u = 1.0 / (1.0 + np.exp(-(t) / 0.1))
-    coup_g = beta_g * (Cg @ p);
-    coup_l = beta_l * (Cl @ p)
-    coup_pos = np.maximum(np.tanh(coup_g + coup_l), 0.0)
+    # unpack state
+    S = x[0:K]
+    A = x[K:2 * K]
+    Kdyn = x[2 * K:2 * K + M]
+    p = x[2 * K + M:2 * K + M + N]
 
-    num_p = np.zeros(K);
-    den = np.zeros(K);
+    p = p.copy()
+    Kdyn = Kdyn.copy()
+
+    # smooth external stimulus
+    u = 1.0 / (1.0 + np.exp(-(t) / 0.1))
+
+    # ---------- site-level global + local context ----------
+    coup_g = beta_g * (Cg @ p)      # (N,)
+    coup_l = beta_l * (Cl @ p)      # (N,)
+    coup = np.tanh(coup_g + coup_l) # (N,)
+    coup_pos = np.maximum(coup, 0.0)
+
+    # per-protein aggregates
+    num_p = np.zeros(K)
     num_c = np.zeros(K)
+    den   = np.zeros(K)
+
     for i in range(N):
-        prot = site_prot_idx[i];
-        num_p[prot] += p[i];
-        num_c[prot] += coup_pos[i];
-        den[prot] += 1.0
-    mean_p_per_prot = np.zeros(K);
+        prot = site_prot_idx[i]
+        num_p[prot] += p[i]
+        num_c[prot] += coup[i]
+        den[prot]   += 1.0
+
+    mean_p_per_prot   = np.zeros(K)
     mean_ctx_per_prot = np.zeros(K)
     for k in range(K):
-        if den[k] > 0.0: mean_p_per_prot[k] = num_p[k] / den[k]; mean_ctx_per_prot[k] = num_c[k] / den[k]
+        if den[k] > 0.0:
+            mean_p_per_prot[k]   = num_p[k] / den[k]
+            mean_ctx_per_prot[k] = num_c[k] / den[k]
+        else:
+            mean_p_per_prot[k]   = 0.0
+            mean_ctx_per_prot[k] = 0.0
 
+    # ---------- 1) S dynamics ----------
     D_S = 1.0 + gamma_S_p * mean_p_per_prot + mean_ctx_per_prot
-    for k in range(K):
-        if receptor_mask_prot[k] == 1: D_S[k] += u
-        if D_S[k] < 0.0: D_S[k] = 0.0
-    dS = k_act * D_S * (1.0 - S) - k_deact * S
-    dA = np.maximum(s_prod * (1.0 + gamma_A_S * S), 0.0) - d_deg * A
 
-    u_sub = R @ p
-    u_net = -(L_alpha @ Kdyn) if L_alpha.shape[0] > 0 else np.zeros(M)
+    for k in range(K):
+        if receptor_mask_prot[k] == 1:
+            D_S[k] += u
+        if D_S[k] < 0.0:
+            D_S[k] = 0.0
+
+    dS = np.empty(K)
+    for k in range(K):
+        dS[k] = k_act[k] * D_S[k] * (1.0 - S[k]) - k_deact[k] * S[k]
+
+    # ---------- 2) A dynamics ----------
+    s_eff = np.empty(K)
+    for k in range(K):
+        s_eff[k] = s_prod[k] * (1.0 + gamma_A_S * S[k])
+        if s_eff[k] < 0.0:
+            s_eff[k] = 0.0
+
+    dA = np.empty(K)
+    for k in range(K):
+        dA[k] = s_eff[k] - d_deg[k] * A[k]
+
+    # ---------- 3) Kdyn dynamics ----------
+    u_sub = R @ p  # (M,)
+
+    if L_alpha.shape[0] > 0:
+        u_net = -(L_alpha @ Kdyn)
+    else:
+        u_net = np.zeros(M)
+
     U = u_sub + gamma_K_net * u_net
+
     for m in range(M):
         prot = kin_to_prot_idx[m]
-        if prot >= 0: U[m] += gamma_A_S * S[prot] + gamma_A_p * A[prot]
-        if receptor_mask_kin[m] == 1: U[m] += u
-    dK = kK_act * np.tanh(U) * (1.0 - Kdyn) - kK_deact * Kdyn
+        if prot >= 0:
+            U[m] += gamma_A_S * S[prot] + gamma_A_p * A[prot]
+        if receptor_mask_kin[m] == 1:
+            U[m] += u
 
-    # Random Cooperative
-    k_on_eff = K_site_kin @ (alpha * Kdyn)
+    dK = np.empty(M)
+    for m in range(M):
+        act_term = np.tanh(U[m])
+        dK[m] = kK_act[m] * act_term * (1.0 - Kdyn[m]) - kK_deact[m] * Kdyn[m]
+
+    # ---------- 4) p dynamics (RANDOM/cooperative) ----------
+    k_on_eff = K_site_kin @ (alpha * Kdyn)  # (N,)
+
     dp = np.empty(N)
     for i in range(N):
         prot = site_prot_idx[i]
+        # cooperative factor: more phospho on same protein → faster new sites
         coop = 1.0 + mean_p_per_prot[prot]
+
         v_raw = k_on_eff[i] * (1.0 + coup_pos[i]) * coop * (1.0 - p[i])
-        v_on = v_raw / (1.0 + abs(v_raw))
-        v_off = k_off[i] * p[i] / (1.0 + v_off)
+        v_on  = v_raw / (1.0 + abs(v_raw))
+        v_off = k_off[i] * p[i]
+        v_off = v_off / (1.0 + v_off)
         dp[i] = v_on - v_off
 
+    # pack
     dx = np.empty(2 * K + M + N)
-    dx[0:K] = dS;
-    dx[K:2 * K] = dA;
-    dx[2 * K:2 * K + M] = dK;
-    dx[2 * K + M:] = dp
-    # Clipping
-    for i in range(2 * K + M + N):  # Generic clip for brevity in this view
-        if dx.size > 0: pass
-    return dx
+    dx[0:K]               = dS
+    dx[K:2 * K]           = dA
+    dx[2 * K:2 * K + M]   = dK
+    dx[2 * K + M:]        = dp
 
+    # stability clipping on state variables (not on dx)
+    for k in range(K):
+        if S[k] < 0.0: S[k] = 0.0
+        if S[k] > 1.0: S[k] = 1.0
+
+    for k in range(K):
+        if A[k] < 0.0: A[k] = 0.0
+        if A[k] > 5.0: A[k] = 5.0
+
+    for m in range(M):
+        if Kdyn[m] < 0.0: Kdyn[m] = 0.0
+        if Kdyn[m] > 1.0: Kdyn[m] = 1.0
+
+    for i in range(N):
+        if p[i] < 0.0: p[i] = 0.0
+        if p[i] > 1.0: p[i] = 1.0
+
+    return dx
 
 def network_rhs(x, t, theta, Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha, kin_to_prot_idx,
                 receptor_mask_prot, receptor_mask_kin, mech="dist"):

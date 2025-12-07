@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import numpy as np
@@ -82,10 +81,10 @@ def _time_weights_early_emphasis_moderate(t: np.ndarray) -> np.ndarray:
 
 
 def build_weight_matrices(
-    t: np.ndarray,
-    Y: np.ndarray,
-    A_data: np.ndarray | None = None,
-    scheme: str = "uniform",
+        t: np.ndarray,
+        Y: np.ndarray,
+        A_data: np.ndarray | None = None,
+        scheme: str = "uniform",
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Build (W_data, W_data_prot) for a given weighting scheme.

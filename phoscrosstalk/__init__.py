@@ -1,0 +1,5 @@
+__version__ = "0.1.0"
+__author__ = "Abhinav Mishra"
+__email__ = "mishraabhinav36@gmail.com"
+__license__ = "BSD-3-Clause"
+__description__ = "A tool to analyze phosphoproteomic crosstalk using graph-based regularization."

@@ -7,7 +7,8 @@ import sqlite3
 import pickle
 import numpy as np
 import pandas as pd
-from config import DEFAULT_TIMEPOINTS
+from phoscrosstalk.config import DEFAULT_TIMEPOINTS
+
 
 def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
     """Load time-series from a file."""
@@ -86,6 +87,7 @@ def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
 
     return sites, proteins, site_prot_idx, positions, t, Y, A_data, A_proteins
 
+
 def scale_fc_to_unit_interval(Y, use_log=False):
     """Min-Max scaling to [0, 1] based on the whole row."""
     N, T = Y.shape
@@ -111,6 +113,7 @@ def scale_fc_to_unit_interval(Y, use_log=False):
 
     return P, baselines, amplitudes
 
+
 def apply_scaling(Y, mode="minmax"):
     if mode == "minmax":
         return scale_fc_to_unit_interval(Y, use_log=False)
@@ -124,12 +127,15 @@ def apply_scaling(Y, mode="minmax"):
     else:
         raise ValueError(f"Unknown scale mode: {mode}")
 
+
 def row_normalize(C):
     row_sums = C.sum(axis=1, keepdims=True)
     row_sums[row_sums == 0.0] = 1.0
     return C / row_sums
 
-def build_C_matrices_from_db(ptm_intra_path, ptm_inter_path, sites, site_prot_idx, positions, proteins, length_scale=50.0):
+
+def build_C_matrices_from_db(ptm_intra_path, ptm_inter_path, sites, site_prot_idx, positions, proteins,
+                             length_scale=50.0):
     N = len(sites)
     idx = {s: i for i, s in enumerate(sites)}
     Cg = np.zeros((N, N), dtype=float)
@@ -137,7 +143,8 @@ def build_C_matrices_from_db(ptm_intra_path, ptm_inter_path, sites, site_prot_id
     # Intra
     conn_i = sqlite3.connect(ptm_intra_path)
     cur_i = conn_i.cursor()
-    for protein, res1, r1, res2, r2 in cur_i.execute("SELECT protein, residue1, score1, residue2, score2 FROM intra_pairs"):
+    for protein, res1, r1, res2, r2 in cur_i.execute(
+            "SELECT protein, residue1, score1, residue2, score2 FROM intra_pairs"):
         s1 = f"{protein}_{res1}"
         s2 = f"{protein}_{res2}"
         if s1 in idx and s2 in idx:
@@ -150,7 +157,8 @@ def build_C_matrices_from_db(ptm_intra_path, ptm_inter_path, sites, site_prot_id
     # Inter
     conn_e = sqlite3.connect(ptm_inter_path)
     cur_e = conn_e.cursor()
-    for p1, res1, r1, p2, res2, r2 in cur_e.execute("SELECT protein1, residue1, score1, protein2, residue2, score2 FROM inter_pairs"):
+    for p1, res1, r1, p2, res2, r2 in cur_e.execute(
+            "SELECT protein1, residue1, score1, protein2, residue2, score2 FROM inter_pairs"):
         s1 = f"{p1}_{res1}"
         s2 = f"{p2}_{res2}"
         if s1 in idx and s2 in idx:
@@ -173,6 +181,7 @@ def build_C_matrices_from_db(ptm_intra_path, ptm_inter_path, sites, site_prot_id
 
     return Cg, Cl
 
+
 def load_kinase_site_matrix(path, sites):
     df = pd.read_csv(path, sep="\t")
     if "weight" not in df.columns: df["weight"] = 1.0
@@ -188,6 +197,7 @@ def load_kinase_site_matrix(path, sites):
             if w > K_site_kin[i, j]:
                 K_site_kin[i, j] = w
     return K_site_kin, kinases
+
 
 def build_kinase_site_from_kea(ks_psite_table_path, sites):
     df = pd.read_csv(ks_psite_table_path, sep="\t")
@@ -211,6 +221,7 @@ def build_kinase_site_from_kea(ks_psite_table_path, sites):
     row_sums = K_site_kin.sum(axis=1, keepdims=True)
     row_sums[row_sums == 0.0] = 1.0
     return K_site_kin / row_sums, kinases
+
 
 def build_alpha_laplacian_from_unified_graph(pkl_path, kinases, weight_attr="weight_mean"):
     with open(pkl_path, "rb") as f:
