@@ -31,6 +31,9 @@ dev = [
     "ipython",
 ]
 
+[project.scripts]
+phoscrosstalk = "phoscrosstalk.main:cli"
+
 [project.urls]
 homepage = "https://github.com/bibymaths/phoscrosstalk"
 repository = "https://github.com/bibymaths/phoscrosstalk"
