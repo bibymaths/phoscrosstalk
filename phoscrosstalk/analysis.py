@@ -203,19 +203,17 @@ def save_fitted_simulation(
     df_out.to_csv(os.path.join(outdir, "fit_timeseries.tsv"), sep="\t", index=False)
 
 
-def plot_fitted_simulation(outdir, t=None):
+def plot_fitted_simulation(outdir):
+    # Load Data
     df = pd.read_csv(os.path.join(outdir, "fit_timeseries.tsv"), sep="\t")
+    proteins = sorted(df["Protein"].unique())
+    print(f"[*] Found {len(proteins)} proteins")
+    df_sites = df[df["Type"] == "Phosphosite"].reset_index(drop=True)
+    df_prots = df[df["Type"] == "ProteinAbundance"].reset_index(drop=True)
 
-    sim_cols  = sorted([c for c in df.columns if c.startswith("sim_t")],
-                       key=lambda x: int(x.split("t")[1]))
-    data_cols = sorted([c for c in df.columns if c.startswith("data_t")],
-                       key=lambda x: int(x.split("t")[1]))
-
-    if t is None:
-        # fallback if you don’t pass t explicitly
-        t_vals = DEFAULT_TIMEPOINTS[:len(sim_cols)]
-    else:
-        t_vals = np.array(t, dtype=float)
+    sim_cols = [col for col in df.columns if col.startswith("sim_t")]
+    data_cols = [col for col in df.columns if col.startswith("data_t")]
+    t_vals = DEFAULT_TIMEPOINTS
 
     # Plot per Protein
     for prot in proteins:
