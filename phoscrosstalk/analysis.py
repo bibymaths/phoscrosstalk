@@ -290,55 +290,59 @@ def plot_biological_scores(outdir, X, F):
     plt.close()
 
 def plot_goodness_of_fit(file, outdir):
+
     df = pd.read_csv(file, sep="\t")
 
-    sim_cols  = sorted([c for c in df.columns if c.startswith("sim_t")],
-                       key=lambda x: int(x.split("t")[1]))
-    data_cols = sorted([c for c in df.columns if c.startswith("data_t")],
-                       key=lambda x: int(x.split("t")[1]))
+    sim_cols  = [c for c in df.columns if c.startswith("sim_t")]
+    data_cols = [c for c in df.columns if c.startswith("data_t")]
 
+    # Construct labels
     labels = []
     for _, row in df.iterrows():
         if row["Type"] == "Phosphosite":
             labels.append(f"{row['Protein']}_{row['Residue']}")
         else:
             labels.append(f"{row['Protein']}_Abundance")
+
     df["Label"] = labels
 
+    # --- Prepare scatter plot ---
     plt.figure(figsize=(8, 8))
 
+    # Scatter by item
     for idx, row in df.iterrows():
         sim_vals  = row[sim_cols].values.astype(float)
         data_vals = row[data_cols].values.astype(float)
 
+        # Remove NaNs if protein abundances have missing time points
         mask = np.isfinite(sim_vals) & np.isfinite(data_vals)
-        if not np.any(mask):
-            continue
 
         if row["Type"] == "Phosphosite":
-            color, alpha = "green", 0.35
+            color = "green"
+            alpha = 0.35
         else:
-            color, alpha = "blue", 0.55
+            color = "blue"
+            alpha = 0.55
 
         plt.scatter(
             data_vals[mask],
             sim_vals[mask],
-            label=row["Label"] if idx < 15 else None,
+            label=row["Label"] if idx < 15 else None,  # avoid clutter
             alpha=alpha,
             color=color,
             s=30,
         )
 
-    all_data = df[data_cols].values.astype(float).flatten()
-    all_sim  = df[sim_cols].values.astype(float).flatten()
-    mask_all = np.isfinite(all_data) & np.isfinite(all_sim)
-    if np.any(mask_all):
-        max_val = max(all_data[mask_all].max(), all_sim[mask_all].max())
-        plt.plot([0, max_val], [0, max_val], "r--", lw=2)
+    # identity line
+    all_data = df[data_cols].values.flatten()
+    all_sim  = df[sim_cols].values.flatten()
+    max_val  = np.nanmax([all_data, all_sim])
+    plt.plot([0, max_val], [0, max_val], 'r--', lw=2)
 
     plt.xlabel("Observed")
     plt.ylabel("Simulated")
     plt.title("Goodness of Fit: Observed vs Simulated")
+
     plt.tight_layout()
-    plt.savefig(os.path.join(outdir, "goodness_of_fit.png"), dpi=300)
+    plt.savefig(f'{outdir}/goodness_of_fit', dpi=300)
     plt.close()
