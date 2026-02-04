@@ -219,7 +219,7 @@ def plot_fitted_simulation(outdir):
     for prot in proteins:
         print(f"   → Plotting {prot}")
 
-        plt.figure(figsize=(12, 8))
+        plt.figure(figsize=(16, 12))
         ax = plt.gca()
 
         # ---- Protein abundance (if exists)
@@ -231,11 +231,11 @@ def plot_fitted_simulation(outdir):
             y_dat = row_prot[data_cols].values.astype(float)
             has_data = np.any(np.isfinite(y_dat))
 
-            ax.plot(t_vals, y_sim, "-", lw=3, color="blue", label="Protein (model)")
+            ax.plot(t_vals, y_sim, "-", lw=2, alpha=1, color="blue", label="Protein (model)")
             ax.scatter(t_vals, y_sim, color="blue", s=30)
 
             if has_data:
-                ax.plot(t_vals, y_dat, "k--", lw=2, label="Protein (data)")
+                ax.plot(t_vals, y_dat, "s-", lw=1, alpha=0.6, label="Protein (data)")
                 ax.scatter(t_vals, y_dat, color="black", s=35)
 
         # ---- Phosphosites
@@ -247,15 +247,14 @@ def plot_fitted_simulation(outdir):
             y_dat = row[data_cols].values.astype(float)
             has_data = np.any(np.isfinite(y_dat))
 
-            ax.plot(t_vals, y_sim, "-", alpha=0.7, lw=1.7, label=f"{res} (model)")
+            ax.plot(t_vals, y_sim, "-", alpha=1, lw=2, label=f"{res} (model)")
             ax.scatter(t_vals, y_sim, s=20, alpha=0.7)
 
             if has_data:
-                ax.plot(t_vals, y_dat, "o--", ms=4, alpha=0.7, label=f"{res} (data)")
+                ax.plot(t_vals, y_dat, "s-", ms=4, alpha=0.6, lw=1, label=f"{res} (data)")
 
         # ---- Format plot
         ax.set_title(f"{prot}", fontsize=14, weight="bold")
-        ax.set_xscale("log")
         ax.grid(alpha=0.3)
         ax.set_xlabel("Time (min)")
         ax.set_ylabel("FC / Scaled abundance")
@@ -307,7 +306,7 @@ def plot_goodness_of_fit(file, outdir):
     df["Label"] = labels
 
     # --- Prepare scatter plot ---
-    plt.figure(figsize=(8, 8))
+    plt.figure(figsize=(12, 12))
 
     # Scatter by item
     for idx, row in df.iterrows():
@@ -330,14 +329,14 @@ def plot_goodness_of_fit(file, outdir):
             label=row["Label"] if idx < 15 else None,  # avoid clutter
             alpha=alpha,
             color=color,
-            s=30,
+            s=40,
         )
 
     # identity line
     all_data = df[data_cols].values.flatten()
     all_sim  = df[sim_cols].values.flatten()
     max_val  = np.nanmax([all_data, all_sim])
-    plt.plot([0, max_val], [0, max_val], 'r--', lw=2)
+    plt.plot([0, max_val], [0, max_val], 'r--', lw=3)
 
     plt.xlabel("Observed")
     plt.ylabel("Simulated")
