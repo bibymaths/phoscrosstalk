@@ -19,6 +19,8 @@ from phoscrosstalk import analysis
 from phoscrosstalk import data_loader
 from phoscrosstalk.analysis import _save_preopt_snapshot_txt_csv
 from phoscrosstalk.config import ModelDims, DEFAULT_TIMEPOINTS
+from phoscrosstalk.debug_main import _sanity_report_data, _sanity_report_C, _coverage_report_K_site_kin, \
+    _sanity_report_R, _sanity_report_weights, _one_shot_sim_check, sim_summary
 from phoscrosstalk.weighting import build_weight_matrices
 from phoscrosstalk.optimization import NetworkOptimizationProblem, create_bounds
 from phoscrosstalk.fretchet import frechet_distance
@@ -220,6 +222,8 @@ def main():
         prot_idx_for_A = np.array([], dtype=int)
         A_bases, A_amps = np.array([]), np.array([])
 
+    _sanity_report_data(P_scaled, Y, t)
+
     # 3. Weights
     W_data, W_data_prot = build_weight_matrices(
         t=t,
@@ -228,10 +232,14 @@ def main():
         scheme=args.weight_scheme
     )
 
+    _sanity_report_weights(W_data, W_data_prot)
+
     # 4. Matrices & Graph
     Cg, Cl = data_loader.build_C_matrices_from_db(args.ptm_intra, args.ptm_inter, sites, site_prot_idx, positions,
                                                   proteins, args.length_scale)
     Cg, Cl = data_loader.row_normalize(Cg), data_loader.row_normalize(Cl)
+
+    _sanity_report_C(Cg, Cl, N=len(sites))
 
     if args.kinase_tsv:
         K_site_kin, kinases = data_loader.load_kinase_site_matrix(args.kinase_tsv, sites)
@@ -241,7 +249,15 @@ def main():
         K_site_kin = np.eye(len(sites))
         kinases = [f"K_{i}" for i in range(len(sites))]
 
+    _coverage_report_K_site_kin(K_site_kin, sites, kinases)
+
     R = np.ascontiguousarray(K_site_kin.T)
+    rs = R.sum(axis=1)
+    nz = rs > 0
+    R[nz] /= rs[nz, None]
+
+    _sanity_report_R(R, N=len(sites), M=len(kinases))
+
     L_alpha = np.zeros((len(kinases), len(kinases)))
     if args.unified_graph_pkl and args.lambda_net > 0:
         L_alpha = data_loader.build_alpha_laplacian_from_unified_graph(args.unified_graph_pkl, kinases)
@@ -301,8 +317,21 @@ def main():
         args.mechanism, xl, xu, elementwise_runner=runner
     )
 
+    _one_shot_sim_check(problem, xl, xu, P_scaled)
+
+    x_mid = 0.5 * (xl + xu)
+    x_lo = xl.copy()
+    x_hi = xu.copy()
+
+    P_mid = sim_summary(problem, "mid", x_mid)
+    P_lo = sim_summary(problem, "lo", x_lo)
+    P_hi = sim_summary(problem, "hi", x_hi)
+
+    print("||P_mid - P_lo||_inf =", np.max(np.abs(P_mid - P_lo)))
+    print("||P_hi  - P_mid||_inf =", np.max(np.abs(P_hi - P_mid)))
+
     algorithm = UNSGA3(pop_size=args.pop_size, ref_dirs=get_reference_directions("das-dennis", 3, n_partitions=12))
-    termination = DefaultMultiObjectiveTermination(xtol=1e-8, cvtol=1e-6, ftol=0.0025, period=30, n_max_gen=args.gen, n_max_evals=10000000)
+    termination = DefaultMultiObjectiveTermination(xtol=1e-8, cvtol=1e-6, ftol=0.0025, period=30, n_max_gen=args.gen, n_max_evals=1000000)
 
     print("[*] Starting Optimization...")
     res = minimize(problem, algorithm, termination, seed=1, verbose=True)

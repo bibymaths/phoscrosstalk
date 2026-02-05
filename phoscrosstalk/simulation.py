@@ -2,6 +2,7 @@
 simulation.py
 Wrapper for scipy.integrate.odeint to simulate the network.
 """
+import math
 import warnings
 from typing import cast
 
@@ -46,7 +47,7 @@ def simulate_p_scipy(t_arr, P_data0, A_data0, theta,
         return np.full((N_sites, T), np.nan), np.full((K, T), np.nan)
 
     # Simulation
-    xs = cast(np.ndarray, cast(object, odeint(
+    xs, infodict = cast(np.ndarray, cast(object, odeint(
         network_rhs,
         x0,
         t_arr,
@@ -56,13 +57,39 @@ def simulate_p_scipy(t_arr, P_data0, A_data0, theta,
               mechanism),
         Dfun=fd_jacobian,
         col_deriv=False,
+        rtol=1e-6,
+        atol=1e-9,
+        mxstep=5000,
+        full_output=True,
     )))
 
-    np.clip(xs, 1e-6, np.inf, out=xs)
-    A_sim = xs[:, K:2 * K].T
-    P_sim = xs[:, 2 * K + M:].T
+    # if solver failed, return NaNs early
+    if infodict.get("message", "").lower().find("successful") == -1:
+        N_sites = P_data0.shape[0]
+        T = len(t_arr)
+        return np.full((N_sites, T), np.nan), np.full((K, T), np.nan)
 
-    return P_sim, A_sim
+    # Fail if any non-finite
+    if not np.all(np.isfinite(xs)):
+        N_sites = P_data0.shape[0]
+        T = len(t_arr)
+        return np.full((N_sites, T), np.nan), np.full((K, T), np.nan)
+
+    # Slice
+    S_sim = xs[:, 0:K]
+    A_sim = xs[:, K:2 * K]
+    Kdyn_sim = xs[:, 2 * K:2 * K + M]
+    P_sim = xs[:, 2 * K + M:2 * K + M + N]
+
+    # Clip only bounded states
+    np.clip(S_sim, 0.0, 1.0, out=S_sim)
+    np.clip(Kdyn_sim, 0.0, 1.0, out=Kdyn_sim)
+    np.clip(P_sim, 0.0, 1.0, out=P_sim)
+
+    # A: keep your biological cap consistent with x0
+    np.clip(A_sim, 0.0, 5.0, out=A_sim)
+
+    return P_sim.T, A_sim.T
 
 
 def build_full_A0(K, T, A_scaled, prot_idx_for_A):
@@ -82,9 +109,7 @@ def build_full_A0(K, T, A_scaled, prot_idx_for_A):
     return A0_full
 
 def fd_jacobian(
-    x,
-    t,
-    theta,
+    x, t, theta,
     Cg, Cl,
     site_prot_idx,
     K_site_kin, R,
@@ -94,47 +119,36 @@ def fd_jacobian(
     receptor_mask_kin,
     mechanism: str,
 ):
-    """
-    Python wrapper for fd_jacobian_nb_core so SciPy can call it.
-
-    This keeps the SciPy signature compatible with `network_rhs`.
-    """
-
-    # Map mechanism string → small int for numba
     if mechanism == "dist":
         mech_code = 0
     elif mechanism == "seq":
         mech_code = 1
     elif mechanism == "rand":
         mech_code = 2
-    else:  # fallback
+    else:
         mech_code = 0
 
-    # Ensure x is a contiguous float64 array
-    x_arr = np.asarray(x, dtype=np.float64)
+    x_arr = np.ascontiguousarray(x, dtype=np.float64)
+    theta_arr = np.ascontiguousarray(theta, dtype=np.float64)
 
     return fd_jacobian_nb_core(
-        x_arr,
-        t,
-        theta,
-        Cg, Cl,
-        site_prot_idx,
-        K_site_kin, R,
-        L_alpha,
-        kin_to_prot_idx,
-        receptor_mask_prot,
-        receptor_mask_kin,
+        x_arr, t, theta_arr,
+        np.ascontiguousarray(Cg, dtype=np.float64),
+        np.ascontiguousarray(Cl, dtype=np.float64),
+        np.ascontiguousarray(site_prot_idx, dtype=np.int64),
+        np.ascontiguousarray(K_site_kin, dtype=np.float64),
+        np.ascontiguousarray(R, dtype=np.float64),
+        np.ascontiguousarray(L_alpha, dtype=np.float64),
+        np.ascontiguousarray(kin_to_prot_idx, dtype=np.int64),
+        np.ascontiguousarray(receptor_mask_prot, dtype=np.int64),
+        np.ascontiguousarray(receptor_mask_kin, dtype=np.int64),
         mech_code,
-        ModelDims.K,
-        ModelDims.M,
-        ModelDims.N,
+        ModelDims.K, ModelDims.M, ModelDims.N,
     )
 
 @njit(cache=True, fastmath=True)
 def fd_jacobian_nb_core(
-    x,
-    t,
-    theta,
+    x, t, theta,
     Cg, Cl,
     site_prot_idx,
     K_site_kin, R,
@@ -144,18 +158,13 @@ def fd_jacobian_nb_core(
     receptor_mask_kin,
     mech_code,
     K, M, N,
-    eps=1e-8
+    eps=1e-6,      # larger than 1e-8 for stiff-ish, clipped systems
+    h_min=1e-8
 ):
-    """
-    Finite-difference Jacobian of the numba RHS w.r.t. x.
-
-    J[i, j] = d f_i / d x_j  (forward difference)
-    """
-
     n = x.size
     J = np.empty((n, n), dtype=np.float64)
 
-    # f(x)
+    # baseline
     f0 = rhs_nb_dispatch_dense(
         x, t, theta,
         Cg, Cl, site_prot_idx,
@@ -167,14 +176,19 @@ def fd_jacobian_nb_core(
         mech_code,
     )
 
-    # forward difference on each column j
-    for j in range(n):
-        x_pert = x.copy()
-        # scale step by value of x_j
-        h = eps * max(1.0, abs(x[j]))
-        x_pert[j] += h
+    x_pert = x.copy()
 
-        fj = rhs_nb_dispatch_dense(
+    for j in range(n):
+        xj0 = x[j]
+
+        # step size
+        h = eps * (1.0 + math.fabs(xj0))
+        if h < h_min:
+            h = h_min
+
+        # +h
+        x_pert[j] = xj0 + h
+        f_plus = rhs_nb_dispatch_dense(
             x_pert, t, theta,
             Cg, Cl, site_prot_idx,
             K_site_kin, R, L_alpha,
@@ -185,8 +199,24 @@ def fd_jacobian_nb_core(
             mech_code,
         )
 
-        # (f(x + h e_j) - f(x)) / h  → column j
+        # -h
+        x_pert[j] = xj0 - h
+        f_minus = rhs_nb_dispatch_dense(
+            x_pert, t, theta,
+            Cg, Cl, site_prot_idx,
+            K_site_kin, R, L_alpha,
+            kin_to_prot_idx,
+            receptor_mask_prot,
+            receptor_mask_kin,
+            K, M, N,
+            mech_code,
+        )
+
+        # restore
+        x_pert[j] = xj0
+
+        inv2h = 0.5 / h
         for i in range(n):
-            J[i, j] = (fj[i] - f0[i]) / h
+            J[i, j] = (f_plus[i] - f_minus[i]) * inv2h
 
     return J
