@@ -194,7 +194,7 @@ def _rhs_common_dense(x, t,
                       K, M, N,
                       mech_code,
                       # reusable buffers
-                      coup, num_p, num_c, den, u_sub, u_net, k_on_eff, last_occ, has_prev,
+                      p_buf, coup_buf, num_p, num_c, den, u_sub, u_net, k_on_eff, last_occ, has_prev,
                       dx_out):
     """
     One dense kernel that handles mech_code:
@@ -218,25 +218,28 @@ def _rhs_common_dense(x, t,
         u_net[m] = v  # temporarily store clipped Kdyn in u_net buffer
     Kdyn = u_net  # alias
 
+    # clip p0 into p_buf
     for i in range(N):
         v = p0[i]
         if v < 0.0: v = 0.0
         if v > 1.0: v = 1.0
-        coup[i] = v  # temporarily store clipped p in coup buffer
-    p = coup  # alias (we'll overwrite coup later anyway)
+        p_buf[i] = v
+    p = p_buf
 
     # smooth external stimulus
     u = 1.0 / (1.0 + math.exp(-(t) / 0.1))
 
     # coup = tanh(beta_g*(Cg@p) + beta_l*(Cl@p))
-    dense_mv(Cg, p, dx_out[0:N])          # use dx_out[0:N] as temp
+    # compute coupling into coup_buf
+    dense_mv(Cg, p, dx_out[0:N])  # temp
     for i in range(N):
         dx_out[i] *= beta_g
     dense_mv_inplace_add(Cl, p, dx_out[0:N], beta_l)
 
     for i in range(N):
-        dx_out[i] = math.tanh(dx_out[i])  # now dx_out[0:N] holds coup
-        coup[i] = dx_out[i]               # copy coup into coup buffer (optional but cheap)
+        coup_buf[i] = math.tanh(dx_out[i])
+
+    coup = coup_buf
 
     # aggregates per protein
     for k in range(K):
@@ -383,7 +386,8 @@ def rhs_dense_onecall(x, t, theta,
      kK_act, kK_deact, k_off,
      gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net) = decode_theta(theta, K, M, N)
 
-    coup = np.empty(N)
+    p_buf = np.empty(N)
+    coup_buf = np.empty(N)
     num_p = np.empty(K)
     num_c = np.empty(K)
     den = np.empty(K)
@@ -402,7 +406,7 @@ def rhs_dense_onecall(x, t, theta,
                              Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
                              kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
                              K, M, N, mech_code,
-                             coup, num_p, num_c, den, u_sub, u_net, k_on_eff, last_occ, has_prev,
+                             p_buf, coup_buf, num_p, num_c, den, u_sub, u_net, k_on_eff, last_occ, has_prev,
                              dx)
 
 
@@ -420,7 +424,7 @@ def _rhs_common_csr(x, t,
                     kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
                     K, M, N,
                     mech_code,
-                    coup, num_p, num_c, den, u_sub, u_net, k_on_eff, last_occ, has_prev,
+                    p_buf, coup_buf, num_p, num_c, den, u_sub, u_net, k_on_eff, last_occ, has_prev,
                     dx_out):
 
     S = x[0:K]
@@ -440,8 +444,8 @@ def _rhs_common_csr(x, t,
         v = p0[i]
         if v < 0.0: v = 0.0
         if v > 1.0: v = 1.0
-        coup[i] = v
-    p = coup  # alias
+        p_buf[i] = v
+    p = p_buf
 
     u = 1.0 / (1.0 + math.exp(-(t) / 0.1))
 
@@ -452,8 +456,8 @@ def _rhs_common_csr(x, t,
     csr_mv_inplace_add(Cl, p, dx_out[0:N], beta_l)
 
     for i in range(N):
-        dx_out[i] = math.tanh(dx_out[i])
-        coup[i] = dx_out[i]
+        coup_buf[i] = math.tanh(dx_out[i])
+    coup = coup_buf
 
     for k in range(K):
         num_p[k] = 0.0
@@ -510,6 +514,7 @@ def _rhs_common_csr(x, t,
 
     for m in range(M):
         u_sub[m] = alpha[m] * Kdyn[m]
+
     csr_mv(K_site_kin, u_sub, k_on_eff)
 
     base = 2 * K + M
@@ -573,7 +578,8 @@ def rhs_csr_onecall(x, t, theta,
      kK_act, kK_deact, k_off,
      gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net) = decode_theta(theta, K, M, N)
 
-    coup = np.empty(N)
+    p_buf = np.empty(N)
+    coup_buf = np.empty(N)
     num_p = np.empty(K)
     num_c = np.empty(K)
     den = np.empty(K)
@@ -592,7 +598,7 @@ def rhs_csr_onecall(x, t, theta,
                            Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
                            kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
                            K, M, N, mech_code,
-                           coup, num_p, num_c, den, u_sub, u_net, k_on_eff, last_occ, has_prev,
+                           p_buf, coup_buf, num_p, num_c, den, u_sub, u_net, k_on_eff, last_occ, has_prev,
                            dx)
 
 
@@ -607,7 +613,7 @@ dense_ws_spec = [
     ("beta_g", float64), ("beta_l", float64),
     ("gamma_S_p", float64), ("gamma_A_S", float64), ("gamma_A_p", float64), ("gamma_K_net", float64),
     # buffers
-    ("coup", float64[:]), ("num_p", float64[:]), ("num_c", float64[:]), ("den", float64[:]),
+    ("p_buf", float64[:]), ("coup_buf", float64[:]), ("num_p", float64[:]), ("num_c", float64[:]), ("den", float64[:]),
     ("u_sub", float64[:]), ("u_net", float64[:]), ("k_on_eff", float64[:]),
     ("last_occ", float64[:]), ("has_prev", float64[:]),
     ("dx", float64[:]),
@@ -637,7 +643,8 @@ class DenseWorkspace:
         self.gamma_A_p = 0.0
         self.gamma_K_net = 0.0
 
-        self.coup = np.empty(N)
+        self.p_buf = np.empty(N)
+        self.coup_buf = np.empty(N)
         self.num_p = np.empty(K)
         self.num_c = np.empty(K)
         self.den = np.empty(K)
@@ -685,7 +692,7 @@ class DenseWorkspace:
                                 Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
                                 kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
                                 self.K, self.M, self.N, mech_code,
-                                self.coup, self.num_p, self.num_c, self.den,
+                                self.p_buf, self.coup_buf, self.num_p, self.num_c, self.den,
                                 self.u_sub, self.u_net, self.k_on_eff, self.last_occ, self.has_prev,
                                 self.dx)
         if return_copy == 1:
@@ -699,7 +706,7 @@ csr_ws_spec = [
     ("alpha", float64[:]), ("kK_act", float64[:]), ("kK_deact", float64[:]), ("k_off", float64[:]),
     ("beta_g", float64), ("beta_l", float64),
     ("gamma_S_p", float64), ("gamma_A_S", float64), ("gamma_A_p", float64), ("gamma_K_net", float64),
-    ("coup", float64[:]), ("num_p", float64[:]), ("num_c", float64[:]), ("den", float64[:]),
+    ("p_buf", float64[:]), ("coup_buf", float64[:]), ("num_p", float64[:]), ("num_c", float64[:]), ("den", float64[:]),
     ("u_sub", float64[:]), ("u_net", float64[:]), ("k_on_eff", float64[:]),
     ("last_occ", float64[:]), ("has_prev", float64[:]),
     ("dx", float64[:]),
@@ -729,7 +736,8 @@ class CSRWorkspace:
         self.gamma_A_p = 0.0
         self.gamma_K_net = 0.0
 
-        self.coup = np.empty(N)
+        self.p_buf = np.empty(N)
+        self.coup_buf = np.empty(N)
         self.num_p = np.empty(K)
         self.num_c = np.empty(K)
         self.den = np.empty(K)
@@ -776,7 +784,7 @@ class CSRWorkspace:
                               Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
                               kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
                               self.K, self.M, self.N, mech_code,
-                              self.coup, self.num_p, self.num_c, self.den,
+                              self.p_buf, self.coup_buf, self.num_p, self.num_c, self.den,
                               self.u_sub, self.u_net, self.k_on_eff, self.last_occ, self.has_prev,
                               self.dx)
         if return_copy == 1:

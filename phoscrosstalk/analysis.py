@@ -202,8 +202,12 @@ def save_fitted_simulation(
     df_out = pd.DataFrame.from_records(records)
     df_out.to_csv(os.path.join(outdir, "fit_timeseries.tsv"), sep="\t", index=False)
 
-
 def plot_fitted_simulation(outdir):
+    """
+    Per-protein panel plot:
+      - Left: Protein abundance (if present)
+      - Right: Phosphosites for that protein (Residue + Position)
+    """
     # Load Data
     df = pd.read_csv(os.path.join(outdir, "fit_timeseries.tsv"), sep="\t")
     proteins = sorted(df["Protein"].unique())
@@ -215,53 +219,142 @@ def plot_fitted_simulation(outdir):
     data_cols = [col for col in df.columns if col.startswith("data_t")]
     t_vals = DEFAULT_TIMEPOINTS
 
+    # Defensive: ensure time axis matches column count
+    # (keeps logic; only guards mismatch)
+    if len(sim_cols) != len(t_vals) or len(data_cols) != len(t_vals):
+        # fall back to numeric range to avoid hard crash
+        t_vals = np.arange(len(sim_cols), dtype=float)
+
     # Plot per Protein
     for prot in proteins:
         print(f"   → Plotting {prot}")
 
-        plt.figure(figsize=(16, 12))
-        ax = plt.gca()
+        fig, (axP, axS) = plt.subplots(
+            1, 2, figsize=(18, 7), sharex=True, sharey=True,
+            gridspec_kw={"wspace": 0.10}
+        )
 
-        # ---- Protein abundance (if exists)
+        # -------------------------
+        # LEFT PANEL: Protein abundance
+        # -------------------------
         row_prot = df_prots[df_prots["Protein"] == prot]
         if not row_prot.empty:
             row_prot = row_prot.iloc[0]
 
             y_sim = row_prot[sim_cols].values.astype(float)
             y_dat = row_prot[data_cols].values.astype(float)
-            has_data = np.any(np.isfinite(y_dat))
+            mask_dat = np.isfinite(y_dat)
+            has_data = bool(np.any(mask_dat))
 
-            ax.plot(t_vals, y_sim, "-", lw=2, alpha=1, color="blue", label="Protein (model)")
-            ax.scatter(t_vals, y_sim, color="blue", s=30)
+            # One color for this protein trajectory
+            # (use tab10 index derived from protein order for stability)
+            color = plt.cm.tab10(proteins.index(prot) % 10)
 
+            # Model: thick line, no markers
+            axP.plot(
+                t_vals, y_sim,
+                "-", lw=4.0, alpha=1.0, color=color,
+                label="Protein (model)"
+            )
+
+            # Data: lighter line + square markers, same color
             if has_data:
-                ax.plot(t_vals, y_dat, "s-", lw=1, alpha=0.6, label="Protein (data)")
-                ax.scatter(t_vals, y_dat, color="black", s=35)
+                axP.plot(
+                    np.asarray(t_vals)[mask_dat], y_dat[mask_dat],
+                    "-", lw=2.0, alpha=0.35, color=color,
+                    label="Protein (data)"
+                )
+                axP.scatter(
+                    np.asarray(t_vals)[mask_dat], y_dat[mask_dat],
+                    marker="s", s=55, alpha=0.6, color=color, edgecolors="none"
+                )
+        else:
+            axP.text(
+                0.5, 0.5, "No protein abundance row",
+                transform=axP.transAxes, ha="center", va="center", fontsize=10, alpha=0.7
+            )
 
-        # ---- Phosphosites
+        # -------------------------
+        # RIGHT PANEL: Phosphosites
+        # -------------------------
         sub = df_sites[df_sites["Protein"] == prot]
 
-        for _, row in sub.iterrows():
-            res = row["Residue"]
-            y_sim = row[sim_cols].values.astype(float)
-            y_dat = row[data_cols].values.astype(float)
-            has_data = np.any(np.isfinite(y_dat))
+        if sub.empty:
+            axS.text(
+                0.5, 0.5, "No phosphosites",
+                transform=axS.transAxes, ha="center", va="center", fontsize=10, alpha=0.7
+            )
+        else:
+            # Colors per site within the protein (consistent between model & data)
+            # If many sites, tab20 will repeat; still usable.
+            cmap = plt.cm.tab20
+            n_sites = len(sub)
 
-            ax.plot(t_vals, y_sim, "-", alpha=1, lw=2, label=f"{res} (model)")
-            ax.scatter(t_vals, y_sim, s=20, alpha=0.7)
+            for i, (_, row) in enumerate(sub.iterrows()):
+                res = row.get("Residue", "")
+                pos = row.get("Position", row.get("Pos", row.get("SitePos", "")))  # robust lookup
+                # Label uses both residue and position if available
+                if pd.notna(pos) and str(pos) != "":
+                    site_label = f"{res}_{pos}"
+                else:
+                    site_label = f"{res}"
 
-            if has_data:
-                ax.plot(t_vals, y_dat, "s-", ms=4, alpha=0.6, lw=1, label=f"{res} (data)")
+                y_sim = row[sim_cols].values.astype(float)
+                y_dat = row[data_cols].values.astype(float)
+                mask_dat = np.isfinite(y_dat)
+                has_data = bool(np.any(mask_dat))
 
-        # ---- Format plot
-        ax.set_title(f"{prot}", fontsize=14, weight="bold")
-        ax.grid(alpha=0.3)
-        ax.set_xlabel("Time (min)")
-        ax.set_ylabel("FC / Scaled abundance")
-        ax.legend(fontsize=8, loc="upper right", bbox_to_anchor=(1.25, 1.0))
+                c = cmap(i % 20)
+
+                # Model: thick line, no markers
+                axS.plot(
+                    t_vals, y_sim,
+                    "-", lw=4.0, alpha=1.0, color=c,
+                    label=f"{site_label} (model)"
+                )
+
+                # Data: lighter line + square markers, same color
+                if has_data:
+                    axS.plot(
+                        np.asarray(t_vals)[mask_dat], y_dat[mask_dat],
+                        "-", lw=2.0, alpha=0.35, color=c,
+                        label=f"{site_label} (data)"
+                    )
+                    axS.scatter(
+                        np.asarray(t_vals)[mask_dat], y_dat[mask_dat],
+                        marker="s", s=45, alpha=0.6, color=c, edgecolors="none"
+                    )
+
+        # -------------------------
+        # Formatting
+        # -------------------------
+        fig.suptitle(f"{prot}", fontsize=14, fontweight="bold", y=0.98)
+
+        axP.set_title("Protein abundance", fontsize=12, fontweight="bold")
+        axS.set_title("Phosphosites (Residue + Position)", fontsize=12, fontweight="bold")
+
+        for ax in (axP, axS):
+            ax.grid(alpha=0.25)
+            ax.set_xlabel("Time (min)")
+
+        axP.set_ylabel("FC / Scaled abundance")
+
+        # Legends: keep readable, separate per panel
+        # Protein panel small legend; site panel can be large -> place outside
+        axP.legend(fontsize=9, loc="best")
+
+        # For phosphosites, put legend outside to avoid covering curves
+        axS.legend(
+            fontsize=8,
+            loc="upper left",
+            bbox_to_anchor=(1.02, 1.0),
+            borderaxespad=0.0,
+            frameon=True
+        )
+
         plt.tight_layout()
-        plt.savefig(os.path.join(outdir, f"fit_{prot}.png"), dpi=300)
-        plt.close()
+        plt.savefig(os.path.join(outdir, f"fit_{prot}.png"), dpi=300, bbox_inches="tight")
+        plt.close(fig)
 
 def print_biological_scores(outdir, X):
     bio_scores = np.array([bio_score(theta) for theta in X])
@@ -289,61 +382,169 @@ def plot_biological_scores(outdir, X, F):
     plt.close()
 
 def plot_goodness_of_fit(file, outdir):
+    """
+    Goodness-of-fit scatter: Observed (x) vs Simulated (y) across all timepoints.
 
+    Enhancements:
+      - Legends split by Type (Phosphosite vs Abundance)
+      - Global metrics: R2, MSE, MAE
+      - Identity line + 95% CI band (parallel lines to identity): y = x +/- delta
+      - Labels for points outside the 95% CI band (protein / kinase labels)
+    """
     df = pd.read_csv(file, sep="\t")
 
     sim_cols  = [c for c in df.columns if c.startswith("sim_t")]
     data_cols = [c for c in df.columns if c.startswith("data_t")]
 
+    if len(sim_cols) == 0 or len(data_cols) == 0:
+        raise ValueError(f"No sim_t*/data_t* columns found in {file}")
+
     # Construct labels
     labels = []
     for _, row in df.iterrows():
-        if row["Type"] == "Phosphosite":
-            labels.append(f"{row['Protein']}_{row['Residue']}")
+        if row.get("Type", "") == "Phosphosite":
+            # Residue can be missing; keep robust
+            residue = row.get("Residue", "")
+            if pd.notna(residue) and str(residue) != "":
+                labels.append(f"{row.get('Protein','NA')}_{residue}")
+            else:
+                labels.append(f"{row.get('Protein','NA')}_site")
         else:
-            labels.append(f"{row['Protein']}_Abundance")
-
+            labels.append(f"{row.get('Protein','NA')}_Abundance")
     df["Label"] = labels
 
-    # --- Prepare scatter plot ---
-    plt.figure(figsize=(12, 12))
+    # --- Flatten all points for global stats ---
+    data_all = df[data_cols].to_numpy(dtype=float).reshape(-1)
+    sim_all  = df[sim_cols].to_numpy(dtype=float).reshape(-1)
+    mask_all = np.isfinite(data_all) & np.isfinite(sim_all)
 
-    # Scatter by item
-    for idx, row in df.iterrows():
+    if mask_all.sum() < 3:
+        raise ValueError("Not enough finite points to compute fit metrics.")
+
+    x = data_all[mask_all]
+    y = sim_all[mask_all]
+    resid = y - x
+
+    # Global metrics
+    mse = float(np.mean((y - x) ** 2))
+    mae = float(np.mean(np.abs(y - x)))
+
+    # R^2 (safe)
+    y_mean = float(np.mean(y))
+    ss_res = float(np.sum((y - x) ** 2))  # here "residual" is y-x (since identity is the target)
+    ss_tot = float(np.sum((y - y_mean) ** 2))
+    r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else float("nan")
+
+    # --- 95% CI band: parallel to identity line ---
+    # Interpret as 95% of residuals around identity (robust to heavy tails):
+    # Use empirical 97.5th percentile of |residual| as band half-width.
+    abs_resid = np.abs(resid)
+    delta = float(np.quantile(abs_resid, 0.975))
+
+    # Identify outside-band points at the per-item level (row label)
+    # We'll label only those with any timepoint outside band, and choose the worst deviation.
+    outside_items = []
+    outside_points = []  # (x, y, label, dev)
+
+    for _, row in df.iterrows():
         sim_vals  = row[sim_cols].values.astype(float)
         data_vals = row[data_cols].values.astype(float)
+        m = np.isfinite(sim_vals) & np.isfinite(data_vals)
+        if not np.any(m):
+            continue
+        rv = sim_vals[m] - data_vals[m]
+        ar = np.abs(rv)
+        if np.any(ar > delta):
+            # pick the worst point for labeling
+            j = int(np.argmax(ar))
+            outside_items.append(row["Label"])
+            outside_points.append((float(data_vals[m][j]), float(sim_vals[m][j]), row["Label"], float(ar[j])))
 
-        # Remove NaNs if protein abundances have missing time points
-        mask = np.isfinite(sim_vals) & np.isfinite(data_vals)
+    # Sort by deviation and limit labels to avoid unreadable plot
+    outside_points.sort(key=lambda t: t[3], reverse=True)
+    max_labels = 25
+    outside_points = outside_points[:max_labels]
 
-        if row["Type"] == "Phosphosite":
-            color = "green"
-            alpha = 0.35
-        else:
-            color = "blue"
-            alpha = 0.55
+    # --- Plot ---
+    plt.figure(figsize=(10, 10))
 
+    # Plot scatter points grouped by Type (so legend is meaningful and not cluttered)
+    # Phosphosite
+    for idx, row in df[df["Type"] == "Phosphosite"].iterrows():
+        sim_vals  = row[sim_cols].values.astype(float)
+        data_vals = row[data_cols].values.astype(float)
+        m = np.isfinite(sim_vals) & np.isfinite(data_vals)
+        if not np.any(m):
+            continue
         plt.scatter(
-            data_vals[mask],
-            sim_vals[mask],
-            label=row["Label"] if idx < 15 else None,  # avoid clutter
-            alpha=alpha,
-            color=color,
+            data_vals[m],
+            sim_vals[m],
+            alpha=0.35,
+            color="green",
             s=40,
+            label="Phosphosite" if idx == df[df["Type"] == "Phosphosite"].index[0] else None,
         )
 
-    # identity line
-    all_data = df[data_cols].values.flatten()
-    all_sim  = df[sim_cols].values.flatten()
-    max_val  = np.nanmax([all_data, all_sim])
-    plt.plot([0, max_val], [0, max_val], 'r--', lw=3)
+    # Abundance (protein / kinases, depending on your file semantics)
+    for idx, row in df[df["Type"] != "Phosphosite"].iterrows():
+        sim_vals  = row[sim_cols].values.astype(float)
+        data_vals = row[data_cols].values.astype(float)
+        m = np.isfinite(sim_vals) & np.isfinite(data_vals)
+        if not np.any(m):
+            continue
+        plt.scatter(
+            data_vals[m],
+            sim_vals[m],
+            alpha=0.55,
+            color="blue",
+            s=40,
+            label="Abundance" if idx == df[df["Type"] != "Phosphosite"].index[0] else None,
+        )
+
+    # Identity line and CI band
+    max_val = float(np.nanmax(np.r_[x, y]))
+    min_val = float(np.nanmin(np.r_[x, y]))
+    pad = 0.05 * (max_val - min_val + 1e-12)
+    lo = min_val - pad
+    hi = max_val + pad
+
+    xx = np.array([lo, hi], dtype=float)
+    plt.plot(xx, xx, "r--", lw=2, label="Identity (y=x)")
+    plt.plot(xx, xx + delta, "k:", lw=1.5, label="95% band (parallel)")
+    plt.plot(xx, xx - delta, "k:", lw=1.5)
+
+    # Label outside-band points (top deviators only)
+    for (px, py, lab, dev) in outside_points:
+        plt.scatter([px], [py], s=70, facecolors="none", edgecolors="black", linewidths=1.5)
+        plt.text(px, py, f"  {lab}", fontsize=9, va="center")
+
+    # Metrics box
+    txt = (
+        f"N={mask_all.sum()}\n"
+        f"R²={r2:.4f}\n"
+        f"MSE={mse:.4g}\n"
+        f"MAE={mae:.4g}\n"
+        f"95% band: |sim-obs| ≤ {delta:.4g}\n"
+        f"Outside band (items): {len(set(outside_items))}"
+    )
+    plt.gca().text(
+        0.02, 0.98, txt,
+        transform=plt.gca().transAxes,
+        va="top", ha="left",
+        fontsize=10,
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8, edgecolor="gray")
+    )
 
     plt.xlabel("Observed")
     plt.ylabel("Simulated")
     plt.title("Goodness of Fit: Observed vs Simulated")
+    plt.xlim(lo, hi)
+    plt.ylim(lo, hi)
+    plt.legend(loc="lower right")
 
     plt.tight_layout()
-    plt.savefig(f'{outdir}/goodness_of_fit', dpi=300)
+    os.makedirs(outdir, exist_ok=True)
+    plt.savefig(f"{outdir}/goodness_of_fit.png", dpi=300)
     plt.close()
 
 
@@ -478,10 +679,3 @@ def _save_preopt_snapshot_txt_csv(
 
     _save_vector_tsv(os.path.join(snap_dir, "xl.tsv"), xl)
     _save_vector_tsv(os.path.join(snap_dir, "xu.tsv"), xu)
-
-
-# Then, inside main(), call it once right after bounds are created and all matrices/masks exist
-# Place this just after:
-#   xl, xu, dim = create_bounds(...)
-# and before:
-#   print(f"[*] Initializing Pool ...")

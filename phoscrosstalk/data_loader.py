@@ -184,7 +184,7 @@ def build_C_matrices_from_db(ptm_intra_path, ptm_inter_path, sites, site_prot_id
 
 def load_kinase_site_matrix(path, sites):
     df = pd.read_csv(path, sep="\t")
-    if "weight" not in df.columns: df["weight"] = 1.0
+    if "weight" not in df.columns: df["weight"] = 0.0
     site_to_idx = {s: i for i, s in enumerate(sites)}
     kinases = sorted(df["Kinase"].astype(str).unique())
     kin_index = {k: j for j, k in enumerate(kinases)}
