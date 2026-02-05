@@ -3,6 +3,7 @@ simulation.py
 Wrapper for scipy.integrate.odeint to simulate the network.
 """
 import warnings
+from typing import cast
 
 import numpy as np
 from numba import njit
@@ -45,7 +46,7 @@ def simulate_p_scipy(t_arr, P_data0, A_data0, theta,
         return np.full((N_sites, T), np.nan), np.full((K, T), np.nan)
 
     # Simulation
-    xs = odeint(
+    xs = cast(np.ndarray, cast(object, odeint(
         network_rhs,
         x0,
         t_arr,
@@ -55,9 +56,9 @@ def simulate_p_scipy(t_arr, P_data0, A_data0, theta,
               mechanism),
         Dfun=fd_jacobian,
         col_deriv=False,
-    )
+    )))
 
-    np.clip(xs, 1e-6, None, out=xs)
+    np.clip(xs, 1e-6, np.inf, out=xs)
     A_sim = xs[:, K:2 * K].T
     P_sim = xs[:, 2 * K + M:].T
 
@@ -75,7 +76,7 @@ def build_full_A0(K, T, A_scaled, prot_idx_for_A):
 
     if A_scaled.size > 0:
         for k, p_idx in enumerate(prot_idx_for_A):
-            # copy the whole time-course; simulate_p_scipy only uses [:, 0]
+            # copy the whole time-course simulate_p_scipy only uses [:, 0]
             A0_full[p_idx, :] = A_scaled[k, :]
 
     return A0_full
@@ -169,7 +170,7 @@ def fd_jacobian_nb_core(
     # forward difference on each column j
     for j in range(n):
         x_pert = x.copy()
-        # scale step by magnitude of x_j
+        # scale step by value of x_j
         h = eps * max(1.0, abs(x[j]))
         x_pert[j] += h
 

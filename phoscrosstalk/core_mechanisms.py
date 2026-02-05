@@ -7,7 +7,7 @@ High-performance RHS kernels for phospho-network ODEs.
 
 Key improvements (without deleting any mechanism or dispatch logic):
 1) Minimizes per-call allocations: writes directly into dx, avoids mean arrays, avoids coup_pos array.
-2) Fixes sequential gating overhead: no prev_idx construction per call (O(N)); uses per-protein streaming state.
+2) Fixes sequential gating overhead: no prev_idx construction per call (O(N)) uses per-protein streaming state.
 3) Adds fastmath=True to hot kernels.
 4) Optional “workspace” mode: decode theta once per simulation + reuse buffers (major speedup for optimization loops).
 5) Supports dense or CSR sparse matrices (Numba-friendly CSR struct + kernels).
@@ -23,7 +23,7 @@ B) Best performance (theta decoded once):
 Notes:
 - This module does NOT remove your clipping logic, but it avoids extra full-array passes where feasible.
 - Be careful: mutating x inside RHS is generally solver-hostile. Here clipping is applied to local copies
-  for Kdyn and p; S and A are not mutated by default.
+  for Kdyn and p S and A are not mutated by default.
 """
 
 from __future__ import annotations
@@ -52,19 +52,19 @@ def clip_scalar(x, lo, hi):
 @njit(cache=True, fastmath=True)
 def decode_theta(theta, K, M, N):
     idx0 = 0
-    log_k_act = theta[idx0:idx0 + K]; idx0 += K
-    log_k_deact = theta[idx0:idx0 + K]; idx0 += K
-    log_s_prod = theta[idx0:idx0 + K]; idx0 += K
-    log_d_deg = theta[idx0:idx0 + K]; idx0 += K
+    log_k_act = theta[idx0:idx0 + K] idx0 += K
+    log_k_deact = theta[idx0:idx0 + K] idx0 += K
+    log_s_prod = theta[idx0:idx0 + K] idx0 += K
+    log_d_deg = theta[idx0:idx0 + K] idx0 += K
 
-    log_beta_g = theta[idx0]; idx0 += 1
-    log_beta_l = theta[idx0]; idx0 += 1
+    log_beta_g = theta[idx0] idx0 += 1
+    log_beta_l = theta[idx0] idx0 += 1
 
-    log_alpha = theta[idx0:idx0 + M]; idx0 += M
-    log_kK_act = theta[idx0:idx0 + M]; idx0 += M
-    log_kK_deact = theta[idx0:idx0 + M]; idx0 += M
+    log_alpha = theta[idx0:idx0 + M] idx0 += M
+    log_kK_act = theta[idx0:idx0 + M] idx0 += M
+    log_kK_deact = theta[idx0:idx0 + M] idx0 += M
 
-    log_k_off = theta[idx0:idx0 + N]; idx0 += N
+    log_k_off = theta[idx0:idx0 + N] idx0 += N
     raw_gamma = theta[idx0:idx0 + 4]
 
     # clip then exp
