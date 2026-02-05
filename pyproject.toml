@@ -3,32 +3,32 @@ name = "phoscrosstalk"
 version = "0.1.0"
 description = "Global phospho-crosstalk ODE modeling from PTM databases and time-series phosphorylation data."
 authors = [
-    { name = "Abhinav Mishra", email = "mishraabhinav36@gmail.com"}
+  { name = "Abhinav Mishra", email = "mishraabhinav36@gmail.com" }
 ]
 license = { file = "LICENSE" }
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.12"
 
 dependencies = [
-    "numpy",
-    "pandas",
-    "scipy",
-    "matplotlib",
-    "pymoo",
-    "numba",
-    "pynetphorest==0.1.3",
-    "cobyqa>=1.1.3",
-    "networkx>=3.4.2",
-    "lxml>=6.0.2",
-    "seaborn>=0.13.2",
+  "numpy==2.2.2",
+  "numba>=0.61.1",
+  "pandas>=2.2,<2.3",
+  "scipy>=1.12,<1.16",
+  "matplotlib>=3.8",
+  "seaborn>=0.13.2",
+  "pymoo",
+  "pynetphorest==0.1.3",
+  "cobyqa>=1.1.3",
+  "networkx>=3.4.2",
+  "lxml>=6.0.2",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest",
-    "black",
-    "ruff",
-    "ipython",
+  "pytest",
+  "black",
+  "ruff",
+  "ipython",
 ]
 
 [project.scripts]
@@ -42,6 +42,3 @@ issues = "https://github.com/bibymaths/phoscrosstalk/issues"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-bypass-selection = true

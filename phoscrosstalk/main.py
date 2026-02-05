@@ -17,9 +17,11 @@ from pymoo.util.ref_dirs import get_reference_directions
 
 from phoscrosstalk import analysis
 from phoscrosstalk import data_loader
+from phoscrosstalk.analysis import _save_preopt_snapshot_txt_csv
 from phoscrosstalk.config import ModelDims, DEFAULT_TIMEPOINTS
 from phoscrosstalk.weighting import build_weight_matrices
 from phoscrosstalk.optimization import NetworkOptimizationProblem, create_bounds
+from phoscrosstalk.fretchet import frechet_distance
 
 
 def main():
@@ -145,7 +147,7 @@ def main():
     parser.add_argument(
         "--pop-size",
         type=int,
-        default=100,
+        default=400,
         help="Population size for the multi-objective algorithm."
     )
     parser.add_argument(
@@ -236,7 +238,7 @@ def main():
     elif args.kea_ks_table:
         K_site_kin, kinases = data_loader.build_kinase_site_from_kea(args.kea_ks_table, sites)
     else:
-        K_site_kin = np.eye(len(sites));
+        K_site_kin = np.eye(len(sites))
         kinases = [f"K_{i}" for i in range(len(sites))]
 
     R = np.ascontiguousarray(K_site_kin.T)
@@ -259,6 +261,34 @@ def main():
 
     xl, xu, dim = create_bounds(ModelDims.K, ModelDims.M, ModelDims.N)
 
+    _save_preopt_snapshot_txt_csv(
+        args.outdir,
+        t=t,
+        sites=sites,
+        proteins=proteins,
+        kinases=kinases,
+        positions=positions,
+        P_scaled=P_scaled,
+        Y=Y,
+        A_scaled=A_scaled,
+        A_data=A_data,
+        A_proteins=A_proteins,
+        W_data=W_data,
+        W_data_prot=W_data_prot,
+        Cg=Cg,
+        Cl=Cl,
+        site_prot_idx=site_prot_idx,
+        K_site_kin=K_site_kin,
+        R=R,
+        L_alpha=L_alpha,
+        kin_to_prot_idx=kin_to_prot_idx,
+        receptor_mask_prot=receptor_mask_prot,
+        receptor_mask_kin=receptor_mask_kin,
+        xl=xl,
+        xu=xu,
+        args=args,
+    )
+
     # 7. Optimization
     print(f"[*] Initializing Pool ({args.cores} cores)...")
     pool = multiprocessing.Pool(args.cores)
@@ -280,14 +310,34 @@ def main():
     pool.join()
 
     # 8. Analysis & Saving
+    # F, X = res.F, res.X
+    # f1, f2, f3 = F[:, 0], F[:, 1], F[:, 2]
+    # # Normalize for selection
+    # eps = 1e-12
+    # J = np.sqrt(
+    #     ((f1 - f1.min()) / (f1.max() - f1.min() + eps)) ** 2 + ((f2 - f2.min()) / (f2.max() - f2.min() + eps)) ** 2) + (
+    #             (f3 - f3.min()) / (f3.max() - f3.min() + eps))
+    # best_idx = np.argmin(J)
+
+    # Find best solution using Fretchet distance for all trajectories as primary criterion
     F, X = res.F, res.X
     f1, f2, f3 = F[:, 0], F[:, 1], F[:, 2]
-    # Normalize for selection
-    eps = 1e-12
-    J = np.sqrt(
-        ((f1 - f1.min()) / (f1.max() - f1.min() + eps)) ** 2 + ((f2 - f2.min()) / (f2.max() - f2.min() + eps)) ** 2) + (
-                (f3 - f3.min()) / (f3.max() - f3.min() + eps))
-    best_idx = np.argmin(J)
+
+    # Select best solution by Fréchet distance over all solutions
+    # Expect `problem.simulate(x)` to return predicted site trajectories with same shape as `P_scaled`.
+    frechet_scores = np.full(len(X), np.inf, dtype=float)
+
+    for i in range(len(X)):
+        P_pred = problem.simulate(X[i])
+
+        # Ensure contiguous float64 arrays for the numba-compiled function signature
+        true_coords = np.ascontiguousarray(P_scaled, dtype=np.float64)
+        pred_coords = np.ascontiguousarray(P_pred, dtype=np.float64)
+
+        frechet_scores[i] = frechet_distance(true_coords, pred_coords)
+
+    best_idx = int(np.argmin(frechet_scores))
+    J = frechet_scores  # store per-solution selection score
 
     analysis.save_pareto_results(args.outdir, F, X, f1, f2, f3, J, F[best_idx])
     analysis.plot_pareto_diagnostics(args.outdir, F, F[best_idx], f1, f2, f3, X)

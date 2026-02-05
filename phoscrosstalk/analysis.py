@@ -345,3 +345,143 @@ def plot_goodness_of_fit(file, outdir):
     plt.tight_layout()
     plt.savefig(f'{outdir}/goodness_of_fit', dpi=300)
     plt.close()
+
+
+def _save_txt(path: str, text: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text if text.endswith("\n") else text + "\n")
+
+
+def _save_matrix_tsv(path: str, mat: np.ndarray) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    np.savetxt(path, np.asarray(mat, dtype=float), delimiter="\t")
+
+
+def _save_vector_tsv(path: str, vec: np.ndarray) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    np.savetxt(path, np.asarray(vec, dtype=float).reshape(-1, 1), delimiter="\t")
+
+
+def _save_index_tsv(path: str, vec: np.ndarray) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    np.savetxt(path, np.asarray(vec, dtype=int).reshape(-1, 1), fmt="%d", delimiter="\t")
+
+
+def _save_preopt_snapshot_txt_csv(
+    outdir,
+    *,
+    t,
+    sites,
+    proteins,
+    kinases,
+    positions,
+    P_scaled,
+    Y,
+    A_scaled,
+    A_data,
+    A_proteins,
+    W_data,
+    W_data_prot,
+    Cg,
+    Cl,
+    site_prot_idx,
+    K_site_kin,
+    R,
+    L_alpha,
+    kin_to_prot_idx,
+    receptor_mask_prot,
+    receptor_mask_kin,
+    xl,
+    xu,
+    args,
+) -> None:
+    snap_dir = os.path.join(outdir, "preopt_snapshot")
+    os.makedirs(snap_dir, exist_ok=True)
+
+    # --- metadata (txt) ---
+    lines = []
+    lines.append("preopt_snapshot")
+    lines.append(f"n_sites\t{len(sites)}")
+    lines.append(f"n_proteins\t{len(proteins)}")
+    lines.append(f"n_kinases\t{len(kinases)}")
+    lines.append(f"scale_mode\t{args.scale_mode}")
+    lines.append(f"mechanism\t{args.mechanism}")
+    lines.append(f"weight_scheme\t{args.weight_scheme}")
+    lines.append(f"length_scale\t{args.length_scale}")
+    lines.append(f"lambda_net\t{args.lambda_net}")
+    lines.append(f"reg_lambda\t{args.reg_lambda}")
+    lines.append("")
+    lines.append("shapes")
+    def _shape(name, arr):
+        a = np.asarray(arr)
+        return f"{name}\t{tuple(a.shape)}"
+    lines.extend([
+        _shape("t", t),
+        _shape("positions", positions),
+        _shape("Y", Y),
+        _shape("P_scaled", P_scaled),
+        _shape("A_data", A_data if A_data is not None else np.zeros((0, 0))),
+        _shape("A_scaled", A_scaled),
+        _shape("W_data", W_data),
+        _shape("W_data_prot", W_data_prot),
+        _shape("Cg", Cg),
+        _shape("Cl", Cl),
+        _shape("K_site_kin", K_site_kin),
+        _shape("R", R),
+        _shape("L_alpha", L_alpha),
+        _shape("site_prot_idx", site_prot_idx),
+        _shape("kin_to_prot_idx", kin_to_prot_idx),
+        _shape("receptor_mask_prot", receptor_mask_prot),
+        _shape("receptor_mask_kin", receptor_mask_kin),
+        _shape("xl", xl),
+        _shape("xu", xu),
+    ])
+    _save_txt(os.path.join(snap_dir, "meta.txt"), "\n".join(lines))
+
+    # --- labels (txt) ---
+    _save_txt(os.path.join(snap_dir, "sites.txt"), "\n".join(map(str, sites)))
+    _save_txt(os.path.join(snap_dir, "proteins.txt"), "\n".join(map(str, proteins)))
+    _save_txt(os.path.join(snap_dir, "kinases.txt"), "\n".join(map(str, kinases)))
+    if A_proteins is not None:
+        _save_txt(os.path.join(snap_dir, "A_proteins.txt"), "\n".join(map(str, list(A_proteins))))
+    else:
+        _save_txt(os.path.join(snap_dir, "A_proteins.txt"), "")
+
+    # --- numeric arrays (tsv) ---
+    _save_vector_tsv(os.path.join(snap_dir, "t.tsv"), t)
+    _save_vector_tsv(os.path.join(snap_dir, "positions.tsv"), positions)
+
+    _save_matrix_tsv(os.path.join(snap_dir, "Y.tsv"), Y)
+    _save_matrix_tsv(os.path.join(snap_dir, "P_scaled.tsv"), P_scaled)
+    _save_matrix_tsv(os.path.join(snap_dir, "A_scaled.tsv"), A_scaled)
+
+    if A_data is not None and np.asarray(A_data).size > 0:
+        _save_matrix_tsv(os.path.join(snap_dir, "A_data.tsv"), A_data)
+    else:
+        _save_matrix_tsv(os.path.join(snap_dir, "A_data.tsv"), np.zeros((0, 0)))
+
+    _save_matrix_tsv(os.path.join(snap_dir, "W_data.tsv"), W_data)
+    _save_matrix_tsv(os.path.join(snap_dir, "W_data_prot.tsv"), W_data_prot)
+
+    _save_matrix_tsv(os.path.join(snap_dir, "Cg.tsv"), Cg)
+    _save_matrix_tsv(os.path.join(snap_dir, "Cl.tsv"), Cl)
+
+    _save_index_tsv(os.path.join(snap_dir, "site_prot_idx.tsv"), site_prot_idx)
+    _save_matrix_tsv(os.path.join(snap_dir, "K_site_kin.tsv"), K_site_kin)
+    _save_matrix_tsv(os.path.join(snap_dir, "R.tsv"), R)
+    _save_matrix_tsv(os.path.join(snap_dir, "L_alpha.tsv"), L_alpha)
+
+    _save_index_tsv(os.path.join(snap_dir, "kin_to_prot_idx.tsv"), kin_to_prot_idx)
+    _save_index_tsv(os.path.join(snap_dir, "receptor_mask_prot.tsv"), receptor_mask_prot)
+    _save_index_tsv(os.path.join(snap_dir, "receptor_mask_kin.tsv"), receptor_mask_kin)
+
+    _save_vector_tsv(os.path.join(snap_dir, "xl.tsv"), xl)
+    _save_vector_tsv(os.path.join(snap_dir, "xu.tsv"), xu)
+
+
+# Then, inside main(), call it once right after bounds are created and all matrices/masks exist
+# Place this just after:
+#   xl, xu, dim = create_bounds(...)
+# and before:
+#   print(f"[*] Initializing Pool ...")
