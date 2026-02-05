@@ -52,19 +52,19 @@ def clip_scalar(x, lo, hi):
 @njit(cache=True, fastmath=True)
 def decode_theta(theta, K, M, N):
     idx0 = 0
-    log_k_act = theta[idx0:idx0 + K] idx0 += K
-    log_k_deact = theta[idx0:idx0 + K] idx0 += K
-    log_s_prod = theta[idx0:idx0 + K] idx0 += K
-    log_d_deg = theta[idx0:idx0 + K] idx0 += K
+    log_k_act = theta[idx0:idx0 + K]; idx0 += K
+    log_k_deact = theta[idx0:idx0 + K]; idx0 += K
+    log_s_prod = theta[idx0:idx0 + K]; idx0 += K
+    log_d_deg = theta[idx0:idx0 + K]; idx0 += K
 
-    log_beta_g = theta[idx0] idx0 += 1
-    log_beta_l = theta[idx0] idx0 += 1
+    log_beta_g = theta[idx0]; idx0 += 1
+    log_beta_l = theta[idx0]; idx0 += 1
 
-    log_alpha = theta[idx0:idx0 + M] idx0 += M
-    log_kK_act = theta[idx0:idx0 + M] idx0 += M
-    log_kK_deact = theta[idx0:idx0 + M] idx0 += M
+    log_alpha = theta[idx0:idx0 + M]; idx0 += M
+    log_kK_act = theta[idx0:idx0 + M]; idx0 += M
+    log_kK_deact = theta[idx0:idx0 + M]; idx0 += M
 
-    log_k_off = theta[idx0:idx0 + N] idx0 += N
+    log_k_off = theta[idx0:idx0 + N]; idx0 += N
     raw_gamma = theta[idx0:idx0 + 4]
 
     # clip then exp
