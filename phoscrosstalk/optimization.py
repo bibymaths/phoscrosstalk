@@ -150,9 +150,12 @@ class NetworkOptimizationProblem(ElementwiseProblem):
         self.n_var = len(xl)
 
     def _evaluate(self, x, out, *args, **kwargs):
+
         theta = x
         K, T = ModelDims.K, self.P_data.shape[1]
-        A0_full = build_full_A0(K, T, self.A_scaled, self.prot_idx_for_A)
+
+        self._A0_full = build_full_A0(K, T, self.A_scaled, self.prot_idx_for_A)
+        A0_full = self._A0_full
 
         P_sim, A_sim = simulate_p_scipy(
             self.t, self.P_data, A0_full, theta, self.Cg, self.Cl, self.site_prot_idx,
@@ -171,3 +174,49 @@ class NetworkOptimizationProblem(ElementwiseProblem):
             self.n_p, self.n_A, self.n_var, ModelDims.K, ModelDims.M, ModelDims.N
         )
         out["F"] = np.array([f1, f2, f3], dtype=float)
+
+    def simulate(self, x):
+        """
+        Simulate site trajectories P(t) for a decision vector x.
+
+        Returns:
+            P_sim: ndarray, shape (N_sites, T), aligned to the rows of the input data.
+        """
+        theta = np.asarray(x, dtype=np.float64)
+
+        # Use the actually-stored site data matrix.
+        # In this codebase it's typically stored as `self.P_data` (scaled data passed from main).
+        P_mat = np.asarray(self.P_data, dtype=np.float64)
+
+        # Initial condition is the first column (t0) as a vector (N_sites,)
+        P0 = np.ascontiguousarray(P_mat[:, 0], dtype=np.float64)
+
+        K = int(self.K)
+        T = int(self.t.shape[0])
+
+        # Build full protein activity/abundance matrix (K x T)
+        A0_full = build_full_A0(
+            K,
+            T,
+            np.asarray(self.A_scaled, dtype=np.float64),
+            np.asarray(self.prot_idx_for_A, dtype=np.int64),
+        )
+
+        P_sim, _A_sim = simulate_p_scipy(
+            np.asarray(self.t, dtype=np.float64),
+            P0,
+            A0_full,
+            theta,
+            np.asarray(self.Cg, dtype=np.float64),
+            np.asarray(self.Cl, dtype=np.float64),
+            np.asarray(self.site_prot_idx, dtype=np.int64),
+            np.asarray(self.K_site_kin, dtype=np.float64),
+            np.asarray(self.R, dtype=np.float64),
+            np.asarray(self.L_alpha, dtype=np.float64),
+            np.asarray(self.kin_to_prot_idx, dtype=np.int64),
+            np.asarray(self.receptor_mask_prot, dtype=np.int64),
+            np.asarray(self.receptor_mask_kin, dtype=np.int64),
+            self.mechanism,
+        )
+
+        return P_sim

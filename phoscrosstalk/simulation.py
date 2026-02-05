@@ -8,7 +8,7 @@ import numpy as np
 from numba import njit
 from scipy.integrate import odeint, ODEintWarning
 
-from phoscrosstalk.core_mechanisms import network_rhs, rhs_nb_dispatch
+from phoscrosstalk.core_mechanisms import network_rhs, rhs_nb_dispatch_dense
 from phoscrosstalk.config import ModelDims
 
 warnings.filterwarnings("ignore", category=ODEintWarning)
@@ -155,7 +155,7 @@ def fd_jacobian_nb_core(
     J = np.empty((n, n), dtype=np.float64)
 
     # f(x)
-    f0 = rhs_nb_dispatch(
+    f0 = rhs_nb_dispatch_dense(
         x, t, theta,
         Cg, Cl, site_prot_idx,
         K_site_kin, R, L_alpha,
@@ -173,7 +173,7 @@ def fd_jacobian_nb_core(
         h = eps * max(1.0, abs(x[j]))
         x_pert[j] += h
 
-        fj = rhs_nb_dispatch(
+        fj = rhs_nb_dispatch_dense(
             x_pert, t, theta,
             Cg, Cl, site_prot_idx,
             K_site_kin, R, L_alpha,
