@@ -86,37 +86,37 @@ def create_bounds(K, M, N):
     idx = 0
     # Protein: k_act, k_deact, s_prod
     for _ in range(3):
-        xl[idx:idx + K] = np.log(1e-5);
-        xu[idx:idx + K] = np.log(10.0);
+        xl[idx:idx + K] = np.log(1e-5)
+        xu[idx:idx + K] = np.log(10.0)
         idx += K
     # Protein: d_deg (restricted)
-    xl[idx:idx + K] = np.log(1e-5);
-    xu[idx:idx + K] = np.log(0.5);
+    xl[idx:idx + K] = np.log(1e-5)
+    xu[idx:idx + K] = np.log(0.5)
     idx += K
     # Coupling
-    xl[idx] = np.log(1e-5);
-    xu[idx] = np.log(10.0);
+    xl[idx] = np.log(1e-5)
+    xu[idx] = np.log(10.0)
     idx += 1
-    xl[idx] = np.log(1e-5);
-    xu[idx] = np.log(10.0);
+    xl[idx] = np.log(1e-5)
+    xu[idx] = np.log(10.0)
     idx += 1
     # Kinase: alpha, kK_act, kK_deact
-    xl[idx:idx + M] = np.log(1e-5);
-    xu[idx:idx + M] = np.log(10.0);
+    xl[idx:idx + M] = np.log(1e-5)
+    xu[idx:idx + M] = np.log(10.0)
     idx += M
-    xl[idx:idx + M] = np.log(1e-5);
-    xu[idx:idx + M] = np.log(3.0);
+    xl[idx:idx + M] = np.log(1e-5)
+    xu[idx:idx + M] = np.log(3.0)
     idx += M
-    xl[idx:idx + M] = np.log(1e-5);
-    xu[idx:idx + M] = np.log(3.0);
+    xl[idx:idx + M] = np.log(1e-5)
+    xu[idx:idx + M] = np.log(3.0)
     idx += M
     # Site: k_off
-    xl[idx:idx + N] = np.log(1e-5);
-    xu[idx:idx + N] = np.log(5.0);
+    xl[idx:idx + N] = np.log(1e-5)
+    xu[idx:idx + N] = np.log(5.0)
     idx += N
     # Gammas (tanh raw)
-    xl[idx:idx + 4] = -3.0;
-    xu[idx:idx + 4] = 3.0;
+    xl[idx:idx + 4] = -3.0
+    xu[idx:idx + 4] = 3.0
     idx += 4
     return xl, xu, dim
 
@@ -127,20 +127,20 @@ class NetworkOptimizationProblem(ElementwiseProblem):
                  lambda_net, reg_lambda, receptor_mask_prot, receptor_mask_kin, mechanism,
                  xl, xu, **kwargs):
         super().__init__(n_var=len(xl), n_obj=3, n_ieq_constr=0, xl=xl, xu=xu, **kwargs)
-        self.t = t;
-        self.P_data = P_data;
-        self.Cg = Cg;
+        self.t = t
+        self.P_data = P_data
+        self.Cg = Cg
         self.Cl = Cl
-        self.site_prot_idx = site_prot_idx;
-        self.K_site_kin = K_site_kin;
+        self.site_prot_idx = site_prot_idx
+        self.K_site_kin = K_site_kin
         self.R = R
-        self.A_scaled = A_scaled;
+        self.A_scaled = A_scaled
         self.prot_idx_for_A = prot_idx_for_A
-        self.W_data = W_data;
+        self.W_data = W_data
         self.W_data_prot = W_data_prot
-        self.L_alpha = L_alpha;
+        self.L_alpha = L_alpha
         self.kin_to_prot_idx = kin_to_prot_idx
-        self.lambda_net = lambda_net;
+        self.lambda_net = lambda_net
         self.reg_lambda = reg_lambda
         self.receptor_mask_prot = receptor_mask_prot
         self.receptor_mask_kin = receptor_mask_kin
