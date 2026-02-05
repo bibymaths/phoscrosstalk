@@ -143,10 +143,10 @@ class NetworkOptimizationProblem(ElementwiseProblem):
         self.lambda_net = lambda_net;
         self.reg_lambda = reg_lambda
         self.receptor_mask_prot = receptor_mask_prot
-        self.receptor_mask_kin = receptor_mask_kin;
+        self.receptor_mask_kin = receptor_mask_kin
         self.mechanism = mechanism
-        self.n_p = max(1, self.P_data.size);
-        self.n_A = max(1, self.A_scaled.size);
+        self.n_p = max(1, self.P_data.size)
+        self.n_A = max(1, self.A_scaled.size)
         self.n_var = len(xl)
 
     def _evaluate(self, x, out, *args, **kwargs):
@@ -188,11 +188,7 @@ class NetworkOptimizationProblem(ElementwiseProblem):
         # In this codebase it's typically stored as `self.P_data` (scaled data passed from main).
         P_mat = np.asarray(self.P_data, dtype=np.float64)
 
-        # Initial condition is the first column (t0) as a vector (N_sites,)
-        P0 = np.ascontiguousarray(P_mat[:, 0], dtype=np.float64)
-
-        K = int(self.K)
-        T = int(self.t.shape[0])
+        K, T = ModelDims.K, self.P_data.shape[1]
 
         # Build full protein activity/abundance matrix (K x T)
         A0_full = build_full_A0(
@@ -204,7 +200,7 @@ class NetworkOptimizationProblem(ElementwiseProblem):
 
         P_sim, _A_sim = simulate_p_scipy(
             np.asarray(self.t, dtype=np.float64),
-            P0,
+            P_mat,
             A0_full,
             theta,
             np.asarray(self.Cg, dtype=np.float64),
