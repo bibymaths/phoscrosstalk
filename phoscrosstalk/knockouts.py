@@ -13,6 +13,30 @@ from phoscrosstalk.simulation import simulate_p_scipy, build_full_A0
 
 
 def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
+    """
+    Perform a systematic in-silico knockout screen for kinases, proteins, and phosphosites.
+
+    This function iterates through every component in the network, virtually "deleting" it
+    by modifying parameters (setting rates to zero) or topology matrices, and simulating
+    the new steady-state. It calculates the Log2 Fold Change compared to the Wild Type (WT)
+    baseline and generates a clustered heatmap of the results.
+
+    Perturbation types:
+    - **Kinase KO**: Sets global strength (alpha) to ~0.
+    - **Protein KO**: Sets synthesis rate (s_prod) to ~0.
+    - **Site KO**: Removes all upstream kinase inputs (simulating Alanine mutation).
+
+    Args:
+        outdir (str): Output directory for TSV and PNG files.
+        problem (NetworkOptimizationProblem): The initialized optimization problem object containing matrices and config.
+        theta_opt (np.ndarray): The optimized parameter vector (Wild Type).
+        sites (list): List of phosphosite IDs.
+        proteins (list): List of protein IDs.
+        kinases (list): List of kinase IDs.
+
+    Returns:
+        None: Saves 'knockout_l2fc.tsv' and 'knockout_clustermap.png' to disk.
+    """
     print("\n[*] Running Systematic Knockout Screen...")
     ko_dir = os.path.join(outdir, "knockouts")
     os.makedirs(ko_dir, exist_ok=True)

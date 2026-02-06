@@ -13,6 +13,38 @@ from phoscrosstalk.core_mechanisms import decode_theta
 @njit(cache=True)
 def compute_objectives_nb(theta, P_data, P_sim, A_scaled, A_sim, W_data, W_data_prot,
                           prot_idx_for_A, L_alpha, lambda_net, reg_lambda, n_p, n_A, n_var, K, M, N):
+    """
+    Numba-accelerated computation of the three-component objective function vector.
+
+    Calculates the loss/cost for a given simulation result compared to experimental data.
+
+    The objectives are:
+    1. **Phosphosite Error (f1)**: Weighted Mean Squared Logarithmic Error (MSLE) between simulated phosphosite
+       trajectories (`P_sim`) and observed data (`P_data`).
+    2. **Protein Abundance Error (f2)**: Weighted MSLE between simulated protein levels (`A_sim`) and
+       observed protein data (`A_scaled`). Returns 0.0 if no protein data is available.
+    3. **Complexity/Regularization (f3)**: A composite penalty term including:
+       - L2 regularization on all parameters (`reg_lambda`).
+       - Network Laplacian regularization (`lambda_net`) encouraging smoothness in kinase-kinase interactions.
+
+    Args:
+        theta (np.ndarray): Decoded parameter vector.
+        P_data (np.ndarray): Observed phosphosite data (N_sites x T).
+        P_sim (np.ndarray): Simulated phosphosite trajectories (N_sites x T).
+        A_scaled (np.ndarray): Observed protein abundance data.
+        A_sim (np.ndarray): Simulated protein abundance trajectories.
+        W_data, W_data_prot (np.ndarray): Weight matrices for phosphosites and proteins.
+        prot_idx_for_A (np.ndarray): Indices mapping protein data rows to model proteins.
+        L_alpha (np.ndarray): Laplacian matrix for kinase network regularization.
+        lambda_net (float): Strength of the network Laplacian penalty.
+        reg_lambda (float): Strength of the global L2 parameter penalty.
+        n_p, n_A, n_var (int): Normalization counts for sites, proteins, and parameters.
+        K, M, N (int): Model dimensions.
+
+    Returns:
+        tuple: (f1, f2, f3) objective values.
+    """
+
     (k_act, k_deact, s_prod, d_deg, beta_g, beta_l, alpha, kK_act, kK_deact, k_off,
      gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net) = decode_theta(theta, K, M, N)
 
@@ -57,6 +89,21 @@ def compute_objectives_nb(theta, P_data, P_sim, A_scaled, A_sim, W_data, W_data_
 
 @njit(cache=True)
 def bio_score_nb(theta, K, M, N):
+    """
+    Numba-compiled kernel to calculate the Biological Plausibility Score.
+
+    Derives the half-lives ($t_{1/2} = \ln(2)/k$) for kinases and proteins from the parameter
+    vector `theta` and penalizes deviations from expected biological time scales (e.g., ~10 min for
+    phosphorylation, ~600 min for protein turnover).
+
+    Args:
+        theta (np.ndarray): Parameter vector.
+        K, M, N (int): Model dimensions.
+
+    Returns:
+        float: The calculated biological score (lower is better/more plausible).
+    """
+
     (k_act, k_deact, s_prod, d_deg, _, _, _, kK_act, kK_deact, _, _, _, _, _) = decode_theta(theta, K, M, N)
     t_half_kinase = np.log(2.0) / kK_deact
     t_half_protein = np.log(2.0) / d_deg
@@ -69,10 +116,35 @@ def bio_score_nb(theta, K, M, N):
 
 
 def bio_score(theta):
+    """
+    Wrapper function to calculate the biological plausibility score for a parameter set.
+
+    Args:
+        theta (np.ndarray): Parameter vector.
+
+    Returns:
+        float: Biological score.
+    """
     return float(bio_score_nb(theta, ModelDims.K, ModelDims.M, ModelDims.N))
 
 
 def build_full_A0(K, T, A_scaled, prot_idx_for_A):
+    """
+    Constructs the full initial condition/forcing matrix for Protein Abundance (A).
+
+    Maps the sparse observed protein data (`A_scaled`) into the full system matrix (`A0_full`)
+    of size K x T. Proteins without observed data are initialized to zero (or handled by the ODE default).
+
+    Args:
+        K (int): Total number of proteins in the model.
+        T (int): Number of time points.
+        A_scaled (np.ndarray): Observed protein data matrix.
+        prot_idx_for_A (np.ndarray): Indices of proteins corresponding to rows in `A_scaled`.
+
+    Returns:
+        np.ndarray: The full K x T protein abundance matrix.
+    """
+
     A0_full = np.zeros((K, T), dtype=float)
     if A_scaled.size > 0:
         for k, p_idx in enumerate(prot_idx_for_A):
@@ -81,6 +153,26 @@ def build_full_A0(K, T, A_scaled, prot_idx_for_A):
 
 
 def create_bounds(K, M, N):
+    """
+    Generates the lower (`xl`) and upper (`xu`) bound vectors for the optimization search space.
+
+    Constructs flat arrays corresponding to the `theta` vector, setting limits for:
+    - Kinetic rates (activation, deactivation, synthesis, degradation)
+    - Coupling constants (global/local beta)
+    - Kinase parameters (alpha, activity)
+    - Phosphatase rates (k_off)
+    - Sigmoidal shape parameters (gammas)
+
+    Args:
+        K, M, N (int): Model dimensions.
+
+    Returns:
+        tuple: (xl, xu, dim)
+            - xl (np.ndarray): Lower bounds vector.
+            - xu (np.ndarray): Upper bounds vector.
+            - dim (int): Total number of parameters.
+    """
+
     dim = 4 * K + 2 + 3 * M + N + 4
     xl, xu = np.zeros(dim), np.zeros(dim)
     idx = 0
@@ -122,10 +214,46 @@ def create_bounds(K, M, N):
 
 
 class NetworkOptimizationProblem(ElementwiseProblem):
+    """
+    Pymoo `ElementwiseProblem` definition for the Phospho-Crosstalk Network inference.
+
+    Encapsulates the simulation logic, data comparison, and objective calculation into a
+    standardized interface for Multi-Objective Evolutionary Algorithms (MOEAs).
+
+    Attributes:
+        t (np.ndarray): Time points.
+        P_data (np.ndarray): Experimental phosphosite data.
+        Cg, Cl (np.ndarray): Connectivity matrices.
+        K_site_kin, R, L_alpha (np.ndarray): Interaction matrices.
+        lambda_net, reg_lambda (float): Regularization strengths.
+        mechanism (str): Kinetic mechanism identifier.
+    """
     def __init__(self, t, P_data, Cg, Cl, site_prot_idx, K_site_kin, R,
                  A_scaled, prot_idx_for_A, W_data, W_data_prot, L_alpha, kin_to_prot_idx,
                  lambda_net, reg_lambda, receptor_mask_prot, receptor_mask_kin, mechanism,
                  xl, xu, **kwargs):
+        """
+        Initializes the optimization problem structure.
+
+        Args:
+            t (np.ndarray): Simulation time points.
+            P_data (np.ndarray): Target phosphosite data.
+            Cg, Cl (np.ndarray): Global and local crosstalk matrices.
+            site_prot_idx (np.ndarray): Map of sites to parent proteins.
+            K_site_kin (np.ndarray): Kinase-Substrate interaction matrix.
+            R (np.ndarray): Receptor input matrix.
+            A_scaled (np.ndarray): Protein abundance data.
+            prot_idx_for_A (np.ndarray): Map of abundance data to proteins.
+            W_data, W_data_prot (np.ndarray): Loss weights for sites and proteins.
+            L_alpha (np.ndarray): Laplacian for kinase network regularization.
+            kin_to_prot_idx (np.ndarray): Map of kinases to proteins.
+            lambda_net (float): Laplacian regularization weight.
+            reg_lambda (float): L2 parameter regularization weight.
+            receptor_mask_prot, receptor_mask_kin (np.ndarray): Boolean masks for receptor inputs.
+            mechanism (str): ODE mechanism type ('dist', 'seq', 'rand').
+            xl, xu (np.ndarray): Lower and upper parameter bounds.
+            **kwargs: Additional arguments passed to the Pymoo ElementwiseProblem.
+        """
         super().__init__(n_var=len(xl), n_obj=3, n_ieq_constr=0, xl=xl, xu=xu, **kwargs)
         self.t = t
         self.P_data = P_data
@@ -150,6 +278,19 @@ class NetworkOptimizationProblem(ElementwiseProblem):
         self.n_var = len(xl)
 
     def _evaluate(self, x, out, *args, **kwargs):
+        """
+        Core evaluation function called by the optimizer for a single candidate solution `x`.
+
+        1. Reconstructs the full `A0` matrix.
+        2. Runs the ODE simulation (`simulate_p_scipy`).
+        3. Checks for simulation divergence/NaNs (penalizing if found).
+        4. Computes the 3 objectives (`f1`, `f2`, `f3`) via `compute_objectives_nb`.
+        5. Stores results in the `out` dictionary.
+
+        Args:
+            x (np.ndarray): Candidate parameter vector (theta).
+            out (dict): Pymoo output dictionary to store results ("F" key).
+        """
         theta = x
         K, T = ModelDims.K, self.P_data.shape[1]
 
@@ -176,10 +317,16 @@ class NetworkOptimizationProblem(ElementwiseProblem):
 
     def simulate(self, x):
         """
-        Simulate site trajectories P(t) for a decision vector x.
+        Runs a simulation for a specific parameter vector `x` and returns the phosphosite trajectories.
+
+        Useful for post-hoc analysis or generating plots for a specific solution found during
+        optimization, without computing the objective values.
+
+        Args:
+            x (np.ndarray): Parameter vector.
 
         Returns:
-            P_sim: ndarray, shape (N_sites, T), aligned to the rows of the input data.
+            np.ndarray: Simulated phosphosite matrix `P_sim` (N_sites x T).
         """
         theta = np.asarray(x, dtype=np.float64)
 

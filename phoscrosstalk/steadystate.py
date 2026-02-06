@@ -12,6 +12,26 @@ from phoscrosstalk.simulation import simulate_p_scipy, build_full_A0
 
 
 def run_steadystate_analysis(outdir, problem, theta_opt, sites, proteins, kinases):
+    """
+    Simulates the network over a long time horizon to analyze convergence and steady-state behavior.
+
+
+
+    Extends the simulation to T=10,000 using a log-spaced time vector to capture both rapid initial
+    dynamics and long-term asymptotic behavior. Outputs include convergence metrics, raw data tables
+    for sites and proteins, and visualizations of the trajectories.
+
+    Args:
+        outdir (str): Directory to save steady-state results.
+        problem (NetworkOptimizationProblem): The optimization problem instance containing model matrices and configuration.
+        theta_opt (np.ndarray): The optimized parameter vector.
+        sites (list): List of phosphosite IDs.
+        proteins (list): List of protein IDs.
+        kinases (list): List of kinase IDs.
+
+    Returns:
+        None: Saves 'steadystate_sites.tsv', 'steadystate_proteins.tsv', and heatmap/trajectory plots to disk.
+    """
     print("\n[*] Running Steady State Analysis...")
     ss_dir = os.path.join(outdir, "steadystate")
     os.makedirs(ss_dir, exist_ok=True)
@@ -73,7 +93,16 @@ def run_steadystate_analysis(outdir, problem, theta_opt, sites, proteins, kinase
 
 def _plot_convergence_heatmap(outdir, data, t, label):
     """
-    Heatmap of trajectories sorted by steady state value.
+    Generates a heatmap of trajectories sorted by their final steady-state value.
+
+    Args:
+        outdir (str): Output directory path.
+        data (np.ndarray): Matrix of time-series data (Rows=Entities, Cols=Time).
+        t (np.ndarray): Time vector.
+        label (str): Label for the entities (e.g., "Phosphosites", "Proteins") used in titles.
+
+    Returns:
+        None: Saves a heatmap image to `outdir`.
     """
     # Sort by final value
     idx = np.argsort(data[:, -1])[::-1]
@@ -91,7 +120,20 @@ def _plot_convergence_heatmap(outdir, data, t, label):
 
 def _plot_trajectories(outdir, data, t, names, filename_suffix):
     """
-    Line plot of items with highest dynamic range.
+    Plots time-series line graphs for the top 10 entities with the highest dynamic range.
+
+    Uses a symmetric logarithmic scale (SymLog) for the time axis to visualize both early
+    transient phases and late steady-state approaches effectively.
+
+    Args:
+        outdir (str): Output directory path.
+        data (np.ndarray): Matrix of time-series data.
+        t (np.ndarray): Time vector.
+        names (list): List of names corresponding to the rows in `data`.
+        filename_suffix (str): Suffix for the output filename.
+
+    Returns:
+        None: Saves a line plot image to `outdir`.
     """
     dynamic_range = np.max(data, axis=1) - np.min(data, axis=1)
     top_indices = np.argsort(dynamic_range)[-10:]  # Top 10

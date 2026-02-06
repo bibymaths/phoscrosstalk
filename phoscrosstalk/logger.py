@@ -23,6 +23,14 @@ console = Console(theme=custom_theme)
 
 
 class RichLogger:
+    """
+    A Singleton wrapper around Python's logging module that provides rich-text
+    console output and structured file logging.
+
+    Ensures that only one logger instance exists throughout the application lifecycle,
+    managing output styles (colors, emojis) via the `rich` library while maintaining
+    standard text logs in a file.
+    """
     _instance = None
 
     def __new__(cls, name="PhosCrosstalk", log_file="pipeline.log", level=logging.INFO):
@@ -32,6 +40,18 @@ class RichLogger:
         return cls._instance
 
     def _setup(self, name, log_file, level):
+        """
+        Initializes the logger configuration, handlers, and formatters.
+
+        Sets up two handlers:
+        1. A `RichHandler` for colorful, high-readability console output.
+        2. A `FileHandler` for persistent, standard-formatted logging.
+
+        Args:
+            name (str): Name of the logger instance.
+            log_file (str): Path to the output log file.
+            level (int): Logging threshold (e.g., logging.INFO).
+        """
         self.logger = logging.getLogger(name)
         self.logger.setLevel(level)
         self.logger.handlers = []  # Clear existing handlers
@@ -61,34 +81,94 @@ class RichLogger:
             self.logger.addHandler(file_handler)
 
     def info(self, msg, *args, **kwargs):
+        """
+        Log an informational message.
+
+        Args:
+            msg (str): The message string.
+            *args, **kwargs: Arguments passed to the standard logger.
+        """
         self.logger.info(msg, *args, **kwargs)
 
     def success(self, msg, *args, **kwargs):
-        """Custom success level (mapped to INFO with styling)"""
+        """
+        Log a success message with a checkmark icon.
+
+        Args:
+            msg (str): The message string.
+            *args, **kwargs: Arguments passed to the standard logger.
+        """
         console.print(f"[success]✔ {msg}[/success]")
         # Log to file as INFO
         self.logger.info(f"[SUCCESS] {msg}", *args, **kwargs)
 
     def warning(self, msg, *args, **kwargs):
+        """
+        Log a warning message (yellow styling).
+
+        Args:
+            msg (str): The warning message.
+            *args, **kwargs: Arguments passed to the standard logger.
+        """
         self.logger.warning(msg, *args, **kwargs)
 
     def error(self, msg, *args, **kwargs):
+        """
+        Log an error message (red styling).
+
+        Args:
+            msg (str): The error message.
+            *args, **kwargs: Arguments passed to the standard logger.
+        """
         self.logger.error(msg, *args, **kwargs)
 
     def critical(self, msg, *args, **kwargs):
+        """
+        Log a critical error message (bold red/background styling).
+
+        Args:
+            msg (str): The critical message.
+            *args, **kwargs: Arguments passed to the standard logger.
+        """
         self.logger.critical(msg, *args, **kwargs)
 
     def header(self, msg):
-        """Prints a styled header block."""
+        """
+        Print a styled horizontal rule with a centered header title.
+
+        Useful for visually separating distinct stages of the pipeline in the console output.
+        Also logs the header text to the file as an INFO message.
+
+        Args:
+            msg (str): The header title text.
+        """
         console.print()
         console.rule(f"[header]{msg}[/header]")
         self.logger.info(f"=== {msg} ===")
 
     def get_console(self):
-        """Returns the raw Rich console for advanced use (tables, progress)."""
+        """
+        Retrieve the underlying `rich.console.Console` instance.
+
+        Allows access to advanced `rich` features like progress bars, tables,
+        and live displays that are not covered by standard logging methods.
+
+        Returns:
+            rich.console.Console: The active console object.
+        """
         return console
 
 
 # Global singleton accessor
 def get_logger(log_file=None):
+    """
+    Factory function to retrieve the singleton `RichLogger` instance.
+
+    Args:
+        log_file (str, optional): Path to the log file. Only used on the first call
+                                  that initializes the singleton.
+
+    Returns:
+        RichLogger: The active logger instance.
+    """
     return RichLogger(log_file=log_file)
