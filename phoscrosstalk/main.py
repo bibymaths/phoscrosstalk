@@ -24,7 +24,9 @@ from phoscrosstalk.debug_main import _sanity_report_data, _sanity_report_C, _cov
 from phoscrosstalk.weighting import build_weight_matrices
 from phoscrosstalk.optimization import NetworkOptimizationProblem, create_bounds
 from phoscrosstalk.fretchet import frechet_distance
+from phoscrosstalk.logger import get_logger
 
+logger = get_logger()
 
 def main():
     """
@@ -195,12 +197,12 @@ def main():
     os.makedirs(args.outdir, exist_ok=True)
 
     results_dir = os.path.join(args.outdir)
-    print(f"[*] Output directory: {args.outdir}")
+    logger.header(f"[*] Output directory: {args.outdir}")
 
     # 1. Load Data
     (sites, proteins, site_prot_idx, positions, t, Y, A_data, A_proteins) = data_loader.load_site_data(args.data)
 
-    print(f"[*] Loaded {len(sites)} sites, {len(proteins)} proteins.")
+    logger.success(f"[*] Loaded {len(sites)} sites, {len(proteins)} proteins.")
 
     # Crosstalk filtering
     if args.crosstalk_tsv:
@@ -222,7 +224,7 @@ def main():
         prot_map = {p: i for i, p in enumerate(prots_used)}
         site_prot_idx = np.array([prot_map[s.split("_", 1)[0]] for s in sites], dtype=int)
         proteins = prots_used
-        print(f"[*] Filtered to {len(sites)} sites.")
+        logger.info(f"[*] Filtered to {len(sites)} sites.")
 
     # 2. Scaling
     P_scaled, baselines, amplitudes = data_loader.apply_scaling(Y, mode=args.scale_mode)
@@ -309,9 +311,9 @@ def main():
         args.length_scale = best_params["length_scale"]
         args.lambda_net = best_params["lambda_net"]
         args.reg_lambda = best_params["reg_lambda"]
-        print(f"[*] Applied Tuned Params: LS={args.length_scale}, LN={args.lambda_net}, Reg={args.reg_lambda}")
+        logger.success(f"[*] Applied Tuned Params: LS={args.length_scale}, LN={args.lambda_net}, Reg={args.reg_lambda}")
 
-    print(f"[*] Building final matrices with Length Scale {args.length_scale}...")
+    logger.info(f"[*] Building final matrices with Length Scale {args.length_scale}...")
     _, Cl = data_loader.build_C_matrices_from_db(
         args.ptm_intra, args.ptm_inter, sites, site_prot_idx, positions, proteins,
         length_scale=args.length_scale
@@ -321,7 +323,7 @@ def main():
     _sanity_report_C(Cg, Cl, N=len(sites))
 
     # 6. Global Setup & Bounds
-    print(f"[*] K={ModelDims.K}, M={ModelDims.M}, N={ModelDims.N}")
+    logger.header(f"[*] K={ModelDims.K}, M={ModelDims.M}, N={ModelDims.N}")
 
     xl, xu, dim = create_bounds(ModelDims.K, ModelDims.M, ModelDims.N)
 
@@ -354,7 +356,7 @@ def main():
     )
 
     # 7. Optimization
-    print(f"[*] Initializing Pool ({args.cores} cores)...")
+    logger.info(f"[*] Initializing Pool ({args.cores} cores)...")
     pool = multiprocessing.Pool(args.cores)
     runner = StarmapParallelization(pool.starmap)
 
@@ -375,14 +377,14 @@ def main():
     P_lo = sim_summary(problem, "lo", x_lo)
     P_hi = sim_summary(problem, "hi", x_hi)
 
-    print("||P_mid - P_lo||_inf =", np.max(np.abs(P_mid - P_lo)))
-    print("||P_hi  - P_mid||_inf =", np.max(np.abs(P_hi - P_mid)))
+    logger.info("||P_mid - P_lo||_inf =", np.max(np.abs(P_mid - P_lo)))
+    logger.info("||P_hi  - P_mid||_inf =", np.max(np.abs(P_hi - P_mid)))
 
     algorithm = UNSGA3(pop_size=args.pop_size, ref_dirs=get_reference_directions("das-dennis", 3, n_partitions=12))
     termination = DefaultMultiObjectiveTermination(xtol=1e-8, cvtol=1e-6, ftol=0.0025, period=30, n_max_gen=args.gen,
                                                    n_max_evals=1000000)
 
-    print("[*] Starting Main Optimization...")
+    logger.info("[*] Starting Main Optimization...")
     res = minimize(problem, algorithm, termination, seed=1, verbose=True)
     pool.close()
     pool.join()
@@ -448,7 +450,7 @@ def main():
             args.outdir, problem, X[best_idx], sites, proteins, kinases
         )
 
-    print("[*] Done.")
+    logger.success("[*] Done.")
 
 
 if __name__ == "__main__":

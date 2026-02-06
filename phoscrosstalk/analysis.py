@@ -11,7 +11,9 @@ from phoscrosstalk.core_mechanisms import decode_theta
 from phoscrosstalk.config import ModelDims, DEFAULT_TIMEPOINTS
 from phoscrosstalk.simulation import simulate_p_scipy
 from phoscrosstalk.optimization import build_full_A0, bio_score
+from phoscrosstalk.logger import get_logger
 
+logger = get_logger()
 
 def save_pareto_results(outdir, F, X, f1, f2, f3, J, F_best):
     """
@@ -139,17 +141,17 @@ def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
         f.write("-" * 40 + "\n")
 
     # Print the summary to console as well
-    print("=== Parameter Summary ===")
-    print("\n--- Protein-specific Parameters ---")
-    print(df_prot.to_string(index=False))
-    print("\n--- Kinase-specific Parameters ---")
-    print(df_kin.to_string(index=False))
-    print("\n--- Site-specific Parameters ---")
-    print(df_site.to_string(index=False))
-    print("\n--- Global Coupling Parameters ---")
-    print(f"beta_g (Global Coupling): {params_decoded[4]:.5f}")
-    print(f"beta_l (Local Coupling):  {params_decoded[5]:.5f}")
-    print("-" * 40 + "\n")
+    logger.info("=== Parameter Summary ===")
+    logger.header("\n--- Protein-specific Parameters ---")
+    logger.info(df_prot.to_string(index=False))
+    logger.header("\n--- Kinase-specific Parameters ---")
+    logger.info(df_kin.to_string(index=False))
+    logger.header("\n--- Site-specific Parameters ---")
+    logger.info(df_site.to_string(index=False))
+    logger.header("\n--- Global Coupling Parameters ---")
+    logger.info(f"beta_g (Global Coupling): {params_decoded[4]:.5f}")
+    logger.info(f"beta_l (Local Coupling):  {params_decoded[5]:.5f}")
+    logger.info("-" * 40 + "\n")
 
 
 def save_fitted_simulation(
@@ -302,7 +304,7 @@ def plot_fitted_simulation(outdir):
     # Load Data
     df = pd.read_csv(os.path.join(outdir, "fit_timeseries.tsv"), sep="\t")
     proteins = sorted(df["Protein"].unique())
-    print(f"[*] Found {len(proteins)} proteins")
+    logger.info(f"[*] Found {len(proteins)} proteins")
     df_sites = df[df["Type"] == "Phosphosite"].reset_index(drop=True)
     df_prots = df[df["Type"] == "ProteinAbundance"].reset_index(drop=True)
 
@@ -318,7 +320,7 @@ def plot_fitted_simulation(outdir):
 
     # Plot per Protein
     for prot in proteins:
-        print(f"   → Plotting {prot}")
+        logger.info(f"   → Plotting {prot}")
 
         fig, (axP, axS) = plt.subplots(
             1, 2, figsize=(18, 7), sharex=True, sharey=True,
@@ -466,9 +468,9 @@ def print_biological_scores(outdir, X):
         for i, score in enumerate(bio_scores):
             f.write(f"{i}\t{score:.6f}\n")
 
-    print("[*] Biological Scores:")
+    logger.info("[*] Biological Scores:")
     for i, score in enumerate(bio_scores):
-        print(f"   → Point {i}: Bio Score = {score:.6f}")
+        logger.info(f"   → Point {i}: Bio Score = {score:.6f}")
 
 
 def plot_biological_scores(outdir, X, F):
