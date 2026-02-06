@@ -42,6 +42,17 @@ from phoscrosstalk.config import ModelDims
 
 @njit(cache=True, fastmath=True)
 def clip_scalar(x, lo, hi):
+    """
+    Fast scalar clipping function compatible with Numba.
+
+    Args:
+        x (float): Value to clip.
+        lo (float): Lower bound.
+        hi (float): Upper bound.
+
+    Returns:
+        float: Clipped value.
+    """
     if x < lo:
         return lo
     elif x > hi:
@@ -51,6 +62,22 @@ def clip_scalar(x, lo, hi):
 
 @njit(cache=True, fastmath=True)
 def decode_theta(theta, K, M, N):
+    """
+    Decodes the flat parameter vector `theta` into individual biological parameters.
+
+    Performs unpacking, clipping to valid log-ranges, and exponentiation.
+
+    Args:
+        theta (np.ndarray): Flat parameter vector.
+        K (int): Number of proteins.
+        M (int): Number of kinases.
+        N (int): Number of phosphosites.
+
+    Returns:
+        tuple: A tuple containing arrays/scalars for:
+               (k_act, k_deact, s_prod, d_deg, beta_g, beta_l, alpha,
+                kK_act, kK_deact, k_off, gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net)
+    """
     idx0 = 0
     log_k_act = theta[idx0:idx0 + K];
     idx0 += K
@@ -105,6 +132,14 @@ def decode_theta(theta, K, M, N):
 
 @njit(cache=True, fastmath=True)
 def dense_mv(A, x, out):
+    """
+    Numba-accelerated dense matrix-vector multiplication: out = A @ x.
+
+    Args:
+        A (np.ndarray): 2D dense matrix.
+        x (np.ndarray): 1D input vector.
+        out (np.ndarray): 1D output vector (overwritten).
+    """
     # out = A @ x
     nrow = A.shape[0]
     ncol = A.shape[1]
@@ -118,6 +153,15 @@ def dense_mv(A, x, out):
 
 @njit(cache=True, fastmath=True)
 def dense_mv_inplace_add(A, x, out, scale):
+    """
+    Numba-accelerated dense matrix-vector multiplication: out += scale * (A @ x).
+
+    Args:
+        A (np.ndarray): 2D dense matrix.
+        x (np.ndarray): 1D input vector.
+        out (np.ndarray): 1D output vector (overwritten).
+        scale (float): Scaling factor for the result.
+    """
     # out += scale * (A @ x)
     nrow = A.shape[0]
     ncol = A.shape[1]
@@ -144,6 +188,16 @@ csr_spec = [
 
 @jitclass(csr_spec)
 class CSRMatrix:
+    """
+    Numba jitclass representing a Compressed Sparse Row matrix.
+
+    Attributes:
+        data (np.ndarray): Non-zero values.
+        indices (np.ndarray): Column indices.
+        indptr (np.ndarray): Row pointers.
+        n_rows (int): Number of rows.
+        n_cols (int): Number of columns.
+    """
     def __init__(self, data, indices, indptr, n_rows, n_cols):
         self.data = data
         self.indices = indices
@@ -154,8 +208,13 @@ class CSRMatrix:
 
 def csr_from_scipy(A_csr) -> CSRMatrix:
     """
-    Convert scipy.sparse.csr_matrix to CSRMatrix (Numba jitclass).
-    Call this outside njit (python-side).
+    Converts a scipy.sparse.csr_matrix into a Numba-compatible CSRMatrix struct.
+
+    Args:
+        A_csr (scipy.sparse.csr_matrix): Input sparse matrix.
+
+    Returns:
+        CSRMatrix: Numba jitclass instance.
     """
     data = np.asarray(A_csr.data, dtype=np.float64)
     indices = np.asarray(A_csr.indices, dtype=np.int64)
@@ -166,6 +225,14 @@ def csr_from_scipy(A_csr) -> CSRMatrix:
 
 @njit(cache=True, fastmath=True)
 def csr_mv(A, x, out):
+    """
+    Sparse matrix-vector multiplication: out = A @ x.
+
+    Args:
+        A (CSRMatrix): Sparse matrix struct.
+        x (np.ndarray): 1D input vector.
+        out (np.ndarray): 1D output vector (overwritten).
+    """
     # out = A @ x
     for i in range(A.n_rows):
         s = 0.0
@@ -178,6 +245,15 @@ def csr_mv(A, x, out):
 
 @njit(cache=True, fastmath=True)
 def csr_mv_inplace_add(A, x, out, scale):
+    """
+    Sparse matrix-vector multiplication: out += scale * (A @ x).
+
+    Args:
+        A (CSRMatrix): Sparse matrix struct.
+        x (np.ndarray): 1D input vector.
+        out (np.ndarray): 1D output vector (overwritten).
+        scale (float): Scaling factor for the result.
+    """
     # out += scale * (A @ x)
     for i in range(A.n_rows):
         s = 0.0
@@ -208,11 +284,25 @@ def _rhs_common_dense(x, t,
                       p_buf, coup_buf, num_p, num_c, den, u_sub, u_net, k_on_eff, last_occ, has_prev,
                       dx_out):
     """
-    One dense kernel that handles mech_code:
-      0 dist
-      1 seq
-      2 rand
-    Writes into dx_out (preallocated).
+    Core implementation of the ODE Right-Hand Side (RHS) for dense matrices.
+
+    Computes derivatives for Proteins (S, A), Kinases (Kdyn), and Sites (p) using
+    pre-allocated buffers to minimize memory overhead. Handles Distributive,
+    Sequential, and Random/Cooperative mechanisms via `mech_code`.
+
+    Args:
+        x (np.ndarray): State vector [S, A, Kdyn, p].
+        t (float): Current time.
+        [params...]: Decoded biological parameters.
+        [matrices...]: System topology matrices (Cg, Cl, R, etc.).
+        [indices...]: Mapping indices (site_prot_idx, etc.).
+        K, M, N (int): System dimensions.
+        mech_code (int): 0=Distributive, 1=Sequential, 2=Random/Coop.
+        [buffers...]: Pre-allocated working arrays (p_buf, coup_buf, etc.).
+        dx_out (np.ndarray): Output derivative vector (written in-place).
+
+    Returns:
+        np.ndarray: The `dx_out` array containing derivatives.
     """
 
     S = x[0:K]
@@ -390,7 +480,13 @@ def rhs_dense_onecall(x, t, theta,
                       K, M, N,
                       mech_code):
     """
-    Dense RHS with per-call theta decode (slower than workspace, but drop-in replacement).
+    Stand-alone dense RHS wrapper that allocates memory per call.
+
+    Useful for compatibility with standard solvers where persistent workspace
+    objects are not used. Decodes `theta` and allocates buffers on every invocation.
+
+    Returns:
+        np.ndarray: Derivative vector `dx`.
     """
     (k_act, k_deact, s_prod, d_deg,
      beta_g, beta_l, alpha,
@@ -437,6 +533,15 @@ def _rhs_common_csr(x, t,
                     mech_code,
                     p_buf, coup_buf, num_p, num_c, den, u_sub, u_net, k_on_eff, last_occ, has_prev,
                     dx_out):
+    """
+    Core implementation of the ODE Right-Hand Side (RHS) for sparse matrices.
+
+    Functionally identical to `_rhs_common_dense` but utilizes `CSRMatrix` structures
+    and sparse kernel calls for matrix multiplications.
+
+    Returns:
+        np.ndarray: The `dx_out` array containing derivatives.
+    """
     S = x[0:K]
     A = x[K:2 * K]
     Kdyn0 = x[2 * K:2 * K + M]
@@ -583,6 +688,15 @@ def rhs_csr_onecall(x, t, theta,
                     receptor_mask_prot, receptor_mask_kin,
                     K, M, N,
                     mech_code):
+    """
+    Stand-alone sparse RHS wrapper that allocates memory per call.
+
+    Useful for compatibility with standard solvers when matrices are sparse,
+    but persistent workspace objects are not used.
+
+    Returns:
+        np.ndarray: Derivative vector `dx`.
+    """
     (k_act, k_deact, s_prod, d_deg,
      beta_g, beta_l, alpha,
      kK_act, kK_deact, k_off,
@@ -613,7 +727,7 @@ def rhs_csr_onecall(x, t, theta,
 
 
 # -------------------------
-# Workspace mode (biggest win for optimization loops)
+# Workspace mode
 # -------------------------
 
 dense_ws_spec = [
@@ -632,6 +746,12 @@ dense_ws_spec = [
 
 @jitclass(dense_ws_spec)
 class DenseWorkspace:
+    """
+    Persistent workspace for dense simulations to eliminate allocation overhead.
+
+    Stores pre-allocated buffers and decoded parameters. Ideally initialized once
+    outside the solver loop.
+    """
     def __init__(self, K, M, N):
         self.K = K
         self.M = M
@@ -667,6 +787,9 @@ class DenseWorkspace:
         self.dx = np.empty(2 * K + M + N)
 
     def set_theta(self, theta):
+        """
+        Decodes and stores parameters from the flat vector `theta` into internal arrays.
+        """
         (k_act, k_deact, s_prod, d_deg,
          beta_g, beta_l, alpha,
          kK_act, kK_deact, k_off,
@@ -695,6 +818,14 @@ class DenseWorkspace:
             kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
             mech_code,
             return_copy):
+        """
+        Calculates ODE derivatives using stored buffers.
+
+        Args:
+
+            mech_code (int): Mechanism code (0: one-step, 1: last-occurrence).
+            return_copy (int): If 1, returns a copy of dx. If 0, returns the internal buffer (unsafe if solver mutates it).
+        """
         out = _rhs_common_dense(x, t,
                                 self.k_act, self.k_deact, self.s_prod, self.d_deg,
                                 self.beta_g, self.beta_l, self.alpha,
@@ -726,6 +857,11 @@ csr_ws_spec = [
 
 @jitclass(csr_ws_spec)
 class CSRWorkspace:
+    """
+    Persistent workspace for sparse simulations to eliminate allocation overhead.
+
+    Stores pre-allocated buffers and decoded parameters for use with `CSRMatrix` inputs.
+    """
     def __init__(self, K, M, N):
         self.K = K
         self.M = M
@@ -761,6 +897,9 @@ class CSRWorkspace:
         self.dx = np.empty(2 * K + M + N)
 
     def set_theta(self, theta):
+        """
+        Decodes and stores parameters from the flat vector `theta` into internal arrays.
+        """
         (k_act, k_deact, s_prod, d_deg,
          beta_g, beta_l, alpha,
          kK_act, kK_deact, k_off,
@@ -788,6 +927,9 @@ class CSRWorkspace:
             kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
             mech_code,
             return_copy):
+        """
+        Calculates ODE derivatives using stored buffers and sparse logic.
+        """
         out = _rhs_common_csr(x, t,
                               self.k_act, self.k_deact, self.s_prod, self.d_deg,
                               self.beta_g, self.beta_l, self.alpha,
@@ -805,7 +947,7 @@ class CSRWorkspace:
 
 
 # -------------------------
-# Compatibility layer: keep your dispatch logic
+# Backward Compatibility layer for sparse simulations
 # -------------------------
 
 def network_rhs(x, t, theta,
@@ -815,9 +957,22 @@ def network_rhs(x, t, theta,
                 sparse=False,
                 K=None, M=None, N=None):
     """
-    Python-level dispatch that keeps your mechanism string and adds a sparse flag.
-    - If sparse=False: expects dense numpy arrays
-    - If sparse=True: expects CSRMatrix jitclass for each matrix
+    Main Python-level entry point for ODE integration.
+
+    Dispatches to either dense or sparse Numba kernels based on flags. Handles
+    mechanism string decoding ("dist", "seq", "rand").
+
+    Args:
+        x (np.ndarray): State vector.
+        t (float): Time.
+        theta (np.ndarray): Parameter vector.
+        [matrices]: Model topology matrices.
+        mech (str): Mechanism name ("dist", "seq", "rand").
+        sparse (bool): If True, treats matrices as CSRMatrix objects.
+        K, M, N (int, optional): Dimensions (defaults to config.ModelDims).
+
+    Returns:
+        np.ndarray: Derivative vector `dx`.
     """
     if K is None: K = ModelDims.K
     if M is None: M = ModelDims.M
@@ -859,6 +1014,9 @@ def rhs_nb_dispatch_dense(
         K, M, N,
         mech_code  # 0: dist, 1: seq, 2: rand
 ):
+    """
+    Numba-compiled dispatcher for dense `onecall` execution.
+    """
     return rhs_dense_onecall(x, t, theta,
                              Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
                              kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
@@ -879,6 +1037,9 @@ def rhs_nb_dispatch_csr(
         K, M, N,
         mech_code  # 0: dist, 1: seq, 2: rand
 ):
+    """
+    Numba-compiled dispatcher for sparse `onecall` execution.
+    """
     return rhs_csr_onecall(x, t, theta,
                            Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
                            kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
