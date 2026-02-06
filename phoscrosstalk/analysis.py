@@ -106,21 +106,21 @@ def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
 
 
 def save_fitted_simulation(
-    outdir,
-    theta_opt,
-    t,
-    sites,
-    proteins,
-    P_scaled,
-    A_scaled,
-    prot_idx_for_A,
-    baselines,
-    amplitudes,
-    Y,             # <--- add this: original site data (FC)
-    A_data, A_bases, A_amps,
-    mechanism,
-    Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha, kin_to_prot_idx,
-    mask_p, mask_k,
+        outdir,
+        theta_opt,
+        t,
+        sites,
+        proteins,
+        P_scaled,
+        A_scaled,
+        prot_idx_for_A,
+        baselines,
+        amplitudes,
+        Y,  # <--- add this: original site data (FC)
+        A_data, A_bases, A_amps,
+        mechanism,
+        Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha, kin_to_prot_idx,
+        mask_p, mask_k,
 ):
     K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
 
@@ -167,7 +167,7 @@ def save_fitted_simulation(
 
     # Column names – USE INDICES, NOT int(time)
     T = len(t)
-    sim_cols  = [f"sim_t{j}"  for j in range(T)]
+    sim_cols = [f"sim_t{j}" for j in range(T)]
     data_cols = [f"data_t{j}" for j in range(T)]
 
     records = []
@@ -181,7 +181,7 @@ def save_fitted_simulation(
             "Residue": residue,
         }
         for j in range(T):
-            record[sim_cols[j]]  = Y_sim_rescaled[i, j]
+            record[sim_cols[j]] = Y_sim_rescaled[i, j]
             record[data_cols[j]] = Y_data_rescaled[i, j]
         records.append(record)
 
@@ -195,12 +195,13 @@ def save_fitted_simulation(
                 "Residue": "",
             }
             for j in range(T):
-                record[sim_cols[j]]  = A_sim_rescaled[p_idx, j]
+                record[sim_cols[j]] = A_sim_rescaled[p_idx, j]
                 record[data_cols[j]] = A_data[k, j]
             records.append(record)
 
     df_out = pd.DataFrame.from_records(records)
     df_out.to_csv(os.path.join(outdir, "fit_timeseries.tsv"), sep="\t", index=False)
+
 
 def plot_fitted_simulation(outdir):
     """
@@ -356,6 +357,7 @@ def plot_fitted_simulation(outdir):
         plt.savefig(os.path.join(outdir, f"fit_{prot}.png"), dpi=300, bbox_inches="tight")
         plt.close(fig)
 
+
 def print_biological_scores(outdir, X):
     bio_scores = np.array([bio_score(theta) for theta in X])
 
@@ -367,6 +369,7 @@ def print_biological_scores(outdir, X):
     print("[*] Biological Scores:")
     for i, score in enumerate(bio_scores):
         print(f"   → Point {i}: Bio Score = {score:.6f}")
+
 
 def plot_biological_scores(outdir, X, F):
     bio_scores = np.array([bio_score(theta) for theta in X])
@@ -381,6 +384,7 @@ def plot_biological_scores(outdir, X, F):
     plt.savefig(os.path.join(outdir, "biological_scores.png"), dpi=300)
     plt.close()
 
+
 def plot_goodness_of_fit(file, outdir):
     """
     Goodness-of-fit scatter: Observed (x) vs Simulated (y) across all timepoints.
@@ -393,7 +397,7 @@ def plot_goodness_of_fit(file, outdir):
     """
     df = pd.read_csv(file, sep="\t")
 
-    sim_cols  = [c for c in df.columns if c.startswith("sim_t")]
+    sim_cols = [c for c in df.columns if c.startswith("sim_t")]
     data_cols = [c for c in df.columns if c.startswith("data_t")]
 
     if len(sim_cols) == 0 or len(data_cols) == 0:
@@ -406,16 +410,16 @@ def plot_goodness_of_fit(file, outdir):
             # Residue can be missing; keep robust
             residue = row.get("Residue", "")
             if pd.notna(residue) and str(residue) != "":
-                labels.append(f"{row.get('Protein','NA')}_{residue}")
+                labels.append(f"{row.get('Protein', 'NA')}_{residue}")
             else:
-                labels.append(f"{row.get('Protein','NA')}_site")
+                labels.append(f"{row.get('Protein', 'NA')}_site")
         else:
-            labels.append(f"{row.get('Protein','NA')}_Abundance")
+            labels.append(f"{row.get('Protein', 'NA')}_Abundance")
     df["Label"] = labels
 
     # --- Flatten all points for global stats ---
     data_all = df[data_cols].to_numpy(dtype=float).reshape(-1)
-    sim_all  = df[sim_cols].to_numpy(dtype=float).reshape(-1)
+    sim_all = df[sim_cols].to_numpy(dtype=float).reshape(-1)
     mask_all = np.isfinite(data_all) & np.isfinite(sim_all)
 
     if mask_all.sum() < 3:
@@ -447,7 +451,7 @@ def plot_goodness_of_fit(file, outdir):
     outside_points = []  # (x, y, label, dev)
 
     for _, row in df.iterrows():
-        sim_vals  = row[sim_cols].values.astype(float)
+        sim_vals = row[sim_cols].values.astype(float)
         data_vals = row[data_cols].values.astype(float)
         m = np.isfinite(sim_vals) & np.isfinite(data_vals)
         if not np.any(m):
@@ -471,7 +475,7 @@ def plot_goodness_of_fit(file, outdir):
     # Plot scatter points grouped by Type (so legend is meaningful and not cluttered)
     # Phosphosite
     for idx, row in df[df["Type"] == "Phosphosite"].iterrows():
-        sim_vals  = row[sim_cols].values.astype(float)
+        sim_vals = row[sim_cols].values.astype(float)
         data_vals = row[data_cols].values.astype(float)
         m = np.isfinite(sim_vals) & np.isfinite(data_vals)
         if not np.any(m):
@@ -487,7 +491,7 @@ def plot_goodness_of_fit(file, outdir):
 
     # Abundance (protein / kinases, depending on your file semantics)
     for idx, row in df[df["Type"] != "Phosphosite"].iterrows():
-        sim_vals  = row[sim_cols].values.astype(float)
+        sim_vals = row[sim_cols].values.astype(float)
         data_vals = row[data_cols].values.astype(float)
         m = np.isfinite(sim_vals) & np.isfinite(data_vals)
         if not np.any(m):
@@ -570,32 +574,32 @@ def _save_index_tsv(path: str, vec: np.ndarray) -> None:
 
 
 def _save_preopt_snapshot_txt_csv(
-    outdir,
-    *,
-    t,
-    sites,
-    proteins,
-    kinases,
-    positions,
-    P_scaled,
-    Y,
-    A_scaled,
-    A_data,
-    A_proteins,
-    W_data,
-    W_data_prot,
-    Cg,
-    Cl,
-    site_prot_idx,
-    K_site_kin,
-    R,
-    L_alpha,
-    kin_to_prot_idx,
-    receptor_mask_prot,
-    receptor_mask_kin,
-    xl,
-    xu,
-    args,
+        outdir,
+        *,
+        t,
+        sites,
+        proteins,
+        kinases,
+        positions,
+        P_scaled,
+        Y,
+        A_scaled,
+        A_data,
+        A_proteins,
+        W_data,
+        W_data_prot,
+        Cg,
+        Cl,
+        site_prot_idx,
+        K_site_kin,
+        R,
+        L_alpha,
+        kin_to_prot_idx,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        xl,
+        xu,
+        args,
 ) -> None:
     snap_dir = os.path.join(outdir, "preopt_snapshot")
     os.makedirs(snap_dir, exist_ok=True)
@@ -614,9 +618,11 @@ def _save_preopt_snapshot_txt_csv(
     lines.append(f"reg_lambda\t{args.reg_lambda}")
     lines.append("")
     lines.append("shapes")
+
     def _shape(name, arr):
         a = np.asarray(arr)
         return f"{name}\t{tuple(a.shape)}"
+
     lines.extend([
         _shape("t", t),
         _shape("positions", positions),

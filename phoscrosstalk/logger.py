@@ -21,6 +21,7 @@ custom_theme = Theme({
 
 console = Console(theme=custom_theme)
 
+
 class RichLogger:
     _instance = None
 
@@ -86,6 +87,7 @@ class RichLogger:
     def get_console(self):
         """Returns the raw Rich console for advanced use (tables, progress)."""
         return console
+
 
 # Global singleton accessor
 def get_logger(log_file=None):

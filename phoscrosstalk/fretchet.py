@@ -29,7 +29,7 @@ def frechet_distance(true_coords: FloatArray, pred_coords: FloatArray) -> float:
             # Compute Euclidean distance
             # Formula: (sum(|x_i - y_j|^p))^(1/p)
             dist[i, j] = np.sum(np.abs(true_coords[i] - pred_coords[j]) ** p) ** (
-                1.0 / p
+                    1.0 / p
             )
 
     cost = np.full((n, m), np.inf)
