@@ -52,19 +52,29 @@ def clip_scalar(x, lo, hi):
 @njit(cache=True, fastmath=True)
 def decode_theta(theta, K, M, N):
     idx0 = 0
-    log_k_act = theta[idx0:idx0 + K]; idx0 += K
-    log_k_deact = theta[idx0:idx0 + K]; idx0 += K
-    log_s_prod = theta[idx0:idx0 + K]; idx0 += K
-    log_d_deg = theta[idx0:idx0 + K]; idx0 += K
+    log_k_act = theta[idx0:idx0 + K];
+    idx0 += K
+    log_k_deact = theta[idx0:idx0 + K];
+    idx0 += K
+    log_s_prod = theta[idx0:idx0 + K];
+    idx0 += K
+    log_d_deg = theta[idx0:idx0 + K];
+    idx0 += K
 
-    log_beta_g = theta[idx0]; idx0 += 1
-    log_beta_l = theta[idx0]; idx0 += 1
+    log_beta_g = theta[idx0];
+    idx0 += 1
+    log_beta_l = theta[idx0];
+    idx0 += 1
 
-    log_alpha = theta[idx0:idx0 + M]; idx0 += M
-    log_kK_act = theta[idx0:idx0 + M]; idx0 += M
-    log_kK_deact = theta[idx0:idx0 + M]; idx0 += M
+    log_alpha = theta[idx0:idx0 + M];
+    idx0 += M
+    log_kK_act = theta[idx0:idx0 + M];
+    idx0 += M
+    log_kK_deact = theta[idx0:idx0 + M];
+    idx0 += M
 
-    log_k_off = theta[idx0:idx0 + N]; idx0 += N
+    log_k_off = theta[idx0:idx0 + N];
+    idx0 += N
     raw_gamma = theta[idx0:idx0 + 4]
 
     # clip then exp
@@ -130,6 +140,7 @@ csr_spec = [
     ("n_rows", int64),
     ("n_cols", int64),
 ]
+
 
 @jitclass(csr_spec)
 class CSRMatrix:
@@ -426,7 +437,6 @@ def _rhs_common_csr(x, t,
                     mech_code,
                     p_buf, coup_buf, num_p, num_c, den, u_sub, u_net, k_on_eff, last_occ, has_prev,
                     dx_out):
-
     S = x[0:K]
     A = x[K:2 * K]
     Kdyn0 = x[2 * K:2 * K + M]
@@ -619,6 +629,7 @@ dense_ws_spec = [
     ("dx", float64[:]),
 ]
 
+
 @jitclass(dense_ws_spec)
 class DenseWorkspace:
     def __init__(self, K, M, N):
@@ -711,6 +722,7 @@ csr_ws_spec = [
     ("last_occ", float64[:]), ("has_prev", float64[:]),
     ("dx", float64[:]),
 ]
+
 
 @jitclass(csr_ws_spec)
 class CSRWorkspace:
@@ -836,16 +848,16 @@ def network_rhs(x, t, theta,
 
 @njit(cache=True, fastmath=True)
 def rhs_nb_dispatch_dense(
-    x, t, theta,
-    Cg, Cl,
-    site_prot_idx,
-    K_site_kin, R,
-    L_alpha,
-    kin_to_prot_idx,
-    receptor_mask_prot,
-    receptor_mask_kin,
-    K, M, N,
-    mech_code  # 0: dist, 1: seq, 2: rand
+        x, t, theta,
+        Cg, Cl,
+        site_prot_idx,
+        K_site_kin, R,
+        L_alpha,
+        kin_to_prot_idx,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        K, M, N,
+        mech_code  # 0: dist, 1: seq, 2: rand
 ):
     return rhs_dense_onecall(x, t, theta,
                              Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
@@ -856,16 +868,16 @@ def rhs_nb_dispatch_dense(
 
 @njit(cache=True, fastmath=True)
 def rhs_nb_dispatch_csr(
-    x, t, theta,
-    Cg, Cl,
-    site_prot_idx,
-    K_site_kin, R,
-    L_alpha,
-    kin_to_prot_idx,
-    receptor_mask_prot,
-    receptor_mask_kin,
-    K, M, N,
-    mech_code  # 0: dist, 1: seq, 2: rand
+        x, t, theta,
+        Cg, Cl,
+        site_prot_idx,
+        K_site_kin, R,
+        L_alpha,
+        kin_to_prot_idx,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        K, M, N,
+        mech_code  # 0: dist, 1: seq, 2: rand
 ):
     return rhs_csr_onecall(x, t, theta,
                            Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,

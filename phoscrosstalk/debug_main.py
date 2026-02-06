@@ -82,16 +82,16 @@ def _coverage_report_K_site_kin(K_site_kin, sites, kinases, tag="K_site_kin"):
 
     print(f"\n=== {tag} coverage ===")
     print(_fmt_stats(K_site_kin, f"{tag}"))
-    print(f"{tag} nnz={_nnz(K_site_kin)}  density={_nnz(K_site_kin)/(N*M + 1e-12):.6g}")
+    print(f"{tag} nnz={_nnz(K_site_kin)}  density={_nnz(K_site_kin) / (N * M + 1e-12):.6g}")
 
-    deg_sites = (K_site_kin != 0).sum(axis=1)   # per-site #kinases
-    deg_kin   = (K_site_kin != 0).sum(axis=0)   # per-kinase #sites
+    deg_sites = (K_site_kin != 0).sum(axis=1)  # per-site #kinases
+    deg_kin = (K_site_kin != 0).sum(axis=0)  # per-kinase #sites
 
     print(f"{tag} per-site degree:  min={deg_sites.min()}  median={np.median(deg_sites)}  max={deg_sites.max()}")
     print(f"{tag} per-kin degree:   min={deg_kin.min()}  median={np.median(deg_kin)}  max={deg_kin.max()}")
 
     zero_sites = np.where(deg_sites == 0)[0]
-    zero_kin   = np.where(deg_kin == 0)[0]
+    zero_kin = np.where(deg_kin == 0)[0]
     print(f"{tag} zero-degree sites:  {len(zero_sites)}/{N}")
     print(f"{tag} zero-degree kinases:{len(zero_kin)}/{M}")
 
@@ -131,7 +131,8 @@ def _sanity_report_R(R, N, M, tag="R"):
 
 
 def _sanity_report_C(Cg, Cl, N, tag="C"):
-    Cg = np.asarray(Cg); Cl = np.asarray(Cl)
+    Cg = np.asarray(Cg);
+    Cl = np.asarray(Cl)
     print(f"\n=== {tag} sanity ===")
     _assert_shape(Cg, (N, N), "Cg")
     _assert_shape(Cl, (N, N), "Cl")
@@ -215,7 +216,8 @@ def _filter_dead_kinases(K_site_kin, kinases, kin_to_prot_idx, receptor_mask_kin
 
     kept_idx = np.where(keep)[0]
     dropped_idx = np.where(~keep)[0]
-    print(f"[INFO] Filtering dead kinases: keeping {keep.sum()}/{len(kinases)}, dropping {len(dropped_idx)} zero-degree kinases.")
+    print(
+        f"[INFO] Filtering dead kinases: keeping {keep.sum()}/{len(kinases)}, dropping {len(dropped_idx)} zero-degree kinases.")
     print("[INFO] Example dropped kinases:", [kinases[i] for i in dropped_idx[:10]])
 
     K2 = K_site_kin[:, keep]
@@ -228,12 +230,14 @@ def _filter_dead_kinases(K_site_kin, kinases, kin_to_prot_idx, receptor_mask_kin
         L2 = None
     return K2, kin2, kin_to_prot_idx2, receptor_mask_kin2, L2
 
+
 def sim_summary(problem, tag, x):
     P = problem.simulate(x)
     dr = (P.max(axis=1) - P.min(axis=1))
     print(f"[{tag}] P range stats: min={dr.min():.4g} med={np.median(dr):.4g} max={dr.max():.4g}")
     print(f"[{tag}] P abs stats: min={P.min():.4g} mean={P.mean():.4g} max={P.max():.4g}")
     return P
+
 
 # -------------------------
 # WHERE TO INSERT

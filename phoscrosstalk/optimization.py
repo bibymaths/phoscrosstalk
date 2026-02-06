@@ -150,7 +150,6 @@ class NetworkOptimizationProblem(ElementwiseProblem):
         self.n_var = len(xl)
 
     def _evaluate(self, x, out, *args, **kwargs):
-
         theta = x
         K, T = ModelDims.K, self.P_data.shape[1]
 

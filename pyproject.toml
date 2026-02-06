@@ -23,6 +23,7 @@ dependencies = [
   "lxml>=6.0.2",
   "plotly>=6.5.2",
   "streamlit>=1.54.0",
+  "gravis>=0.1.0",
 ]
 
 [project.optional-dependencies]

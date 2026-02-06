@@ -18,6 +18,7 @@ warnings.filterwarnings("ignore", message="Excess work done on this call")
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
+
 def simulate_p_scipy(t_arr, P_data0, A_data0, theta,
                      Cg, Cl, site_prot_idx,
                      K_site_kin, R,
@@ -108,16 +109,17 @@ def build_full_A0(K, T, A_scaled, prot_idx_for_A):
 
     return A0_full
 
+
 def fd_jacobian(
-    x, t, theta,
-    Cg, Cl,
-    site_prot_idx,
-    K_site_kin, R,
-    L_alpha,
-    kin_to_prot_idx,
-    receptor_mask_prot,
-    receptor_mask_kin,
-    mechanism: str,
+        x, t, theta,
+        Cg, Cl,
+        site_prot_idx,
+        K_site_kin, R,
+        L_alpha,
+        kin_to_prot_idx,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        mechanism: str,
 ):
     if mechanism == "dist":
         mech_code = 0
@@ -146,20 +148,21 @@ def fd_jacobian(
         ModelDims.K, ModelDims.M, ModelDims.N,
     )
 
+
 @njit(cache=True, fastmath=True)
 def fd_jacobian_nb_core(
-    x, t, theta,
-    Cg, Cl,
-    site_prot_idx,
-    K_site_kin, R,
-    L_alpha,
-    kin_to_prot_idx,
-    receptor_mask_prot,
-    receptor_mask_kin,
-    mech_code,
-    K, M, N,
-    eps=1e-6,      # larger than 1e-8 for stiff-ish, clipped systems
-    h_min=1e-8
+        x, t, theta,
+        Cg, Cl,
+        site_prot_idx,
+        K_site_kin, R,
+        L_alpha,
+        kin_to_prot_idx,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        mech_code,
+        K, M, N,
+        eps=1e-6,  # larger than 1e-8 for stiff-ish, clipped systems
+        h_min=1e-8
 ):
     n = x.size
     J = np.empty((n, n), dtype=np.float64)
