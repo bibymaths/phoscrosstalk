@@ -15,7 +15,7 @@ from pymoo.termination.default import DefaultMultiObjectiveTermination
 from pymoo.parallelization import StarmapParallelization
 from pymoo.util.ref_dirs import get_reference_directions
 
-from phoscrosstalk import analysis
+from phoscrosstalk import analysis, steadystate, knockouts, hyperparam
 from phoscrosstalk import data_loader
 from phoscrosstalk.analysis import _save_preopt_snapshot_txt_csv
 from phoscrosstalk.config import ModelDims, DEFAULT_TIMEPOINTS
@@ -160,6 +160,25 @@ def main():
     )
 
     # ------------------------------------------------------------------
+    # MODES
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--tune",
+        action="store_true",
+        help="Run hyperparameter scanning before optimization."
+    )
+    parser.add_argument(
+        "--run-steadystate",
+        action="store_true",
+        help="Run post-optimization steady state simulation."
+    )
+    parser.add_argument(
+        "--run-knockouts",
+        action="store_true",
+        help="Run systematic in-silico knockout screening."
+    )
+
+    # ------------------------------------------------------------------
     # META OPTIONS
     # ------------------------------------------------------------------
     parser.add_argument(
@@ -251,6 +270,10 @@ def main():
 
     _coverage_report_K_site_kin(K_site_kin, sites, kinases)
 
+    # Set the dimensions globally for the model
+    ModelDims.set_dims(len(proteins), len(kinases), len(sites))
+
+    # Transpose kinase - site matrix & normalize
     R = np.ascontiguousarray(K_site_kin.T)
     rs = R.sum(axis=1)
     nz = rs > 0
@@ -271,8 +294,33 @@ def main():
     receptor_mask_prot = np.array([1 if p in receptor_names else 0 for p in proteins], dtype=int)
     receptor_mask_kin = np.array([1 if k in receptor_kin_names else 0 for k in kinases], dtype=int)
 
+    # --- HYPERPARAMETER TUNING ---
+    if args.tune:
+        best_params = hyperparam.run_hyperparameter_scan(
+            args.outdir,
+            t, P_scaled, sites, site_prot_idx, positions, proteins,
+            args.ptm_intra, args.ptm_inter,
+            Cg, K_site_kin, R, L_alpha, kin_to_prot_idx,
+            A_scaled, prot_idx_for_A, W_data, W_data_prot,
+            receptor_mask_prot, receptor_mask_kin,
+            args.mechanism, args.cores
+        )
+        # Apply Best Params
+        args.length_scale = best_params["length_scale"]
+        args.lambda_net = best_params["lambda_net"]
+        args.reg_lambda = best_params["reg_lambda"]
+        print(f"[*] Applied Tuned Params: LS={args.length_scale}, LN={args.lambda_net}, Reg={args.reg_lambda}")
+
+    print(f"[*] Building final matrices with Length Scale {args.length_scale}...")
+    _, Cl = data_loader.build_C_matrices_from_db(
+        args.ptm_intra, args.ptm_inter, sites, site_prot_idx, positions, proteins,
+        length_scale=args.length_scale
+    )
+    Cl = data_loader.row_normalize(Cl)
+
+    _sanity_report_C(Cg, Cl, N=len(sites))
+
     # 6. Global Setup & Bounds
-    ModelDims.set_dims(len(proteins), len(kinases), len(sites))
     print(f"[*] K={ModelDims.K}, M={ModelDims.M}, N={ModelDims.N}")
 
     xl, xu, dim = create_bounds(ModelDims.K, ModelDims.M, ModelDims.N)
@@ -333,12 +381,15 @@ def main():
     algorithm = UNSGA3(pop_size=args.pop_size, ref_dirs=get_reference_directions("das-dennis", 3, n_partitions=12))
     termination = DefaultMultiObjectiveTermination(xtol=1e-8, cvtol=1e-6, ftol=0.0025, period=30, n_max_gen=args.gen, n_max_evals=1000000)
 
-    print("[*] Starting Optimization...")
+    print("[*] Starting Main Optimization...")
     res = minimize(problem, algorithm, termination, seed=1, verbose=True)
     pool.close()
     pool.join()
 
-    # 8. Analysis & Saving
+    ###########################################
+    ## DEPRECATED SELECTION OF BEST SOLUTION ##
+    ###########################################
+
     # F, X = res.F, res.X
     # f1, f2, f3 = F[:, 0], F[:, 1], F[:, 2]
     # # Normalize for selection
@@ -348,6 +399,7 @@ def main():
     #             (f3 - f3.min()) / (f3.max() - f3.min() + eps))
     # best_idx = np.argmin(J)
 
+    # 8. Analysis & Saving
     # Find best solution using Fretchet distance for all trajectories as primary criterion
     F, X = res.F, res.X
     f1, f2, f3 = F[:, 0], F[:, 1], F[:, 2]
@@ -384,6 +436,16 @@ def main():
     analysis.print_biological_scores(args.outdir, X)
     analysis.plot_biological_scores(args.outdir, X, F)
     analysis.plot_goodness_of_fit(f'{results_dir}/fit_timeseries.tsv', args.outdir)
+
+    if args.run_steadystate:
+        steadystate.run_steadystate_analysis(
+            args.outdir, problem, X[best_idx], sites, proteins, kinases
+        )
+
+    if args.run_knockouts:
+        knockouts.run_knockout_screen(
+            args.outdir, problem, X[best_idx], sites, proteins, kinases
+        )
 
     print("[*] Done.")
 
