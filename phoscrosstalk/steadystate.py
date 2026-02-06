@@ -9,7 +9,9 @@ import seaborn as sns
 from matplotlib import pyplot as plt
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.simulation import simulate_p_scipy, build_full_A0
+from phoscrosstalk.logger import get_logger
 
+logger = get_logger()
 
 def run_steadystate_analysis(outdir, problem, theta_opt, sites, proteins, kinases):
     """
@@ -32,7 +34,7 @@ def run_steadystate_analysis(outdir, problem, theta_opt, sites, proteins, kinase
     Returns:
         None: Saves 'steadystate_sites.tsv', 'steadystate_proteins.tsv', and heatmap/trajectory plots to disk.
     """
-    print("\n[*] Running Steady State Analysis...")
+    logger.info("\n[*] Running Steady State Analysis...")
     ss_dir = os.path.join(outdir, "steadystate")
     os.makedirs(ss_dir, exist_ok=True)
 
@@ -76,7 +78,7 @@ def run_steadystate_analysis(outdir, problem, theta_opt, sites, proteins, kinase
     # Check if derivatives are close to zero at the end
     delta_P = np.abs(P_ss[:, -1] - P_ss[:, -2])
     converged_sites = np.mean(delta_P) < 1e-4
-    print(f"   -> System convergence metric (mean delta P): {np.mean(delta_P):.6e}")
+    logger.info(f"   -> System convergence metric (mean delta P): {np.mean(delta_P):.6e}")
 
     # 4. Save Data
     df_P = pd.DataFrame(P_ss, index=sites, columns=[f"t_{t:.1f}" for t in t_long])

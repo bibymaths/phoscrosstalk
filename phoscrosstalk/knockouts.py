@@ -10,7 +10,9 @@ from matplotlib import pyplot as plt
 from tqdm import tqdm
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.simulation import simulate_p_scipy, build_full_A0
+from phoscrosstalk.logger import get_logger
 
+logger = get_logger()
 
 def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
     """
@@ -37,7 +39,7 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
     Returns:
         None: Saves 'knockout_l2fc.tsv' and 'knockout_clustermap.png' to disk.
     """
-    print("\n[*] Running Systematic Knockout Screen...")
+    logger.info("\n[*] Running Systematic Knockout Screen...")
     ko_dir = os.path.join(outdir, "knockouts")
     os.makedirs(ko_dir, exist_ok=True)
 
@@ -77,7 +79,7 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
     # Helper to find indices:
     idx_start_alpha = 4 * K + 2
 
-    print("   -> Simulating Kinase Knockouts...")
+    logger.info("   -> Simulating Kinase Knockouts...")
     for m, kin_name in enumerate(tqdm(kinases)):
         theta_ko = theta_opt.copy()
         # Set alpha (log scale) to very small number ~ exp(-20) approx 0
@@ -90,7 +92,7 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
     # 3. Protein Knockouts (Set Synthesis -> 0)
     # s_prod is at index 2*K
     idx_start_sprod = 2 * K
-    print("   -> Simulating Protein Knockouts...")
+    logger.info("   -> Simulating Protein Knockouts...")
     for k, prot_name in enumerate(tqdm(proteins)):
         theta_ko = theta_opt.copy()
         theta_ko[idx_start_sprod + k] = -20.0
@@ -102,7 +104,7 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
     # 4. Phosphosite Knockouts (Remove Input Edges)
     # Physically, mutating S->A means no kinase can phosphorylate it.
     # We zero out the row in K_site_kin for that site.
-    print("   -> Simulating Phosphosite Knockouts (Alanine Scanning)...")
+    logger.info("   -> Simulating Phosphosite Knockouts (Alanine Scanning)...")
     for i, site_name in enumerate(tqdm(sites)):
         K_site_kin_ko = problem.K_site_kin.copy()
         K_site_kin_ko[i, :] = 0.0  # Remove all kinase inputs to this site
@@ -122,7 +124,7 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
     df_filtered = df_res.loc[mask_rows]
 
     if df_filtered.empty:
-        print("[!] No perturbations caused significant changes > 0.1 Log2FC.")
+        logger.critical("[!] No perturbations caused significant changes > 0.1 Log2FC.")
         return
 
     df_filtered.to_csv(os.path.join(ko_dir, "knockout_l2fc.tsv"), sep="\t")
@@ -131,7 +133,7 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
     # Limits color range to visible contrast
     vmax = np.percentile(np.abs(df_filtered.values), 95)
 
-    print("   -> Generating Clustermap...")
+    logger.info("   -> Generating Clustermap...")
     try:
         g = sns.clustermap(
             df_filtered,
@@ -150,4 +152,4 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
         plt.savefig(os.path.join(ko_dir, "knockout_clustermap.png"), dpi=300)
         plt.close()
     except Exception as e:
-        print(f"[!] Clustermap generation failed (matrix likely too large or singular): {e}")
+        logger.critical(f"[!] Clustermap generation failed (matrix likely too large or singular): {e}")

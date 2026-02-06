@@ -17,6 +17,10 @@ from phoscrosstalk import data_loader
 from phoscrosstalk.optimization import NetworkOptimizationProblem
 from phoscrosstalk.fretchet import frechet_distance
 
+from phoscrosstalk.logger import get_logger
+
+logger = get_logger()
+
 # --- Bounds Configuration ---
 BOUNDS_CONFIG = {
     "k_act": (1e-5, 10.0),  # Protein activation
@@ -146,9 +150,9 @@ def run_hyperparameter_scan(
         dict: The hyperparameter combination yielding the lowest Fréchet distance score.
     """
 
-    print("\n" + "=" * 60)
-    print("[*] STARTING HYPERPARAMETER TUNING SCAN")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.header("[*] STARTING HYPERPARAMETER TUNING SCAN")
+    logger.info("=" * 60)
 
     # 1. Define Search Grid
     # Customize these ranges based on your domain knowledge
@@ -161,8 +165,8 @@ def run_hyperparameter_scan(
     keys, values = zip(*grid.items())
     combinations = [dict(zip(keys, v)) for v in itertools.product(*values)]
 
-    print(f"[*] Total combinations to test: {len(combinations)}")
-    print("[*] Using 'Coarse' Optimization settings: Gen=40, Pop=100")
+    logger.info(f"[*] Total combinations to test: {len(combinations)}")
+    logger.info("[*] Using 'Coarse' Optimization settings: Gen=40, Pop=100")
 
     best_score = np.inf
     best_params = None
@@ -181,7 +185,7 @@ def run_hyperparameter_scan(
         ln = combo["lambda_net"]
         rl = combo["reg_lambda"]
 
-        print(f"\n--- Combo {i + 1}/{len(combinations)}: LS={ls}, LambdaNet={ln}, Reg={rl} ---")
+        logger.info(f"\n--- Combo {i + 1}/{len(combinations)}: LS={ls}, LambdaNet={ln}, Reg={rl} ---")
 
         # A. Rebuild Cl (Dependent on length_scale)
         # Note: We assume Cg is static and passed in. Cl needs rebuilding.
@@ -240,7 +244,7 @@ def run_hyperparameter_scan(
         else:
             score = np.inf
 
-        print(f"    -> Fréchet Score: {score:.4f}")
+        logger.info(f"    -> Fréchet Score: {score:.4f}")
 
         combo["score"] = score
         results_log.append(combo)
@@ -248,7 +252,7 @@ def run_hyperparameter_scan(
         if score < best_score:
             best_score = score
             best_params = combo
-            print(f"    [!] New Best Found!")
+            logger.success(f"    [!] New Best Found!")
 
     pool.close()
     pool.join()
@@ -258,8 +262,8 @@ def run_hyperparameter_scan(
     df_scan = df_scan.sort_values("score")
     df_scan.to_csv(f"{outdir}/hyperparameter_scan_results.tsv", sep="\t", index=False)
 
-    print("\n" + "=" * 60)
-    print(f"[*] TUNING COMPLETE. Best Params: {best_params}")
-    print("=" * 60 + "\n")
+    logger.info("\n" + "=" * 60)
+    logger.success(f"[*] TUNING COMPLETE. Best Params: {best_params}")
+    logger.info("=" * 60 + "\n")
 
     return best_params

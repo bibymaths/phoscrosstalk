@@ -8,7 +8,9 @@ import pickle
 import numpy as np
 import pandas as pd
 from phoscrosstalk.config import DEFAULT_TIMEPOINTS
+from phoscrosstalk.logger import get_logger
 
+logger = get_logger()
 
 def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
     """
