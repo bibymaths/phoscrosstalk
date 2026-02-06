@@ -47,7 +47,7 @@ def simulate_p_scipy(t_arr, P_data0, A_data0, theta,
         return np.full((N_sites, T), np.nan), np.full((K, T), np.nan)
 
     # Simulation
-    xs, infodict = cast(np.ndarray, cast(object, odeint(
+    xs = cast(np.ndarray, cast(object, odeint(
         network_rhs,
         x0,
         t_arr,
@@ -55,19 +55,19 @@ def simulate_p_scipy(t_arr, P_data0, A_data0, theta,
               K_site_kin, R, L_alpha, kin_to_prot_idx,
               receptor_mask_prot, receptor_mask_kin,
               mechanism),
-        Dfun=fd_jacobian,
+        # Dfun=fd_jacobian,
         col_deriv=False,
         rtol=1e-6,
         atol=1e-9,
         mxstep=5000,
-        full_output=True,
+        # full_output=True,
     )))
 
     # if solver failed, return NaNs early
-    if infodict.get("message", "").lower().find("successful") == -1:
-        N_sites = P_data0.shape[0]
-        T = len(t_arr)
-        return np.full((N_sites, T), np.nan), np.full((K, T), np.nan)
+    # if infodict.get("message", "").lower().find("successful") == -1:
+    #     N_sites = P_data0.shape[0]
+    #     T = len(t_arr)
+    #     return np.full((N_sites, T), np.nan), np.full((K, T), np.nan)
 
     # Fail if any non-finite
     if not np.all(np.isfinite(xs)):
