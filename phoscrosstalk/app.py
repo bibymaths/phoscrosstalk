@@ -169,7 +169,7 @@ def run_fine_simulation(data, t_max, num_points=200):
     # 4. Simulate
     mechanism = data["meta"].get("mechanism", "dist")
 
-    P_sim, A_sim = simulate_p_scipy(
+    P_sim, A_sim, S_sim, Kdyn_sim = simulate_p_scipy(
         t_fine,
         data["P_scaled"],  # Used for Init Cond (P)
         A0_full,  # Used for Init Cond (A)
@@ -183,10 +183,11 @@ def run_fine_simulation(data, t_max, num_points=200):
         data["kin_to_prot_idx"],
         data["receptor_mask_prot"],
         data["receptor_mask_kin"],
-        mechanism
+        mechanism,
+        full_output=True
     )
 
-    return t_fine, P_sim, A_sim
+    return t_fine, P_sim, A_sim, S_sim, Kdyn_sim
 
 
 def calculate_scalers(Y_orig):
@@ -229,7 +230,7 @@ st.sidebar.success("Data Loaded Successfully")
 
 # --- Global Simulation ---
 t_max = data["t_orig"][-1]
-t_fine, P_sim_fine, A_sim_fine = run_fine_simulation(data, t_max, num_points=10000)
+t_fine, P_sim_fine, A_sim_fine, S_sim_fine, Kdyn_sim_fine = run_fine_simulation(data, t_max, num_points=10000)
 
 # Rescaling logic
 baselines, amplitudes = calculate_scalers(data["Y_orig"])
@@ -240,7 +241,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
      "Network Animation"])
 
 # ==========================================
-# TAB 1: Trajectories (Fine Resolution)
+# TAB 1: Trajectories
 # ==========================================
 with tab1:
     col1, col2 = st.columns([1, 3])
@@ -254,91 +255,121 @@ with tab1:
         site_indices = np.where(data["site_prot_idx"] == prot_idx)[0]
 
         # Scaling Toggle
-        view_mode = st.radio("View Mode", ["Fold Change (Original)", "Scaled [0-1]"])
+        # Added "Internal States" mode
+        view_mode = st.radio("View Mode", ["Fold Change (Original)", "Scaled [0-1]", "Internal States (S, Kdyn)"])
         is_fc = view_mode == "Fold Change (Original)"
+        is_internal = view_mode == "Internal States (S, Kdyn)"
 
     with col2:
-        # Create Subplots: Left (Protein), Right (Sites)
-        fig = make_subplots(rows=1, cols=2,
-                            subplot_titles=(f"{selected_prot} Abundance", f"{selected_prot} Phosphosites"))
+        if is_internal:
+            # --- INTERNAL STATES VIEW ---
+            # Panel 1: Protein Active Fraction (S)
+            # Panel 2: Upstream Kinase Activity (Kdyn) for kinases acting on this protein
+            fig = make_subplots(rows=1, cols=2,
+                                subplot_titles=(f"{selected_prot} Active Fraction (S)",
+                                                f"Upstream Kinase Activity (Kdyn)"))
 
-        # --- Plot Protein Abundance ---
-        # Data points
-        if data["prot_idx_for_A"].size > 0:
-            # Find if this protein has data
-            mask_a = np.where(data["prot_idx_for_A"] == prot_idx)[0]
-            if len(mask_a) > 0:
-                a_idx_data = mask_a[0]
-                y_data = data["A_scaled"][a_idx_data]
+            # 1. S_sim trace
+            fig.add_trace(
+                go.Scatter(x=t_fine, y=S_sim_fine[prot_idx, :], mode='lines',
+                           line=dict(width=3, color='purple'),
+                           name=f"S ({selected_prot})"),
+                row=1, col=1
+            )
 
-                # If FC mode, we need to map back?
-                # Note: A_data scaling wasn't fully stored in snapshot in simple form,
-                # usually A is kept simple. Assuming 0-1 for visualization or raw if available.
-                # The codebase usually keeps A normalized. Let's plot what we have.
-                fig.add_trace(
-                    go.Scatter(x=data["t_orig"], y=y_data, mode='markers',
-                               marker=dict(symbol='square', size=10, color='gray'),
-                               name='Data (Abundance)'),
-                    row=1, col=1
-                )
+            # 2. Kdyn traces
+            # Find kinases connected to this protein's sites
+            relevant_kin_indices = set()
+            for s_idx in site_indices:
+                # Get kinases with non-zero weight for this site
+                k_idxs = np.where(data["K_site_kin"][s_idx, :] > 0)[0]
+                relevant_kin_indices.update(k_idxs)
 
-        # Model Line (Fine)
-        y_model = A_sim_fine[prot_idx, :]
-        fig.add_trace(
-            go.Scatter(x=t_fine, y=y_model, mode='lines',
-                       line=dict(width=3, color='black'),
-                       name='Model (Abundance)'),
-            row=1, col=1
-        )
+            # Convert to list and sort
+            relevant_kin_indices = sorted(list(relevant_kin_indices))
 
-        # --- Plot Phosphosites ---
-        colors = px.colors.qualitative.Plotly
+            if not relevant_kin_indices:
+                fig.add_annotation(text="No direct upstream kinases mapped", xref="x2", yref="y2", showarrow=False)
+            else:
+                for k_idx in relevant_kin_indices[:10]:  # Limit to top 10 to prevent overcrowding
+                    k_name = data["kinases"][k_idx]
+                    fig.add_trace(
+                        go.Scatter(x=t_fine, y=Kdyn_sim_fine[k_idx, :], mode='lines',
+                                   name=f"Kdyn ({k_name})"),
+                        row=1, col=2
+                    )
 
-        if len(site_indices) == 0:
-            fig.add_annotation(text="No mapped sites", xref="x2", yref="y2", showarrow=False)
+            fig.update_layout(title_text=f"Internal States for {selected_prot}", height=500, template="plotly_white")
+            fig.update_yaxes(title_text="Fraction [0-1]", range=[0, 1.05])
+            fig.update_xaxes(title_text="Time (min)")
+
         else:
-            for i, s_idx in enumerate(site_indices):
-                site_name = data["sites"][s_idx]
-                short_name = site_name.split("_")[-1] if "_" in site_name else site_name
-                color = colors[i % len(colors)]
+            # --- STANDARD VIEW (Abundance & Sites) ---
+            fig = make_subplots(rows=1, cols=2,
+                                subplot_titles=(f"{selected_prot} Abundance", f"{selected_prot} Phosphosites"))
 
-                # Prepare Y values
-                y_dat = data["P_scaled"][s_idx]
-                y_mod = P_sim_fine[s_idx]
+            # Plot Protein Abundance
+            if data["prot_idx_for_A"].size > 0:
+                mask_a = np.where(data["prot_idx_for_A"] == prot_idx)[0]
+                if len(mask_a) > 0:
+                    a_idx_data = mask_a[0]
+                    y_data = data["A_scaled"][a_idx_data]
+                    # Note: plotting scaled A data. If FC requested, ideally map back,
+                    # but usually A is normalized relative to t0 anyway.
+                    fig.add_trace(
+                        go.Scatter(x=data["t_orig"], y=y_data, mode='markers',
+                                   marker=dict(symbol='square', size=10, color='gray'),
+                                   name='Data (Abundance)'),
+                        row=1, col=1
+                    )
 
-                if is_fc:
-                    # Rescale to FC
-                    b, a = baselines[s_idx], amplitudes[s_idx]
-                    y_dat = b + a * y_dat
-                    y_mod = b + a * y_mod
+            # Model Line (Abundance)
+            y_model = A_sim_fine[prot_idx, :]
+            fig.add_trace(
+                go.Scatter(x=t_fine, y=y_model, mode='lines',
+                           line=dict(width=3, color='black'),
+                           name='Model (Abundance)'),
+                row=1, col=1
+            )
 
-                # Data
-                fig.add_trace(
-                    go.Scatter(x=data["t_orig"], y=y_dat, mode='markers',
-                               marker=dict(size=8, color=color, opacity=0.7),
-                               name=f"{short_name} (Data)"),
-                    row=1, col=2
-                )
+            # Plot Phosphosites
+            colors = px.colors.qualitative.Plotly
+            if len(site_indices) == 0:
+                fig.add_annotation(text="No mapped sites", xref="x2", yref="y2", showarrow=False)
+            else:
+                for i, s_idx in enumerate(site_indices):
+                    site_name = data["sites"][s_idx]
+                    short_name = site_name.split("_")[-1] if "_" in site_name else site_name
+                    color = colors[i % len(colors)]
 
-                # Model
-                fig.add_trace(
-                    go.Scatter(x=t_fine, y=y_mod, mode='lines',
-                               line=dict(width=2, color=color),
-                               name=f"{short_name} (Sim)"),
-                    row=1, col=2
-                )
+                    y_dat = data["P_scaled"][s_idx]
+                    y_mod = P_sim_fine[s_idx]
 
-        fig.update_layout(
-            height=500,
-            template="plotly_white",
-            hovermode="x unified",
-            title_text=f"Dynamics for {selected_prot}"
-        )
-        fig.update_xaxes(title_text="Time (min)")
-        if is_fc:
-            fig.update_yaxes(title_text="Fold Change")
-        else:
-            fig.update_yaxes(title_text="Scaled Activity [0-1]")
+                    if is_fc:
+                        b, a = baselines[s_idx], amplitudes[s_idx]
+                        y_dat = b + a * y_dat
+                        y_mod = b + a * y_mod
+
+                    fig.add_trace(
+                        go.Scatter(x=data["t_orig"], y=y_dat, mode='markers',
+                                   marker=dict(size=8, color=color, opacity=0.7),
+                                   name=f"{short_name} (Data)"),
+                        row=1, col=2
+                    )
+                    fig.add_trace(
+                        go.Scatter(x=t_fine, y=y_mod, mode='lines',
+                                   line=dict(width=2, color=color),
+                                   name=f"{short_name} (Sim)"),
+                        row=1, col=2
+                    )
+
+            fig.update_layout(height=500, template="plotly_white", hovermode="x unified",
+                              title_text=f"Dynamics for {selected_prot}")
+            fig.update_xaxes(title_text="Time (min)")
+            if is_fc:
+                fig.update_yaxes(title_text="Fold Change")
+            else:
+                fig.update_yaxes(title_text="Scaled Activity [0-1]")
 
         st.plotly_chart(fig, use_container_width=True)
 
@@ -460,7 +491,7 @@ with tab3:
             st.dataframe(df_site_params, use_container_width=True)
 
 # ==========================================
-# TAB 4: Network Map (Matrices)
+# TAB 4: Network Map
 # ==========================================
 with tab4:
     st.subheader("Interaction Matrices")
@@ -505,7 +536,8 @@ with tab4:
 # TAB 5: Steady State Analysis
 # ==========================================
 with tab5:
-    st.subheader("Long-term Dynamics")
+    st.subheader("Long-term Dynamics & Internal States")
+    st.markdown("Simulate system evolution to steady state. Now includes **Internal States (S, Kdyn)**.")
 
     col_ss1, col_ss2 = st.columns([1, 3])
 
@@ -513,7 +545,6 @@ with tab5:
         # Simulation Controls
         t_end_ss = st.slider("Simulation Duration (min)", min_value=1000, max_value=20000, value=5000, step=1000)
         ss_prot = st.selectbox("Select Protein to Inspect", data["proteins"], key="ss_prot")
-
         run_ss = st.button("Run Steady State Sim", type="primary")
 
     with col_ss2:
@@ -528,17 +559,14 @@ with tab5:
                 ModelDims.set_dims(K, M, N)
 
                 # 3. Build A0 (Manual Construction for Time Mismatch)
-                # Initialize zero matrix of correct simulation shape
                 A0_ss = np.zeros((K, len(t_ss)), dtype=float)
-
-                # Set initial conditions from data if available
                 if data["A_scaled"].size > 0:
                     for k, p_idx in enumerate(data["prot_idx_for_A"]):
                         if data["A_scaled"].shape[1] > 0:
                             A0_ss[p_idx, 0] = data["A_scaled"][k, 0]
 
-                # 4. Simulate
-                P_ss, A_ss = simulate_p_scipy(
+                # 4. Simulate with full_output=True to get S and Kdyn
+                P_ss, A_ss, S_ss, Kdyn_ss = simulate_p_scipy(
                     t_ss,
                     data["P_scaled"],  # Init Cond
                     A0_ss,  # Init Cond
@@ -546,56 +574,87 @@ with tab5:
                     data["Cg"], data["Cl"], data["site_prot_idx"],
                     data["K_site_kin"], data["R"], data["L_alpha"], data["kin_to_prot_idx"],
                     data["receptor_mask_prot"], data["receptor_mask_kin"],
-                    data["meta"].get("mechanism", "dist")
+                    data["meta"].get("mechanism", "dist"),
+                    full_output=True
                 )
 
-                # 5. Plotting
-                fig_ss = make_subplots(rows=1, cols=2,
-                                       subplot_titles=(f"{ss_prot} Abundance", f"{ss_prot} Phosphosites"))
+                # 5. Plotting: 2x2 Grid
+                fig_ss = make_subplots(
+                    rows=2, cols=2,
+                    subplot_titles=(
+                        f"Abundance (A)", f"Phosphosites (P)",
+                        f"Active Fraction (S)", f"Upstream Kinase Activity (Kdyn)"
+                    ),
+                    vertical_spacing=0.15
+                )
 
-                # Protein Abundance
+                # --- 1. Protein Abundance (Top Left) ---
                 p_idx = data["proteins"].index(ss_prot)
                 fig_ss.add_trace(
-                    go.Scatter(x=t_ss, y=A_ss[p_idx], mode='lines', name="Abundance",
+                    go.Scatter(x=t_ss, y=A_ss[p_idx], mode='lines', name="Abundance (A)",
                                line=dict(color='black', width=3)),
                     row=1, col=1
                 )
 
-                # Phosphosites (Rescaled)
+                # --- 2. Phosphosites (Top Right) ---
                 site_indices = np.where(data["site_prot_idx"] == p_idx)[0]
                 colors = px.colors.qualitative.Plotly
-
                 for i, s_idx in enumerate(site_indices):
                     site_name = data["sites"][s_idx].split("_")[-1]
                     c = colors[i % len(colors)]
-
                     # Rescale
                     y_scaled = baselines[s_idx] + amplitudes[s_idx] * P_ss[s_idx]
-
                     fig_ss.add_trace(
-                        go.Scatter(x=t_ss, y=y_scaled, mode='lines', name=site_name, line=dict(color=c)),
+                        go.Scatter(x=t_ss, y=y_scaled, mode='lines', name=f"P_{site_name}", line=dict(color=c)),
                         row=1, col=2
                     )
 
-                fig_ss.update_xaxes(type="log", title_text="Time (min) - Log Scale")
-                fig_ss.update_yaxes(title_text="Fold Change / Abundance", row=1, col=2)
-                fig_ss.update_layout(height=500, template="plotly_white", title=f"Approach to Steady State: {ss_prot}")
+                # --- 3. Protein Active Fraction (Bottom Left) ---
+                fig_ss.add_trace(
+                    go.Scatter(x=t_ss, y=S_ss[p_idx], mode='lines', name="Active (S)",
+                               line=dict(color='purple', width=2)),
+                    row=2, col=1
+                )
 
+                # --- 4. Upstream Kinase Activity (Bottom Right) ---
+                # Identify upstream kinases
+                relevant_kin_indices = set()
+                for s_idx in site_indices:
+                    k_idxs = np.where(data["K_site_kin"][s_idx, :] > 0)[0]
+                    relevant_kin_indices.update(k_idxs)
+
+                # Sort and limit to top 5
+                relevant_kin_indices = sorted(list(relevant_kin_indices))
+
+                for k_idx in relevant_kin_indices[:5]:
+                    k_name = data["kinases"][k_idx]
+                    fig_ss.add_trace(
+                        go.Scatter(x=t_ss, y=Kdyn_ss[k_idx], mode='lines', name=f"Kdyn_{k_name}"),
+                        row=2, col=2
+                    )
+
+                fig_ss.update_xaxes(type="log", title_text="Time (min) - Log Scale")
+                fig_ss.update_yaxes(title_text="Level", row=1, col=1)
+                fig_ss.update_yaxes(title_text="Fold Change", row=1, col=2)
+                fig_ss.update_yaxes(title_text="Fraction [0-1]", row=2, col=1)
+                fig_ss.update_yaxes(title_text="Fraction [0-1]", row=2, col=2)
+
+                fig_ss.update_layout(height=700, template="plotly_white", title=f"Steady State Dynamics: {ss_prot}")
                 st.plotly_chart(fig_ss, use_container_width=True)
 
-                # Convergence Metric
+                # Convergence Metric (using P)
                 final_deriv = np.mean(np.abs(P_ss[:, -1] - P_ss[:, -10]))
                 if final_deriv < 1e-4:
-                    st.success(f"System reached steady state (Mean delta: {final_deriv:.2e})")
+                    st.success(f"System reached steady state (Mean delta P: {final_deriv:.2e})")
                 else:
-                    st.warning(f"System may not have fully converged (Mean delta: {final_deriv:.2e})")
+                    st.warning(f"System may not have fully converged (Mean delta P: {final_deriv:.2e})")
 
 # ==========================================
 # TAB 6: Knockout Simulator
 # ==========================================
 with tab6:
     st.subheader("In-Silico Perturbation Analysis")
-    st.markdown("Compare **Wild Type (WT)** vs **Knockout (KO)** dynamics.")
+    st.markdown("Compare **Wild Type (WT)** vs **Knockout (KO)** dynamics for P, S, or Kdyn.")
 
     c1, c2, c3 = st.columns(3)
 
@@ -614,6 +673,8 @@ with tab6:
 
     with c3:
         observe_prot = st.selectbox("Observe Impact On", data["proteins"], index=0)
+        # Choose metric to inspect
+        obs_metric = st.selectbox("Metric to Plot", ["Phosphosites (P)", "Protein Activity (S)"])
         t_ko = st.slider("Time (min)", 100, 1000, 240)
 
     run_ko = st.button("Simulate Knockout", type="primary")
@@ -627,111 +688,96 @@ with tab6:
             # Time vector
             t_eval = np.linspace(0, t_ko, 200)
 
-            # A0 Construction (Manual for Time Mismatch)
+            # A0 Construction
             A0_ko = np.zeros((K, len(t_eval)), dtype=float)
             if data["A_scaled"].size > 0:
                 for k, p_idx in enumerate(data["prot_idx_for_A"]):
                     if data["A_scaled"].shape[1] > 0:
                         A0_ko[p_idx, 0] = data["A_scaled"][k, 0]
 
-            # --- 1. Run Wild Type ---
-            P_wt, A_wt = simulate_p_scipy(
+            # --- 1. Run Wild Type (Full Output) ---
+            P_wt, A_wt, S_wt, Kdyn_wt = simulate_p_scipy(
                 t_eval, data["P_scaled"], A0_ko, data["theta"],
                 data["Cg"], data["Cl"], data["site_prot_idx"],
                 data["K_site_kin"], data["R"], data["L_alpha"], data["kin_to_prot_idx"],
                 data["receptor_mask_prot"], data["receptor_mask_kin"],
-                data["meta"].get("mechanism", "dist")
+                data["meta"].get("mechanism", "dist"),
+                full_output=True
             )
 
             # --- 2. Prepare KO Parameters ---
             theta_ko = data["theta"].copy()
-            K_site_kin_ko = data["K_site_kin"]  # Default reference (pointer)
+            K_site_kin_ko = data["K_site_kin"]
 
             if ko_type == "Kinase":
-                # Find index of kinase
                 try:
                     k_idx = data["kinases"].index(target)
-                    # Alpha indices start at: 4*K + 2
-                    idx_alpha = 4 * K + 2 + k_idx
-                    theta_ko[idx_alpha] = -20.0  # Log-space effectively 0
+                    theta_ko[4 * K + 2 + k_idx] = -20.0
                 except ValueError:
-                    st.error("Kinase mapping error.")
+                    st.error("Kinase mapping error.");
                     st.stop()
-
             elif ko_type == "Protein":
-                # Find index of protein
                 try:
                     p_idx = data["proteins"].index(target)
-                    # s_prod indices start at: 2*K
-                    idx_sprod = 2 * K + p_idx
-                    theta_ko[idx_sprod] = -20.0
+                    theta_ko[2 * K + p_idx] = -20.0
                 except ValueError:
-                    st.error("Protein mapping error.")
+                    st.error("Protein mapping error.");
                     st.stop()
-
             elif ko_type == "Phosphosite":
-                # Modify Matrix, not theta
                 try:
                     s_idx = data["sites"].index(target)
-                    # Create a COPY of the matrix to modify
                     K_site_kin_ko = data["K_site_kin"].copy()
-                    K_site_kin_ko[s_idx, :] = 0.0  # Remove all inputs
+                    K_site_kin_ko[s_idx, :] = 0.0
                 except ValueError:
-                    st.error("Site mapping error.")
+                    st.error("Site mapping error.");
                     st.stop()
 
-            # --- 3. Run KO Simulation ---
-            P_ko, A_ko = simulate_p_scipy(
+            # --- 3. Run KO Simulation (Full Output) ---
+            P_ko, A_ko, S_ko, Kdyn_ko = simulate_p_scipy(
                 t_eval, data["P_scaled"], A0_ko, theta_ko,
                 data["Cg"], data["Cl"], data["site_prot_idx"],
                 K_site_kin_ko, data["R"], data["L_alpha"], data["kin_to_prot_idx"],
                 data["receptor_mask_prot"], data["receptor_mask_kin"],
-                data["meta"].get("mechanism", "dist")
+                data["meta"].get("mechanism", "dist"),
+                full_output=True
             )
 
             # --- 4. Visualization ---
             obs_idx = data["proteins"].index(observe_prot)
-            site_indices = np.where(data["site_prot_idx"] == obs_idx)[0]
-
-            # Plot
             fig_ko = go.Figure()
 
-            # Colors
-            colors = px.colors.qualitative.Bold
+            if obs_metric == "Protein Activity (S)":
+                # Plot S comparison
+                fig_ko.add_trace(
+                    go.Scatter(x=t_eval, y=S_wt[obs_idx], mode='lines', name="WT (S)", line=dict(color='purple')))
+                fig_ko.add_trace(go.Scatter(x=t_eval, y=S_ko[obs_idx], mode='lines', name="KO (S)",
+                                            line=dict(color='purple', dash='dot')))
+                yaxis_title = "Active Fraction (S)"
+            else:
+                # Plot Phosphosites (P) comparison
+                site_indices = np.where(data["site_prot_idx"] == obs_idx)[0]
+                colors = px.colors.qualitative.Bold
+                yaxis_title = "Fold Change"
 
-            for i, s_idx in enumerate(site_indices):
-                site_name = data["sites"][s_idx].split("_")[-1]
-                c = colors[i % len(colors)]
+                for i, s_idx in enumerate(site_indices):
+                    site_name = data["sites"][s_idx].split("_")[-1]
+                    c = colors[i % len(colors)]
+                    wt_curve = baselines[s_idx] + amplitudes[s_idx] * P_wt[s_idx]
+                    ko_curve = baselines[s_idx] + amplitudes[s_idx] * P_ko[s_idx]
 
-                # Rescale
-                wt_curve = baselines[s_idx] + amplitudes[s_idx] * P_wt[s_idx]
-                ko_curve = baselines[s_idx] + amplitudes[s_idx] * P_ko[s_idx]
-
-                # Plot WT (Solid)
-                fig_ko.add_trace(go.Scatter(
-                    x=t_eval, y=wt_curve, mode='lines',
-                    line=dict(color=c, width=2),
-                    name=f"{site_name} (WT)",
-                    legendgroup=site_name
-                ))
-
-                # Plot KO (Dash)
-                fig_ko.add_trace(go.Scatter(
-                    x=t_eval, y=ko_curve, mode='lines',
-                    line=dict(color=c, width=2, dash='dot'),
-                    name=f"{site_name} (KO)",
-                    legendgroup=site_name,
-                    showlegend=False
-                ))
+                    fig_ko.add_trace(go.Scatter(x=t_eval, y=wt_curve, mode='lines', line=dict(color=c, width=2),
+                                                name=f"{site_name} (WT)", legendgroup=site_name))
+                    fig_ko.add_trace(
+                        go.Scatter(x=t_eval, y=ko_curve, mode='lines', line=dict(color=c, width=2, dash='dot'),
+                                   name=f"{site_name} (KO)", legendgroup=site_name, showlegend=False))
 
             fig_ko.update_layout(
-                title=f"Effect of {target} ({ko_type} KO) on {observe_prot} sites",
+                title=f"Effect of {target} ({ko_type} KO) on {observe_prot} - {obs_metric}",
                 xaxis_title="Time (min)",
-                yaxis_title="Fold Change",
+                yaxis_title=yaxis_title,
                 template="plotly_white",
                 height=600
             )
-
             st.plotly_chart(fig_ko, use_container_width=True)
 
             # Abundance check
@@ -740,7 +786,7 @@ with tab6:
                 st.info(f"Significant change in protein abundance detected for {observe_prot}.")
 
 # ==========================================
-# TAB 7: Network Animation (Gravis)
+# TAB 7: Network Animation
 # ==========================================
 
 with tab7:

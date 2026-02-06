@@ -15,6 +15,7 @@ from phoscrosstalk.logger import get_logger
 
 logger = get_logger()
 
+
 def save_pareto_results(outdir, F, X, f1, f2, f3, J, F_best):
     """
     Save Pareto front optimization results, including statistics and scalarized scores, to disk.
@@ -222,12 +223,14 @@ def save_fitted_simulation(
 
     # Re-simulate
     A0_full = build_full_A0(K, len(t), A_scaled, prot_idx_for_A)
-    P_sim, A_sim = simulate_p_scipy(
+
+    P_sim, A_sim, S_sim, Kdyn_sim = simulate_p_scipy(
         t, P_scaled, A0_full, theta_opt,
         Cg, Cl, site_prot_idx,
         K_site_kin, R, L_alpha, kin_to_prot_idx,
         mask_p, mask_k,
         mechanism,
+        full_output=True
     )
 
     # Rescale Sites (model)
@@ -284,6 +287,88 @@ def save_fitted_simulation(
 
     df_out = pd.DataFrame.from_records(records)
     df_out.to_csv(os.path.join(outdir, "fit_timeseries.tsv"), sep="\t", index=False)
+
+    # 2. Save Internal States (S and Kdyn) - NEW separate file
+    kinases = [f"K_{i}" for i in range(M)]  # Or pass kinases explicitly if available
+
+    records_internal = []
+    T = len(t)
+    cols = [f"t{j}" for j in range(T)]
+
+    # S_sim (Protein Activity)
+    for k, prot in enumerate(proteins):
+        rec = {"Type": "S_sim", "ID": prot}
+        for j in range(T):
+            rec[cols[j]] = S_sim[k, j]
+        records_internal.append(rec)
+
+    # Kdyn_sim (Kinase Activity)
+    # Note: We need kinase names. If not passed to this function, we rely on mapping or generic
+    # ideally update signature to accept kinases, but we can assume generic indices if needed.
+    # In main.py loop, K_site_kin usually implies standard indexing.
+    for m in range(M):
+        # Try to find name if kin_to_prot works or pass explicit list
+        # For now using generic if list not in scope, but typically kinases are known
+        # We will assume index based ID
+        rec = {"Type": "Kdyn_sim", "ID": f"Kinase_{m}"}
+        for j in range(T):
+            rec[cols[j]] = Kdyn_sim[m, j]
+        records_internal.append(rec)
+
+    df_int = pd.DataFrame.from_records(records_internal)
+    df_int.to_csv(os.path.join(outdir, "internal_states.tsv"), sep="\t", index=False)
+
+    # Plot the internal states
+    plot_internal_states(outdir, t, S_sim, Kdyn_sim, proteins)
+
+
+def plot_internal_states(outdir, t, S_sim, Kdyn_sim, proteins):
+    """
+    Plot the internal states (S_sim and Kdyn_sim) for comparison with experimental data.
+
+    Args:
+        outdir (str): Output directory for saving plots.
+        t (np.ndarray): Time points.
+        S_sim (np.ndarray): Simulated protein activity.
+        Kdyn_sim (np.ndarray): Simulated kinase activity.
+        proteins (list): List of protein names.
+
+    Returns:
+        None
+    """
+
+    fig, (axS, axK) = plt.subplots(1, 2, figsize=(16, 6), sharex=True)
+
+    # Panel 1: S_sim (Substrate Active Fraction)
+    # Plot top changing ones to avoid clutter
+    s_range = np.ptp(S_sim, axis=1)
+    top_s = np.argsort(s_range)[-10:]  # Top 10 dynamic
+
+    for idx in top_s:
+        axS.plot(t, S_sim[idx], label=proteins[idx], lw=2, alpha=0.8)
+
+    axS.set_title("Protein Active Fraction ($S_{sim}$)")
+    axS.set_xlabel("Time (min)")
+    axS.set_ylabel("Fraction Active [0-1]")
+    axS.legend(fontsize=8, loc='upper right')
+    axS.grid(alpha=0.3)
+
+    # Panel 2: Kdyn_sim (Kinase Active Fraction)
+    k_range = np.ptp(Kdyn_sim, axis=1)
+    top_k = np.argsort(k_range)[-10:]
+
+    for idx in top_k:
+        axK.plot(t, Kdyn_sim[idx], label=f"Kinase_{idx}", lw=2, alpha=0.8)
+
+    axK.set_title("Kinase Active Fraction ($K_{dyn}$)")
+    axK.set_xlabel("Time (min)")
+    axK.set_ylabel("Fraction Active [0-1]")
+    axK.legend(fontsize=8, loc='upper right')
+    axK.grid(alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(outdir, "fitted_internal_states.png"), dpi=300)
+    plt.close()
 
 
 def plot_fitted_simulation(outdir):

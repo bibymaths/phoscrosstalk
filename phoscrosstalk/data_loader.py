@@ -12,6 +12,7 @@ from phoscrosstalk.logger import get_logger
 
 logger = get_logger()
 
+
 def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
     """
     Parses a time-series CSV file to extract phosphosite data and optional protein abundance.

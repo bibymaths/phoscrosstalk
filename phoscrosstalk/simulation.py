@@ -24,7 +24,8 @@ def simulate_p_scipy(t_arr, P_data0, A_data0, theta,
                      K_site_kin, R,
                      L_alpha, kin_to_prot_idx,
                      receptor_mask_prot, receptor_mask_kin,
-                     mechanism: str):
+                     mechanism: str,
+                     full_output: bool = False):
     """
     Simulate the phosphoproteomic network dynamics using SciPy's ODE solver.
 
@@ -72,6 +73,9 @@ def simulate_p_scipy(t_arr, P_data0, A_data0, theta,
     if not np.all(np.isfinite(x0)):
         N_sites = P_data0.shape[0]
         T = len(t_arr)
+        if full_output:
+            return (np.full((N_sites, T), np.nan), np.full((K, T), np.nan),
+                    np.full((K, T), np.nan), np.full((M, T), np.nan))
         return np.full((N_sites, T), np.nan), np.full((K, T), np.nan)
 
     # Simulation
@@ -88,6 +92,10 @@ def simulate_p_scipy(t_arr, P_data0, A_data0, theta,
         rtol=1e-6,
         atol=1e-9,
         mxstep=5000,
+
+        # Not to be confused with the full_output kwarg, this is the default behavior
+        # of scipy.integrate.odeint.
+
         # full_output=True,
     )))
 
@@ -101,6 +109,9 @@ def simulate_p_scipy(t_arr, P_data0, A_data0, theta,
     if not np.all(np.isfinite(xs)):
         N_sites = P_data0.shape[0]
         T = len(t_arr)
+        if full_output:
+            return (np.full((N_sites, T), np.nan), np.full((K, T), np.nan),
+                    np.full((K, T), np.nan), np.full((M, T), np.nan))
         return np.full((N_sites, T), np.nan), np.full((K, T), np.nan)
 
     # Slice
@@ -109,13 +120,14 @@ def simulate_p_scipy(t_arr, P_data0, A_data0, theta,
     Kdyn_sim = xs[:, 2 * K:2 * K + M]
     P_sim = xs[:, 2 * K + M:2 * K + M + N]
 
-    # Clip only bounded states
+    # Clip bounded states
     np.clip(S_sim, 0.0, 1.0, out=S_sim)
     np.clip(Kdyn_sim, 0.0, 1.0, out=Kdyn_sim)
     np.clip(P_sim, 0.0, 1.0, out=P_sim)
-
-    # A: keep your biological cap consistent with x0
     np.clip(A_sim, 0.0, 5.0, out=A_sim)
+
+    if full_output:
+        return P_sim.T, A_sim.T, S_sim.T, Kdyn_sim.T
 
     return P_sim.T, A_sim.T
 

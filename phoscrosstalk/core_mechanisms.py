@@ -198,6 +198,7 @@ class CSRMatrix:
         n_rows (int): Number of rows.
         n_cols (int): Number of columns.
     """
+
     def __init__(self, data, indices, indptr, n_rows, n_cols):
         self.data = data
         self.indices = indices
@@ -752,6 +753,7 @@ class DenseWorkspace:
     Stores pre-allocated buffers and decoded parameters. Ideally initialized once
     outside the solver loop.
     """
+
     def __init__(self, K, M, N):
         self.K = K
         self.M = M
@@ -862,6 +864,7 @@ class CSRWorkspace:
 
     Stores pre-allocated buffers and decoded parameters for use with `CSRMatrix` inputs.
     """
+
     def __init__(self, K, M, N):
         self.K = K
         self.M = M

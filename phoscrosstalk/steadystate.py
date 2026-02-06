@@ -13,6 +13,7 @@ from phoscrosstalk.logger import get_logger
 
 logger = get_logger()
 
+
 def run_steadystate_analysis(outdir, problem, theta_opt, sites, proteins, kinases):
     """
     Simulates the network over a long time horizon to analyze convergence and steady-state behavior.
@@ -63,7 +64,7 @@ def run_steadystate_analysis(outdir, problem, theta_opt, sites, proteins, kinase
     A0_initial = build_full_A0(K, 1, problem.A_scaled[:, 0:1] if problem.A_scaled.size > 0 else np.array([]),
                                problem.prot_idx_for_A)
 
-    P_ss, A_ss = simulate_p_scipy(
+    P_ss, A_ss, S_ss, Kdyn_ss = simulate_p_scipy(
         t_long,
         problem.P_data,  # For Initial Conditions
         A0_initial,
@@ -71,7 +72,8 @@ def run_steadystate_analysis(outdir, problem, theta_opt, sites, proteins, kinase
         problem.Cg, problem.Cl, problem.site_prot_idx,
         problem.K_site_kin, problem.R, problem.L_alpha, problem.kin_to_prot_idx,
         problem.receptor_mask_prot, problem.receptor_mask_kin,
-        problem.mechanism
+        problem.mechanism,
+        full_output=True
     )
 
     # 3. Analyze Convergence
@@ -91,6 +93,17 @@ def run_steadystate_analysis(outdir, problem, theta_opt, sites, proteins, kinase
     _plot_convergence_heatmap(ss_dir, P_ss, t_long, "Phosphosites")
     _plot_convergence_heatmap(ss_dir, A_ss, t_long, "Proteins")
     _plot_trajectories(ss_dir, P_ss, t_long, sites, "Top_Changing_Sites")
+
+    # 3. Save S and Kdyn
+    cols = [f"t_{t:.1f}" for t in t_long]
+    pd.DataFrame(S_ss, index=proteins, columns=cols).to_csv(os.path.join(ss_dir, "steadystate_S.tsv"), sep="\t")
+    pd.DataFrame(Kdyn_ss, index=kinases, columns=cols).to_csv(os.path.join(ss_dir, "steadystate_Kdyn.tsv"), sep="\t")
+
+    _plot_convergence_heatmap(ss_dir, S_ss, t_long, "Protein_Activity_S")
+    _plot_convergence_heatmap(ss_dir, Kdyn_ss, t_long, "Kinase_Activity_Kdyn")
+
+    _plot_trajectories(ss_dir, S_ss, t_long, proteins, "S_Dynamics")
+    _plot_trajectories(ss_dir, Kdyn_ss, t_long, kinases, "Kdyn_Dynamics")
 
 
 def _plot_convergence_heatmap(outdir, data, t, label):
