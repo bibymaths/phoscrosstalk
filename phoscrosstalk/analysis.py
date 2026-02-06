@@ -14,6 +14,22 @@ from phoscrosstalk.optimization import build_full_A0, bio_score
 
 
 def save_pareto_results(outdir, F, X, f1, f2, f3, J, F_best):
+    """
+    Save Pareto front optimization results, including statistics and scalarized scores, to disk.
+
+    Args:
+        outdir (str): Path to the output directory.
+        F (np.ndarray): Array of objective values for the Pareto front (shape: n_points x 3).
+        X (np.ndarray): Array of parameter values for the Pareto front.
+        f1 (np.ndarray): Array of values for objective 1 (Phosphosite error).
+        f2 (np.ndarray): Array of values for objective 2 (Protein error).
+        f3 (np.ndarray): Array of values for objective 3 (Complexity/Regularization).
+        J (np.ndarray): Array of scalarized objective values.
+        F_best (np.ndarray): The objective values corresponding to the best scalarized solution.
+
+    Returns:
+        None: Files are written to `outdir` (pareto_stats.tsv, pareto_front_with_J.tsv, etc.).
+    """
     obj_names = ["f1_P_sites", "f2_protein", "f3_complexity"]
 
     # DataFrame stats
@@ -38,6 +54,24 @@ def save_pareto_results(outdir, F, X, f1, f2, f3, J, F_best):
 
 
 def plot_pareto_diagnostics(outdir, F, F_best, f1, f2, f3, X):
+    """
+    Plot diagnostic visualizations for the Pareto front analysis.
+
+    Generates a scatter plot of objective space (f1 vs f2 colored by f3) and
+    a heatmap of parameter correlations.
+
+    Args:
+        outdir (str): Path to the output directory.
+        F (np.ndarray): Pareto front objective values.
+        F_best (np.ndarray): Objective values of the best selected point.
+        f1 (np.ndarray): Values for objective function 1.
+        f2 (np.ndarray): Values for objective function 2.
+        f3 (np.ndarray): Values for objective function 3.
+        X (np.ndarray): Parameter values associated with the Pareto front.
+
+    Returns:
+        None: Saves 'pareto_f1_f2.png' and 'pareto_param_corr.png' to `outdir`.
+    """
     # F1 vs F2
     plt.figure(figsize=(7, 6))
     sc = plt.scatter(f1, f2, c=f3, cmap="viridis", alpha=0.7)
@@ -55,6 +89,19 @@ def plot_pareto_diagnostics(outdir, F, F_best, f1, f2, f3, X):
 
 
 def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
+    """
+    Decode optimized parameters and export summaries for proteins, kinases, and sites.
+
+    Args:
+        outdir (str): Path to the output directory.
+        theta_opt (np.ndarray): The optimized parameter vector.
+        proteins (list): List of protein names.
+        kinases (list): List of kinase names.
+        sites (list): List of phosphorylation site names.
+
+    Returns:
+        None: Writes summary TSV/TXT files to `outdir` and prints summaries to console.
+    """
     K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
     params_decoded = decode_theta(theta_opt, K, M, N)
 
@@ -116,12 +163,46 @@ def save_fitted_simulation(
         prot_idx_for_A,
         baselines,
         amplitudes,
-        Y,  # <--- add this: original site data (FC)
+        Y,
         A_data, A_bases, A_amps,
         mechanism,
         Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha, kin_to_prot_idx,
         mask_p, mask_k,
 ):
+    """
+    Run a simulation with optimized parameters, rescale outputs, and save comparison data.
+
+    This function simulates the model using `theta_opt`, rescales the results to match
+    experimental data units (using baselines/amplitudes), and aggregates both simulated
+    and observed data into a single long-format time-series file.
+
+    Args:
+        outdir (str): Output directory path.
+        theta_opt (np.ndarray): Optimized parameter vector.
+        t (np.ndarray): Time points vector.
+        sites (list): List of phosphosite labels.
+        proteins (list): List of protein labels.
+        P_scaled (np.ndarray): Scaled phosphodata (input/reference).
+        A_scaled (np.ndarray): Scaled protein data (input/reference).
+        prot_idx_for_A (list): Indices of proteins that have abundance data.
+        baselines (np.ndarray): Baselines for rescaling phosphosites.
+        amplitudes (np.ndarray): Amplitudes for rescaling phosphosites.
+        Y (np.ndarray): Original phosphosite data (used for direct comparison).
+        A_data (np.ndarray): Original protein abundance data.
+        A_bases (np.ndarray): Baselines for rescaling proteins.
+        A_amps (np.ndarray): Amplitudes for rescaling proteins.
+        mechanism (str): The specific kinetic mechanism used in simulation.
+        Cg, Cl (np.ndarray): Global and Local connectivity matrices.
+        site_prot_idx (np.ndarray): Mapping of sites to proteins.
+        K_site_kin (np.ndarray): Kinase-site interaction matrix.
+        R (np.ndarray): Receptor/Input matrix.
+        L_alpha (np.ndarray): Laplacian or interaction matrix for alpha term.
+        kin_to_prot_idx (np.ndarray): Mapping of kinases to protein indices.
+        mask_p, mask_k (np.ndarray): Boolean masks for proteins and kinases.
+
+    Returns:
+        None: Saves 'fitted_params.npz' and 'fit_timeseries.tsv' to `outdir`.
+    """
     K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
 
     # Save Params (unchanged)
@@ -205,10 +286,19 @@ def save_fitted_simulation(
 
 def plot_fitted_simulation(outdir):
     """
-    Per-protein panel plot:
-      - Left: Protein abundance (if present)
-      - Right: Phosphosites for that protein (Residue + Position)
+    Generate per-protein plots comparing simulated trajectories to experimental data.
+
+    Reads the 'fit_timeseries.tsv' generated by `save_fitted_simulation` and creates
+    a panel plot for every protein, showing protein abundance (if available) and
+    associated phosphosite dynamics.
+
+    Args:
+        outdir (str): Directory containing the 'fit_timeseries.tsv' file.
+
+    Returns:
+        None: Saves individual PNG files (e.g., 'fit_ProteinName.png') to `outdir`.
     """
+
     # Load Data
     df = pd.read_csv(os.path.join(outdir, "fit_timeseries.tsv"), sep="\t")
     proteins = sorted(df["Protein"].unique())
@@ -359,6 +449,16 @@ def plot_fitted_simulation(outdir):
 
 
 def print_biological_scores(outdir, X):
+    """
+    Calculate and save biological plausibility scores for a set of parameters.
+
+    Args:
+        outdir (str): Output directory path.
+        X (np.ndarray): Matrix of parameter vectors (n_points x n_params).
+
+    Returns:
+        None: Writes 'biological_scores.tsv' to disk and prints scores to console.
+    """
     bio_scores = np.array([bio_score(theta) for theta in X])
 
     with open(os.path.join(outdir, "biological_scores.tsv"), "w") as f:
@@ -372,6 +472,17 @@ def print_biological_scores(outdir, X):
 
 
 def plot_biological_scores(outdir, X, F):
+    """
+    Visualize the distribution of biological scores across the Pareto front.
+
+    Args:
+        outdir (str): Output directory path.
+        X (np.ndarray): Parameter values.
+        F (np.ndarray): Objective function values (f1, f2, f3).
+
+    Returns:
+        None: Saves 'biological_scores.png' to `outdir`.
+    """
     bio_scores = np.array([bio_score(theta) for theta in X])
     plt.figure(figsize=(7, 6))
     f1 = F[:, 0]
@@ -387,13 +498,17 @@ def plot_biological_scores(outdir, X, F):
 
 def plot_goodness_of_fit(file, outdir):
     """
-    Goodness-of-fit scatter: Observed (x) vs Simulated (y) across all timepoints.
+    Generate a global goodness-of-fit scatter plot (Observed vs. Simulated).
 
-    Enhancements:
-      - Legends split by Type (Phosphosite vs Abundance)
-      - Global metrics: R2, MSE, MAE
-      - Identity line + 95% CI band (parallel lines to identity): y = x +/- delta
-      - Labels for points outside the 95% CI band (protein / kinase labels)
+    Calculates R-squared, MSE, and MAE metrics, and visualizes the data with
+    an identity line and a 95% confidence interval band. Outliers are labeled.
+
+    Args:
+        file (str): Path to the time-series TSV file (output of `save_fitted_simulation`).
+        outdir (str): Directory to save the plot.
+
+    Returns:
+        None: Saves 'goodness_of_fit.png' to `outdir`.
     """
     df = pd.read_csv(file, sep="\t")
 
@@ -553,22 +668,62 @@ def plot_goodness_of_fit(file, outdir):
 
 
 def _save_txt(path: str, text: str) -> None:
+    """
+    Helper function to save a string to a text file, ensuring the directory exists.
+
+    Args:
+        path (str): Full file path.
+        text (str): Content to write.
+
+    Returns:
+        None
+    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(text if text.endswith("\n") else text + "\n")
 
 
 def _save_matrix_tsv(path: str, mat: np.ndarray) -> None:
+    """
+    Helper function to save a 2D numpy array as a tab-separated file.
+
+    Args:
+        path (str): Full file path.
+        mat (np.ndarray): 2D Matrix to save.
+
+    Returns:
+        None
+    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     np.savetxt(path, np.asarray(mat, dtype=float), delimiter="\t")
 
 
 def _save_vector_tsv(path: str, vec: np.ndarray) -> None:
+    """
+    Helper function to save a 1D numpy array as a column in a tab-separated file.
+
+    Args:
+        path (str): Full file path.
+        vec (np.ndarray): 1D Vector to save.
+
+    Returns:
+        None
+    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     np.savetxt(path, np.asarray(vec, dtype=float).reshape(-1, 1), delimiter="\t")
 
 
 def _save_index_tsv(path: str, vec: np.ndarray) -> None:
+    """
+    Helper function to save an integer array as a column in a tab-separated file.
+
+    Args:
+        path (str): Full file path.
+        vec (np.ndarray): Integer vector to save.
+
+    Returns:
+        None
+    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     np.savetxt(path, np.asarray(vec, dtype=int).reshape(-1, 1), fmt="%d", delimiter="\t")
 
@@ -601,6 +756,35 @@ def _save_preopt_snapshot_txt_csv(
         xu,
         args,
 ) -> None:
+    """
+    Save a comprehensive snapshot of all model inputs and configuration before optimization.
+
+    This acts as a provenance step, dumping input matrices, configuration arguments,
+    and metadata to a 'preopt_snapshot' subdirectory.
+
+    Args:
+        outdir (str): Output root directory.
+        t (np.ndarray): Time points.
+        sites (list/array): Phosphosite labels.
+        proteins (list/array): Protein labels.
+        kinases (list/array): Kinase labels.
+        positions (np.ndarray): Site positions.
+        P_scaled, Y (np.ndarray): Phosphorylation data matrices.
+        A_scaled, A_data (np.ndarray): Protein abundance data matrices.
+        A_proteins (list): Proteins with abundance data.
+        W_data, W_data_prot (np.ndarray): Weight matrices.
+        Cg, Cl (np.ndarray): Topology matrices.
+        site_prot_idx, kin_to_prot_idx (np.ndarray): Index mapping arrays.
+        K_site_kin (np.ndarray): Kinase-substrate relationship matrix.
+        R (np.ndarray): Receptor input.
+        L_alpha (np.ndarray): Laplacian matrix.
+        receptor_mask_prot, receptor_mask_kin (np.ndarray): Receptor boolean masks.
+        xl, xu (np.ndarray): Lower and upper bounds for parameters.
+        args (Namespace): Parsed command-line arguments or configuration object.
+
+    Returns:
+        None: Creates a 'preopt_snapshot' folder containing metadata and data files.
+    """
     snap_dir = os.path.join(outdir, "preopt_snapshot")
     os.makedirs(snap_dir, exist_ok=True)
 
