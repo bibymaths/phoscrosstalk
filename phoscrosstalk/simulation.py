@@ -25,6 +25,33 @@ def simulate_p_scipy(t_arr, P_data0, A_data0, theta,
                      L_alpha, kin_to_prot_idx,
                      receptor_mask_prot, receptor_mask_kin,
                      mechanism: str):
+    """
+    Simulate the phosphoproteomic network dynamics using SciPy's ODE solver.
+
+    Sets up the state vector $x = [S, A, K_{dyn}, P]$ and integrates the system of differential
+    equations over the provided time points. Handles initial condition setup from data,
+    numerical integration via `odeint`, and post-simulation clipping of bounded variables.
+
+    Args:
+        t_arr (np.ndarray): Time points for the simulation.
+        P_data0 (np.ndarray): Initial phosphosite data (used for $t=0$ state).
+        A_data0 (np.ndarray): Initial protein abundance data (used for $t=0$ state).
+        theta (np.ndarray): Flattened parameter vector.
+        Cg, Cl (np.ndarray): Global and Local coupling matrices.
+        site_prot_idx (np.ndarray): Mapping indices for sites to proteins.
+        K_site_kin (np.ndarray): Kinase-site interaction matrix.
+        R (np.ndarray): Receptor input matrix.
+        L_alpha (np.ndarray): Kinase network Laplacian.
+        kin_to_prot_idx (np.ndarray): Mapping indices for kinases to proteins.
+        receptor_mask_prot, receptor_mask_kin (np.ndarray): Input masks.
+        mechanism (str): Kinetic mechanism ('dist', 'seq', 'rand').
+
+    Returns:
+        tuple:
+            - P_sim (np.ndarray): Simulated phosphosite trajectories (N_sites x T).
+            - A_sim (np.ndarray): Simulated protein abundance trajectories (K_proteins x T).
+            Returns arrays of NaNs if integration fails.
+    """
     K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
     state_dim = 2 * K + M + N
 
@@ -95,11 +122,21 @@ def simulate_p_scipy(t_arr, P_data0, A_data0, theta,
 
 def build_full_A0(K, T, A_scaled, prot_idx_for_A):
     """
-    Build a (K, T) abundance matrix from subset A_scaled (K_obs, T)
-    using mapping prot_idx_for_A (len = K_obs).
+    Constructs the full-dimension protein abundance matrix from partial observations.
 
-    Unobserved proteins get zeros.
+    Maps the observed protein data (which may only cover a subset of proteins) into the
+    full model state space $K \times T$. Unobserved proteins are initialized to zero.
+
+    Args:
+        K (int): Total number of proteins in the model.
+        T (int): Number of time points.
+        A_scaled (np.ndarray): Observed protein data (K_obs x T).
+        prot_idx_for_A (np.ndarray): Indices mapping observations to the full protein list.
+
+    Returns:
+        np.ndarray: Full abundance matrix (K x T).
     """
+
     A0_full = np.zeros((K, T), dtype=float)
 
     if A_scaled.size > 0:
@@ -121,6 +158,22 @@ def fd_jacobian(
         receptor_mask_kin,
         mechanism: str,
 ):
+    """
+    Computes the Jacobian matrix of the system using finite differences.
+
+    Acts as a Python wrapper that prepares inputs (ensuring contiguous arrays and
+    encoding mechanism strings) before calling the Numba-accelerated core function.
+
+    Args:
+        x (np.ndarray): State vector.
+        t (float): Current time.
+        theta (np.ndarray): Parameter vector.
+        [matrices]: System topology matrices (Cg, Cl, K_site_kin, etc.).
+        mechanism (str): Mechanism name ('dist', 'seq', 'rand').
+
+    Returns:
+        np.ndarray: Jacobian matrix $J$, where $J_{ij} = \frac{\partial f_i}{\partial x_j}$.
+    """
     if mechanism == "dist":
         mech_code = 0
     elif mechanism == "seq":
@@ -164,6 +217,28 @@ def fd_jacobian_nb_core(
         eps=1e-6,  # larger than 1e-8 for stiff-ish, clipped systems
         h_min=1e-8
 ):
+    """
+    Numba-accelerated core for Finite Difference Jacobian estimation.
+
+    Calculates the Jacobian via central differences:
+    $$ \frac{\partial f}{\partial x_i} \approx \frac{f(x + h) - f(x - h)}{2h} $$
+
+    Dynamically adjusts the step size $h$ based on the magnitude of $x_i$ to maintain
+    numerical stability (`eps * (1 + |x|)`).
+
+    Args:
+        x (np.ndarray): State vector.
+        t (float): Current time.
+        theta (np.ndarray): Parameter vector.
+        [matrices]: System topology matrices.
+        mech_code (int): Integer code for mechanism (0=dist, 1=seq, 2=rand).
+        K, M, N (int): System dimensions.
+        eps (float): Relative step size scaling factor.
+        h_min (float): Minimum absolute step size.
+
+    Returns:
+        np.ndarray: The Jacobian matrix (State_Dim x State_Dim).
+    """
     n = x.size
     J = np.empty((n, n), dtype=np.float64)
 

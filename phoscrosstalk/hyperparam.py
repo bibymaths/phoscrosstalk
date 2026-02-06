@@ -33,7 +33,24 @@ BOUNDS_CONFIG = {
 
 
 def create_bounds(K=None, M=None, N=None):
-    """Generates lower (xl) and upper (xu) bounds vectors."""
+    """
+    Constructs the lower and upper bound vectors for the optimization problem.
+
+    Generates flat arrays for all model parameters (proteins, kinases, sites, global/local coupling)
+    based on the logarithmic or linear ranges defined in `BOUNDS_CONFIG`.
+
+    Args:
+        K (int, optional): Number of Proteins. Defaults to ModelDims.K.
+        M (int, optional): Number of Kinases. Defaults to ModelDims.M.
+        N (int, optional): Number of Phosphosites. Defaults to ModelDims.N.
+
+    Returns:
+        tuple:
+            - xl (np.ndarray): Lower bounds vector (log-scale for most params).
+            - xu (np.ndarray): Upper bounds vector (log-scale for most params).
+            - dim (int): Total number of decision variables.
+    """
+
     if K is None: K = ModelDims.K
     if M is None: M = ModelDims.M
     if N is None: N = ModelDims.N
@@ -102,9 +119,33 @@ def run_hyperparameter_scan(
         mechanism, cores
 ):
     """
-    Performs a grid search over key hyperparameters by running short optimizations.
-    Returns the dictionary of the best hyperparameter set.
+    Executes a grid search to tune structural hyperparameters using short optimization runs.
+
+    Iterates over combinations of `length_scale` (for local coupling), `lambda_net` (network regularization),
+    and `reg_lambda` (complexity penalty). For each combination, it runs a brief multi-objective
+    optimization (UNSGA3) and evaluates the best result using the Discrete Fréchet Distance.
+
+    Args:
+        outdir (str): Directory to save scan results.
+        t (np.ndarray): Time points.
+        P_scaled (np.ndarray): Scaled phosphodata.
+        sites, proteins (list): ID lists.
+        site_prot_idx (np.ndarray): Site-to-protein mapping.
+        positions (np.ndarray): Site positions.
+        ptm_intra_path, ptm_inter_path (str): Paths to PTM databases.
+        Cg (np.ndarray): Global coupling matrix.
+        K_site_kin, R, L_alpha (np.ndarray): Interaction/Laplacian matrices.
+        kin_to_prot_idx (np.ndarray): Kinase-to-protein mapping.
+        A_scaled, prot_idx_for_A (np.ndarray): Protein abundance data and indices.
+        W_data, W_data_prot (np.ndarray): Data weights.
+        receptor_mask_prot, receptor_mask_kin (np.ndarray): Receptor masks.
+        mechanism (str): Kinetic mechanism ('dist', 'seq', 'rand').
+        cores (int): Number of CPU cores for parallelization.
+
+    Returns:
+        dict: The hyperparameter combination yielding the lowest Fréchet distance score.
     """
+
     print("\n" + "=" * 60)
     print("[*] STARTING HYPERPARAMETER TUNING SCAN")
     print("=" * 60)
