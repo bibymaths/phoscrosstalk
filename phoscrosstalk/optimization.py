@@ -228,6 +228,7 @@ class NetworkOptimizationProblem(ElementwiseProblem):
         lambda_net, reg_lambda (float): Regularization strengths.
         mechanism (str): Kinetic mechanism identifier.
     """
+
     def __init__(self, t, P_data, Cg, Cl, site_prot_idx, K_site_kin, R,
                  A_scaled, prot_idx_for_A, W_data, W_data_prot, L_alpha, kin_to_prot_idx,
                  lambda_net, reg_lambda, receptor_mask_prot, receptor_mask_kin, mechanism,
