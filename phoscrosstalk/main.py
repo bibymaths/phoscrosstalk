@@ -89,6 +89,22 @@ def main():
     )
 
     # ------------------------------------------------------------------
+    # EXTERNAL STIMULI SPECIFIC RECEPTORS & KINASES
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--receptors",
+        nargs="*",  # Accepts zero or more arguments
+        default=[],
+        help="List of proteins that act as receptors (receive external u(t))."
+    )
+
+    parser.add_argument(
+        "--receptor-kinases",
+        nargs="*",
+        default=[],
+        help="List of kinases that act as receptors."
+    )
+    # ------------------------------------------------------------------
     # OUTPUT DIRECTORY
     # ------------------------------------------------------------------
     parser.add_argument(
@@ -297,10 +313,19 @@ def main():
     prot_map_all = {p: i for i, p in enumerate(proteins)}
     kin_to_prot_idx = np.array([prot_map_all.get(k, -1) for k in kinases], dtype=int)
 
-    receptor_names = {"EGFR", "ERBB2", "EPHA2", "MET"}
-    receptor_kin_names = {"EGFR", "EPHA2", "ERBB4", "INSR", "RET"}
+    # receptor_names = {"EGFR", "ERBB2", "EPHA2", "MET"}
+    # receptor_kin_names = {"EGFR", "EPHA2", "ERBB4", "INSR", "RET"}
+
+    # Convert list args to sets for fast lookup
+    receptor_names = set(args.receptors)
+    receptor_kin_names = set(args.receptor_kinases)
+
+    # Build masks (will be all zeros if args.receptors is empty)
     receptor_mask_prot = np.array([1 if p in receptor_names else 0 for p in proteins], dtype=int)
     receptor_mask_kin = np.array([1 if k in receptor_kin_names else 0 for k in kinases], dtype=int)
+
+    if len(receptor_names) == 0:
+        logger.warning("[!] No Receptors defined. External stimulus u(t) will be ignored.")
 
     # --- HYPERPARAMETER TUNING ---
     if args.tune:
@@ -387,30 +412,6 @@ def main():
     # logger.info("||P_mid - P_lo||_inf =", np.max(np.abs(P_mid - P_lo)))
     # logger.info("||P_hi  - P_mid||_inf =", np.max(np.abs(P_hi - P_mid)))
 
-    # algorithm = UNSGA3(pop_size=args.pop_size, ref_dirs=get_reference_directions("das-dennis", 3, n_partitions=12))
-    # termination = DefaultMultiObjectiveTermination(xtol=1e-8, cvtol=1e-6, ftol=0.0025, period=30, n_max_gen=args.gen,
-    #                                                n_max_evals=1000000)
-    #
-    # logger.info("[*] Starting Main Optimization...")
-    # res = minimize(problem, algorithm, termination, seed=1, verbose=True)
-    # pool.close()
-    # pool.join()
-
-    ###########################################
-    ## DEPRECATED SELECTION OF BEST SOLUTION ##
-    ###########################################
-
-    # F, X = res.F, res.X
-    # f1, f2, f3 = F[:, 0], F[:, 1], F[:, 2]
-    # # Normalize for selection
-    # eps = 1e-12
-    # J = np.sqrt(
-    #     ((f1 - f1.min()) / (f1.max() - f1.min() + eps)) ** 2 + ((f2 - f2.min()) / (f2.max() - f2.min() + eps)) ** 2) + (
-    #             (f3 - f3.min()) / (f3.max() - f3.min() + eps))
-    # best_idx = np.argmin(J)
-
-    ###########################################
-
     res, best_idx, J = run_multi_start_optimization(problem, args, P_scaled)
 
     pool.close()
@@ -420,22 +421,6 @@ def main():
     # Find best solution using Fretchet distance for all trajectories as primary criterion
     F, X = res.F, res.X
     f1, f2, f3 = F[:, 0], F[:, 1], F[:, 2]
-
-    # # Select best solution by Fréchet distance over all solutions
-    # # Expect `problem.simulate(x)` to return predicted site trajectories with same shape as `P_scaled`.
-    # frechet_scores = np.full(len(X), np.inf, dtype=float)
-    #
-    # for i in range(len(X)):
-    #     P_pred = problem.simulate(X[i])
-    #
-    #     # Ensure contiguous float64 arrays for the numba-compiled function signature
-    #     true_coords = np.ascontiguousarray(P_scaled, dtype=np.float64)
-    #     pred_coords = np.ascontiguousarray(P_pred, dtype=np.float64)
-    #
-    #     frechet_scores[i] = frechet_distance(true_coords, pred_coords)
-    #
-    # best_idx = int(np.argmin(frechet_scores))
-    # J = frechet_scores  # store per-solution selection score
 
     analysis.save_pareto_results(args.outdir, F, X, f1, f2, f3, J, F[best_idx])
     analysis.plot_pareto_diagnostics(args.outdir, F, F[best_idx], f1, f2, f3, X)

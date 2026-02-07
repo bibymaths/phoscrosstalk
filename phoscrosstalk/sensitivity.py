@@ -10,6 +10,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from SALib.sample import saltelli
 from SALib.analyze import sobol
+from joblib import Parallel, delayed
+from tqdm import tqdm
 
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.simulation import simulate_p_scipy, build_full_A0
@@ -52,6 +54,65 @@ def _generate_param_labels(K, M, N, proteins, kinases, sites):
     labels.extend(["gamma_S_p", "gamma_A_S", "gamma_A_p", "gamma_K_net"])
 
     return labels
+
+def _evaluate_single_sample(i, theta, problem, K, M, N, sites, proteins, kinases):
+    """
+    Helper function to evaluate one sample in parallel.
+    Returns the MSE and the formatted string of rows for the output file.
+    """
+    # CRITICAL FIX: Re-initialize global dimensions inside the worker process
+    # because static class variables like ModelDims are lost (None) in new processes.
+    ModelDims.set_dims(K, M, N)
+
+    # Reconstruct A0 (needed for simulation wrapper)
+    # Note: problem object usually handles this inside _evaluate, we replicate here.
+    A0_full = build_full_A0(K, len(problem.t), problem.A_scaled, problem.prot_idx_for_A)
+
+    P_sim, A_sim, S_sim, Kdyn_sim = simulate_p_scipy(
+        problem.t, problem.P_data, A0_full, theta,
+        problem.Cg, problem.Cl, problem.site_prot_idx,
+        problem.K_site_kin, problem.R, problem.L_alpha, problem.kin_to_prot_idx,
+        problem.receptor_mask_prot, problem.receptor_mask_kin,
+        problem.mechanism, full_output=True
+    )
+
+    # B. Calculate Metric for Sobol (MSE on Phosphosites)
+    # Filter NaNs if simulation exploded
+    if not np.all(np.isfinite(P_sim)):
+        mse = 1e6 # penalty
+    else:
+        diff = (problem.P_data - P_sim)
+        mse = np.mean(diff ** 2)
+
+    # C. Format Data for Table
+    # NOTE: In Tidy format, we do NOT repeat parameters here.
+    # We only write Sample_ID and the observed values.
+
+    rows_buffer = []
+    t_pts = problem.t
+
+    # Helper to append rows locally
+    def add_rows_local(matrix, type_label, entity_names):
+        # matrix shape: (N_entities, T)
+        for r_idx in range(matrix.shape[0]):
+            entity = entity_names[r_idx]
+            for t_idx in range(matrix.shape[1]):
+                val = matrix[r_idx, t_idx]
+                t_val = t_pts[t_idx]
+                # Row: Sample_ID, Type, Entity, Time, Value
+                row_str = f"{i}\t{type_label}\t{entity}\t{t_val:.2f}\t{val:.5g}\n"
+                rows_buffer.append(row_str)
+
+    # 1. Phosphosites
+    add_rows_local(P_sim, "Phosphosite", sites)
+    # 2. Proteins (Abundance)
+    add_rows_local(A_sim, "Protein_Abundance", proteins)
+    # 3. Proteins (Activity S)
+    add_rows_local(S_sim, "Protein_Activity_S", proteins)
+    # 4. Kinases (Activity Kdyn)
+    add_rows_local(Kdyn_sim, "Kinase_Activity_Kdyn", kinases)
+
+    return mse, "".join(rows_buffer)
 
 def run_global_sensitivity(outdir, problem, param_bounds,
                            proteins, kinases, sites,
@@ -99,6 +160,16 @@ def run_global_sensitivity(outdir, problem, param_bounds,
     n_evals = param_values.shape[0]
     logger.info(f"    -> Total Evaluations: {n_evals}")
 
+    # 2b. Save Parameters Table (Tidy Format Part 1)
+    # Links Sample_ID to Parameter Values
+    logger.info("    -> Saving Parameters Table...")
+    param_file = os.path.join(sens_dir, "perturbation_params.tsv")
+
+    # Create DataFrame: Sample_ID, Param1, Param2...
+    df_params = pd.DataFrame(param_values, columns=param_names)
+    df_params.insert(0, "Sample_ID", range(n_evals))
+    df_params.to_csv(param_file, sep="\t", index=False)
+
     # 3. Evaluate & Store Full Trajectories
     # We need to store:
     #   - MSE (scalar) for Sobol analysis
@@ -110,81 +181,40 @@ def run_global_sensitivity(outdir, problem, param_bounds,
     perturbation_file = os.path.join(sens_dir, "perturbation_data.tsv")
 
     # Write Header
-    # Cols: Sample_ID, Type, Entity, Time, Value, [All Parameters...]
-    # NOTE: Writing all parameters in every row is extremely redundant/large.
-    # A standard "Tidy" format usually links Sample_ID to a separate Parameters table.
-    # However, per request, we will dump "all parameters in the columns".
+    # Tidy format: No parameter columns here. Link via Sample_ID.
+    header_cols = ["Sample_ID", "Type", "Entity", "Time", "Value"]
 
-    # Prepare header
-    # We'll include parameters as columns.
-    header_cols = ["Sample_ID", "Type", "Entity", "Time", "Value"] + param_names
+    logger.info("    -> Simulating and streaming data to disk (Parallel)...")
 
-    logger.info("    -> Simulating and streaming data to disk...")
+    # Use all available cores except one
+    n_jobs = -1
 
+    # Run parallel simulations
+    # 1. Create a generator for the delayed tasks
+    tasks = (delayed(_evaluate_single_sample)(i, theta, problem, K, M, N, sites, proteins, kinases)
+             for i, theta in enumerate(param_values))
+
+    # 2. Execute using return_as="generator" to stream results to tqdm
+    # verbose=0 prevents joblib's native prints from breaking the tqdm bar
+    results_gen = Parallel(n_jobs=n_jobs, verbose=0, return_as="generator")(tasks)
+
+    # 3. Collect results with progress bar
+    results = [
+        res for res in tqdm(results_gen, total=len(param_values), desc="       Progress", unit="sim")
+    ]
+
+    # Unpack results and write to file
     with open(perturbation_file, "w") as f_out:
         # Write header
         f_out.write("\t".join(header_cols) + "\n")
 
-        for i, theta in enumerate(param_values):
-            if i % 50 == 0:
-                print(f"       Sim {i}/{n_evals}...", end="\r")
-
-            # A. Simulate (Getting full outputs: P, A, S, Kdyn)
-            # We need to use simulate_p_scipy directly to get S and Kdyn,
-            # or extend problem.simulate to return them.
-            # Calling simulate_p_scipy manually here:
-
-            # Reconstruct A0 (needed for simulation wrapper)
-            # Note: problem object usually handles this inside _evaluate, we replicate here.
-            A0_full = build_full_A0(K, len(problem.t), problem.A_scaled, problem.prot_idx_for_A)
-
-            P_sim, A_sim, S_sim, Kdyn_sim = simulate_p_scipy(
-                problem.t, problem.P_data, A0_full, theta,
-                problem.Cg, problem.Cl, problem.site_prot_idx,
-                problem.K_site_kin, problem.R, problem.L_alpha, problem.kin_to_prot_idx,
-                problem.receptor_mask_prot, problem.receptor_mask_kin,
-                problem.mechanism, full_output=True
-            )
-
-            # B. Calculate Metric for Sobol (MSE on Phosphosites)
-            # Filter NaNs if simulation exploded
-            if not np.all(np.isfinite(P_sim)):
-                mse = 1e6 # penalty
-            else:
-                diff = (problem.P_data - P_sim)
-                mse = np.mean(diff ** 2)
+        for i, (mse, row_data) in enumerate(results):
             Y_mse[i] = mse
-
-            # C. Format Data for Table
-            # To save space, we format the parameter string once per sample
-            param_str = "\t".join([f"{x:.5g}" for x in theta])
-
-            rows = []
-            t_pts = problem.t
-
-            # Helper to append rows
-            def add_rows(matrix, type_label, entity_names):
-                # matrix shape: (N_entities, T)
-                for r_idx in range(matrix.shape[0]):
-                    entity = entity_names[r_idx]
-                    for t_idx in range(matrix.shape[1]):
-                        val = matrix[r_idx, t_idx]
-                        t_val = t_pts[t_idx]
-                        # Row: Sample, Type, Entity, Time, Value, ...Params
-                        row_str = f"{i}\t{type_label}\t{entity}\t{t_val:.2f}\t{val:.5g}\t{param_str}\n"
-                        f_out.write(row_str)
-
-            # 1. Phosphosites
-            add_rows(P_sim, "Phosphosite", sites)
-            # 2. Proteins (Abundance)
-            add_rows(A_sim, "Protein_Abundance", proteins)
-            # 3. Proteins (Activity S)
-            add_rows(S_sim, "Protein_Activity_S", proteins)
-            # 4. Kinases (Activity Kdyn)
-            add_rows(Kdyn_sim, "Kinase_Activity_Kdyn", kinases)
+            f_out.write(row_data)
 
     print("") # clear line
     logger.success(f"    -> Saved perturbation data to {perturbation_file}")
+    logger.success(f"    -> Saved perturbation params to {param_file}")
 
     # 4. Analyze Sobol Indices
     logger.info("    -> Calculating Sobol Indices (MSE metric)...")
