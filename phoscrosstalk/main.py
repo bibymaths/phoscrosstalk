@@ -19,8 +19,11 @@ from phoscrosstalk import analysis, steadystate, knockouts, hyperparam
 from phoscrosstalk import data_loader
 from phoscrosstalk.analysis import _save_preopt_snapshot_txt_csv
 from phoscrosstalk.config import ModelDims, DEFAULT_TIMEPOINTS
+from phoscrosstalk.equations import generate_equations_report
 from phoscrosstalk.multistarts import run_multi_start_optimization
-from phoscrosstalk.sensitivity import run_global_sensitivity
+from phoscrosstalk.post_processing import plot_parameter_clustermap, plot_residual_heatmap, \
+    export_network_for_cytoscape, save_run_metadata
+from phoscrosstalk.sensitivity import run_global_sensitivity, _generate_param_labels
 # from phoscrosstalk.debug_main import _sanity_report_data, _sanity_report_C, _coverage_report_K_site_kin, _sanity_report_R,  _sanity_report_weights, _one_shot_sim_check, sim_summary
 from phoscrosstalk.weighting import build_weight_matrices
 from phoscrosstalk.optimization import NetworkOptimizationProblem, create_bounds
@@ -460,6 +463,38 @@ def main():
             kinases=kinases,
             sites=sites
         )
+
+    # 1. Save Run Configuration (Provenance)
+    save_run_metadata(args.outdir, args)
+
+    # 2. Export Cytoscape Network
+    # Requires theta_opt (best solution)
+    export_network_for_cytoscape(
+        args.outdir, X[best_idx], proteins, kinases, sites,
+        K_site_kin, site_prot_idx
+    )
+
+    # 3. Residual Heatmap
+    # Re-simulate best solution one last time to get P_sim
+    P_best = problem.simulate(X[best_idx])
+    plot_residual_heatmap(
+        args.outdir, P_scaled, P_best, sites, t
+    )
+
+    # 4. Parameter Correlations (using the X population from multi_start)
+    # We reuse the label generator from sensitivity if available, or generate generic ones
+    p_labels = _generate_param_labels(ModelDims.K, ModelDims.M, ModelDims.N, proteins, kinases, sites)
+
+    plot_parameter_clustermap(
+        args.outdir, X, p_labels, top_n=50
+    )
+
+    generate_equations_report(
+        args.outdir, X[best_idx],
+        proteins, kinases, sites,
+        Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha, kin_to_prot_idx,
+        receptor_mask_prot, receptor_mask_kin, args.mechanism
+    )
 
     logger.success("[*] Done.")
 
