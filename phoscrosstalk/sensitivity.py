@@ -55,6 +55,29 @@ def _generate_param_labels(K, M, N, proteins, kinases, sites):
 
     return labels
 
+def _decode_param_matrix(param_values, K, M, N):
+    """
+    Decodes the optimization parameters (Log-scale) back to Biological scale (Linear).
+    Used for saving human-readable reports without negative rates.
+    """
+    decoded = param_values.copy()
+
+    # Parameters that are log-scaled in optimization:
+    # 4*K (Prot) + 2 (Beta) + 3*M (Kin) + N (Site)
+    n_log = 4*K + 2 + 3*M + N
+
+    # 1. Exponentiate rates/constants (Log -> Linear)
+    # This removes negative values arising from log(small_number)
+    decoded[:, :n_log] = np.exp(decoded[:, :n_log])
+
+    # 2. Transform Gammas (last 4 parameters)
+    # Optimization space: -3 to 3
+    # Model space: 2 * tanh(x) -> -2 to 2 (Dimensionless coefficients)
+    # Negative values here are valid (inhibition)
+    decoded[:, n_log:] = 2.0 * np.tanh(decoded[:, n_log:])
+
+    return decoded
+
 def _evaluate_single_sample(i, theta, problem, K, M, N, sites, proteins, kinases):
     """
     Helper function to evaluate one sample in parallel.
@@ -162,11 +185,14 @@ def run_global_sensitivity(outdir, problem, param_bounds,
 
     # 2b. Save Parameters Table (Tidy Format Part 1)
     # Links Sample_ID to Parameter Values
-    logger.info("    -> Saving Parameters Table...")
+    logger.info("    -> Saving Parameters Table (Biological Units)...")
     param_file = os.path.join(sens_dir, "perturbation_params.tsv")
 
+    # Decode log-params to linear/biological scale for saving
+    decoded_values = _decode_param_matrix(param_values, K, M, N)
+
     # Create DataFrame: Sample_ID, Param1, Param2...
-    df_params = pd.DataFrame(param_values, columns=param_names)
+    df_params = pd.DataFrame(decoded_values, columns=param_names)
     df_params.insert(0, "Sample_ID", range(n_evals))
     df_params.to_csv(param_file, sep="\t", index=False)
 
@@ -184,13 +210,14 @@ def run_global_sensitivity(outdir, problem, param_bounds,
     # Tidy format: No parameter columns here. Link via Sample_ID.
     header_cols = ["Sample_ID", "Type", "Entity", "Time", "Value"]
 
-    logger.info("    -> Simulating and streaming data to disk (Parallel)...")
+    logger.info("    -> Simulating and streaming data to disk...")
 
     # Use all available cores except one
     n_jobs = -1
 
     # Run parallel simulations
     # 1. Create a generator for the delayed tasks
+    # NOTE: We pass the RAW param_values (log scale) to simulation because simulate_p_scipy expects them.
     tasks = (delayed(_evaluate_single_sample)(i, theta, problem, K, M, N, sites, proteins, kinases)
              for i, theta in enumerate(param_values))
 
