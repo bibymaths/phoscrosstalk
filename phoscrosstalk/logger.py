@@ -3,7 +3,9 @@ logger.py
 A unified, rich-text logger for the PhosCrosstalk pipeline.
 Handles colorful console output and structured file logging.
 """
+import datetime
 import logging
+import os
 from pathlib import Path
 from rich.logging import RichHandler
 from rich.console import Console
@@ -67,18 +69,29 @@ class RichLogger:
         rich_handler.setLevel(level)
         self.logger.addHandler(rich_handler)
 
-        # 2. File Handler (Standard Text)
+        # 2. File Handler (Handle None case explicitly)
         if log_file:
-            path = Path(log_file)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            file_handler = logging.FileHandler(path, mode="w")
-            file_handler.setLevel(level)
-            formatter = logging.Formatter(
-                "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S"
-            )
-            file_handler.setFormatter(formatter)
-            self.logger.addHandler(file_handler)
+            self.add_file_handler(log_file, level)
+
+    def add_file_handler(self, log_file, level=logging.INFO):
+        """
+        Safely adds a file handler to an existing logger.
+        Avoids duplicate file handlers if called multiple times.
+        """
+        # Remove existing FileHandlers to avoid duplicate logs if re-configured
+        self.logger.handlers = [h for h in self.logger.handlers if not isinstance(h, logging.FileHandler)]
+
+        path = Path(log_file)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        file_handler = logging.FileHandler(path, mode="w")
+        file_handler.setLevel(level)
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S"
+        )
+        file_handler.setFormatter(formatter)
+        self.logger.addHandler(file_handler)
 
     def info(self, msg, *args, **kwargs):
         """
@@ -160,15 +173,22 @@ class RichLogger:
 
 
 # Global singleton accessor
-def get_logger(log_file=None):
+def get_logger(log_file="pipeline.log", timestamp=True):
     """
-    Factory function to retrieve the singleton `RichLogger` instance.
+    Get the logger instance.
 
     Args:
-        log_file (str, optional): Path to the log file. Only used on the first call
-                                  that initializes the singleton.
-
-    Returns:
-        RichLogger: The active logger instance.
+        log_file (str): Base filename.
+        timestamp (bool): If True, appends YYYY-MM-DD_HH-MM-SS to the filename.
     """
+    if log_file is None:
+        log_file = "pipeline.log"
+
+    if timestamp:
+        # Generate format: pipeline_2023-10-27_15-30-00.log
+        ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        root, ext = os.path.splitext(log_file)
+        if not ext: ext = ".log"
+        log_file = f"{root}_{ts}{ext}"
+
     return RichLogger(log_file=log_file)
