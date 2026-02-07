@@ -24,6 +24,7 @@ dependencies = [
   "plotly>=6.5.2",
   "streamlit>=1.54.0",
   "gravis>=0.1.0",
+  "salib>=1.5.2",
 ]
 
 [project.optional-dependencies]

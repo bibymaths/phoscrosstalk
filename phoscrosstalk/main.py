@@ -20,6 +20,7 @@ from phoscrosstalk import data_loader
 from phoscrosstalk.analysis import _save_preopt_snapshot_txt_csv
 from phoscrosstalk.config import ModelDims, DEFAULT_TIMEPOINTS
 from phoscrosstalk.multistarts import run_multi_start_optimization
+from phoscrosstalk.sensitivity import run_global_sensitivity
 # from phoscrosstalk.debug_main import _sanity_report_data, _sanity_report_C, _coverage_report_K_site_kin, _sanity_report_R,  _sanity_report_weights, _one_shot_sim_check, sim_summary
 from phoscrosstalk.weighting import build_weight_matrices
 from phoscrosstalk.optimization import NetworkOptimizationProblem, create_bounds
@@ -180,7 +181,11 @@ def main():
         action="store_true",
         help="Run systematic in-silico knockout screening."
     )
-
+    parser.add_argument(
+        "--run-sensitivity",
+        action="store_true",
+        help="Run global sensitivity analysis."
+    )
     # ------------------------------------------------------------------
     # META OPTIONS
     # ------------------------------------------------------------------
@@ -457,6 +462,18 @@ def main():
     if args.run_knockouts:
         knockouts.run_knockout_screen(
             args.outdir, problem, X[best_idx], sites, proteins, kinases
+        )
+
+    if args.run_sensitivity:
+        bounds = (xl, xu)
+
+        run_global_sensitivity(
+            args.outdir,
+            problem,
+            bounds,
+            proteins=proteins,
+            kinases=kinases,
+            sites=sites
         )
 
     logger.success("[*] Done.")
