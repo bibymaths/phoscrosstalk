@@ -19,6 +19,7 @@ from phoscrosstalk import analysis, steadystate, knockouts, hyperparam
 from phoscrosstalk import data_loader
 from phoscrosstalk.analysis import _save_preopt_snapshot_txt_csv
 from phoscrosstalk.config import ModelDims, DEFAULT_TIMEPOINTS
+from phoscrosstalk.multistarts import run_multi_start_optimization
 # from phoscrosstalk.debug_main import _sanity_report_data, _sanity_report_C, _coverage_report_K_site_kin, _sanity_report_R,  _sanity_report_weights, _one_shot_sim_check, sim_summary
 from phoscrosstalk.weighting import build_weight_matrices
 from phoscrosstalk.optimization import NetworkOptimizationProblem, create_bounds
@@ -356,6 +357,7 @@ def main():
     )
 
     # 7. Optimization
+
     logger.info(f"[*] Initializing Pool ({args.cores} cores)...")
     pool = multiprocessing.Pool(args.cores)
     runner = StarmapParallelization(pool.starmap)
@@ -380,14 +382,14 @@ def main():
     # logger.info("||P_mid - P_lo||_inf =", np.max(np.abs(P_mid - P_lo)))
     # logger.info("||P_hi  - P_mid||_inf =", np.max(np.abs(P_hi - P_mid)))
 
-    algorithm = UNSGA3(pop_size=args.pop_size, ref_dirs=get_reference_directions("das-dennis", 3, n_partitions=12))
-    termination = DefaultMultiObjectiveTermination(xtol=1e-8, cvtol=1e-6, ftol=0.0025, period=30, n_max_gen=args.gen,
-                                                   n_max_evals=1000000)
-
-    logger.info("[*] Starting Main Optimization...")
-    res = minimize(problem, algorithm, termination, seed=1, verbose=True)
-    pool.close()
-    pool.join()
+    # algorithm = UNSGA3(pop_size=args.pop_size, ref_dirs=get_reference_directions("das-dennis", 3, n_partitions=12))
+    # termination = DefaultMultiObjectiveTermination(xtol=1e-8, cvtol=1e-6, ftol=0.0025, period=30, n_max_gen=args.gen,
+    #                                                n_max_evals=1000000)
+    #
+    # logger.info("[*] Starting Main Optimization...")
+    # res = minimize(problem, algorithm, termination, seed=1, verbose=True)
+    # pool.close()
+    # pool.join()
 
     ###########################################
     ## DEPRECATED SELECTION OF BEST SOLUTION ##
@@ -402,26 +404,33 @@ def main():
     #             (f3 - f3.min()) / (f3.max() - f3.min() + eps))
     # best_idx = np.argmin(J)
 
+    ###########################################
+
+    res, best_idx, J = run_multi_start_optimization(problem, args, P_scaled)
+
+    pool.close()
+    pool.join()
+
     # 8. Analysis & Saving
     # Find best solution using Fretchet distance for all trajectories as primary criterion
     F, X = res.F, res.X
     f1, f2, f3 = F[:, 0], F[:, 1], F[:, 2]
 
-    # Select best solution by Fréchet distance over all solutions
-    # Expect `problem.simulate(x)` to return predicted site trajectories with same shape as `P_scaled`.
-    frechet_scores = np.full(len(X), np.inf, dtype=float)
-
-    for i in range(len(X)):
-        P_pred = problem.simulate(X[i])
-
-        # Ensure contiguous float64 arrays for the numba-compiled function signature
-        true_coords = np.ascontiguousarray(P_scaled, dtype=np.float64)
-        pred_coords = np.ascontiguousarray(P_pred, dtype=np.float64)
-
-        frechet_scores[i] = frechet_distance(true_coords, pred_coords)
-
-    best_idx = int(np.argmin(frechet_scores))
-    J = frechet_scores  # store per-solution selection score
+    # # Select best solution by Fréchet distance over all solutions
+    # # Expect `problem.simulate(x)` to return predicted site trajectories with same shape as `P_scaled`.
+    # frechet_scores = np.full(len(X), np.inf, dtype=float)
+    #
+    # for i in range(len(X)):
+    #     P_pred = problem.simulate(X[i])
+    #
+    #     # Ensure contiguous float64 arrays for the numba-compiled function signature
+    #     true_coords = np.ascontiguousarray(P_scaled, dtype=np.float64)
+    #     pred_coords = np.ascontiguousarray(P_pred, dtype=np.float64)
+    #
+    #     frechet_scores[i] = frechet_distance(true_coords, pred_coords)
+    #
+    # best_idx = int(np.argmin(frechet_scores))
+    # J = frechet_scores  # store per-solution selection score
 
     analysis.save_pareto_results(args.outdir, F, X, f1, f2, f3, J, F[best_idx])
     analysis.plot_pareto_diagnostics(args.outdir, F, F[best_idx], f1, f2, f3, X)
