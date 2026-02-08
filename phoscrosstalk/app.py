@@ -1315,7 +1315,7 @@ with tab9:
                 # 4) render frames -> stitch
                 tmpdir = tempfile.mkdtemp(prefix="evolve_net_")
                 frame_paths = []
-                mpl.rcParams["figure.dpi"] = 300
+                mpl.rcParams["figure.dpi"] = 140
 
                 for ti in range(len(t_anim)):
                     fig, ax = plt.subplots(figsize=(10, 7))
