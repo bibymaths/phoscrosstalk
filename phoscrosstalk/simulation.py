@@ -91,7 +91,7 @@ def simulate_p_scipy(t_arr, P_data0, A_data0, theta,
         col_deriv=False,
         rtol=1e-6,
         atol=1e-9,
-        mxstep=5000,
+        mxstep=10000,
 
         # Not to be confused with the full_output kwarg, this is the default behavior
         # of scipy.integrate.odeint.

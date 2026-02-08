@@ -449,25 +449,75 @@ def _rhs_common_dense(x, t,
             last_occ[prot] = p[i]
 
     else:
-        # random/cooperative: coop = 1 + mean_p_per_prot[prot]
-        # compute mean_p_per_prot on demand via num_p/den
         for i in range(N):
             prot = site_prot_idx[i]
+
+            # ------------------------------------------------------------------
+            # MECHANISM: Cooperative Random Order (Positive Feedback)
+            # ------------------------------------------------------------------
+            # Biological Intuition: "Recruitment / Avidity"
+            #
+            # 1. The kinase binds to the protein and 'scans' for sites.
+            # 2. If the protein is already phosphorylated (high mean_p), the kinase
+            #    is more likely to be retained on the surface (avidity).
+            # 3. This creates a local concentration effect:
+            #       Effective_Rate ~ Base_Rate * (1 + Mean_Phosphorylation)
+            #
+            # Consequence:
+            # - The reaction accelerates as it proceeds (auto-catalytic).
+            # - Generates sigmoidal (switch-like) activation curves.
+            # - Removing a site (Knockout) reduces the recruitment, slowing down neighbors.
+            # ------------------------------------------------------------------
+
+            # if den[prot] > 0.0:
+            #     coop = 1.0 + (num_p[prot] / den[prot])
+            # else:
+            #     coop = 1.0
+            # cp = coup[i]
+            # if cp < 0.0:
+            #     cp = 0.0
+            # v_raw = k_on_eff[i] * (1.0 + cp) * coop * (1.0 - p[i])
+
+            # ------------------------------------------------------------------
+
+            # ------------------------------------------------------------------
+            # MECHANISM: Competitive Random Order (Negative Feedback / Crowding)
+            # ------------------------------------------------------------------
+            # Biological Intuition: "Resource Scarcity / Traffic Jam"
+            #
+            # 1. The kinase is a limited resource for the protein.
+            # 2. All unphosphorylated sites (vacant) compete for the kinase's active site.
+            # 3. If there are many empty sites (high sum_vacant), the kinase is 'distracted',
+            #    lowering the specific rate for any single site.
+            #       Effective_Rate ~ Base_Rate / (0.5 + 0.5 * Sum_Vacant)
+            #
+            # Consequence:
+            # - The reaction starts slow (high competition) and speeds up as sites finish.
+            # - Creates a "Processive" effect via disinhibition.
+            # - Removing a site (Knockout) removes a competitor, speeding up neighbors.
+            # ------------------------------------------------------------------
+
+            # Calculate vacant fraction from num_p and den instead of undefined last_occ
             if den[prot] > 0.0:
-                coop = 1.0 + (num_p[prot] / den[prot])
+                mean_p = num_p[prot] / den[prot]
             else:
-                coop = 1.0
+                mean_p = 0.0
+            
+            vacant_fraction = 1.0 - mean_p
+            
+            # Added 1e-9 epsilon to prevent ZeroDivisionError
+            competition = 1.0 / (0.5 + 0.5 * vacant_fraction + 1e-9)
 
             cp = coup[i]
             if cp < 0.0:
                 cp = 0.0
+            v_raw = k_on_eff[i] * (1.0 + cp) * competition * (1.0 - p[i])
 
-            v_raw = k_on_eff[i] * (1.0 + cp) * coop * (1.0 - p[i])
+            # ------------------------------------------------------------------
+
             v_on = v_raw / (1.0 + math.fabs(v_raw))
-
             v_off = k_off[i] * p[i]
             v_off = v_off / (1.0 + v_off)
-
             dx_out[base + i] = v_on - v_off
 
     return dx_out
@@ -666,14 +716,70 @@ def _rhs_common_csr(x, t,
     else:
         for i in range(N):
             prot = site_prot_idx[i]
+
+            # ------------------------------------------------------------------
+            # MECHANISM: Cooperative Random Order (Positive Feedback)
+            # ------------------------------------------------------------------
+            # Biological Intuition: "Recruitment / Avidity"
+            #
+            # 1. The kinase binds to the protein and 'scans' for sites.
+            # 2. If the protein is already phosphorylated (high mean_p), the kinase
+            #    is more likely to be retained on the surface (avidity).
+            # 3. This creates a local concentration effect:
+            #       Effective_Rate ~ Base_Rate * (1 + Mean_Phosphorylation)
+            #
+            # Consequence:
+            # - The reaction accelerates as it proceeds (auto-catalytic).
+            # - Generates sigmoidal (switch-like) activation curves.
+            # - Removing a site (Knockout) reduces the recruitment, slowing down neighbors.
+            # ------------------------------------------------------------------
+
+            # if den[prot] > 0.0:
+            #     coop = 1.0 + (num_p[prot] / den[prot])
+            # else:
+            #     coop = 1.0
+            # cp = coup[i]
+            # if cp < 0.0:
+            #     cp = 0.0
+            # v_raw = k_on_eff[i] * (1.0 + cp) * coop * (1.0 - p[i])
+
+            # ------------------------------------------------------------------
+
+            # ------------------------------------------------------------------
+            # MECHANISM: Competitive Random Order (Negative Feedback / Crowding)
+            # ------------------------------------------------------------------
+            # Biological Intuition: "Resource Scarcity / Traffic Jam"
+            #
+            # 1. The kinase is a limited resource for the protein.
+            # 2. All unphosphorylated sites (vacant) compete for the kinase's active site.
+            # 3. If there are many empty sites (high sum_vacant), the kinase is 'distracted',
+            #    lowering the specific rate for any single site.
+            #       Effective_Rate ~ Base_Rate / (0.5 + 0.5 * Sum_Vacant)
+            #
+            # Consequence:
+            # - The reaction starts slow (high competition) and speeds up as sites finish.
+            # - Creates a "Processive" effect via disinhibition.
+            # - Removing a site (Knockout) removes a competitor, speeding up neighbors.
+            # ------------------------------------------------------------------
+
+            # Calculate vacant fraction from num_p and den instead of undefined last_occ
             if den[prot] > 0.0:
-                coop = 1.0 + (num_p[prot] / den[prot])
+                mean_p = num_p[prot] / den[prot]
             else:
-                coop = 1.0
+                mean_p = 0.0
+
+            vacant_fraction = 1.0 - mean_p
+
+            # Added 1e-9 epsilon to prevent ZeroDivisionError
+            competition = 1.0 / (0.5 + 0.5 * vacant_fraction + 1e-9)
+
             cp = coup[i]
             if cp < 0.0:
                 cp = 0.0
-            v_raw = k_on_eff[i] * (1.0 + cp) * coop * (1.0 - p[i])
+            v_raw = k_on_eff[i] * (1.0 + cp) * competition * (1.0 - p[i])
+
+            # ------------------------------------------------------------------
+
             v_on = v_raw / (1.0 + math.fabs(v_raw))
             v_off = k_off[i] * p[i]
             v_off = v_off / (1.0 + v_off)
