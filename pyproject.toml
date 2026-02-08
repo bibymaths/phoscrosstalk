@@ -25,6 +25,8 @@ dependencies = [
   "streamlit>=1.54.0",
   "gravis>=0.1.0",
   "salib>=1.5.2",
+  "imageio>=2.37.2",
+  "graphviz>=0.21",
 ]
 
 [project.optional-dependencies]
