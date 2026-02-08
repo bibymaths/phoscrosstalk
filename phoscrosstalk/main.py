@@ -9,16 +9,13 @@ import multiprocessing
 import numpy as np
 import pandas as pd
 
-from pymoo.algorithms.moo.unsga3 import UNSGA3
-from pymoo.optimize import minimize
-from pymoo.termination.default import DefaultMultiObjectiveTermination
+
 from pymoo.parallelization import StarmapParallelization
-from pymoo.util.ref_dirs import get_reference_directions
 
 from phoscrosstalk import analysis, steadystate, knockouts, hyperparam
 from phoscrosstalk import data_loader
 from phoscrosstalk.analysis import _save_preopt_snapshot_txt_csv
-from phoscrosstalk.config import ModelDims, DEFAULT_TIMEPOINTS
+from phoscrosstalk.config import ModelDims
 from phoscrosstalk.equations import generate_equations_report
 from phoscrosstalk.multistarts import run_multi_start_optimization
 from phoscrosstalk.post_processing import plot_parameter_clustermap, plot_residual_heatmap, \
@@ -27,7 +24,6 @@ from phoscrosstalk.sensitivity import run_global_sensitivity, _generate_param_la
 # from phoscrosstalk.debug_main import _sanity_report_data, _sanity_report_C, _coverage_report_K_site_kin, _sanity_report_R,  _sanity_report_weights, _one_shot_sim_check, sim_summary
 from phoscrosstalk.weighting import build_weight_matrices
 from phoscrosstalk.optimization import NetworkOptimizationProblem, create_bounds
-from phoscrosstalk.fretchet import frechet_distance
 from phoscrosstalk.logger import get_logger
 
 logger = get_logger()
