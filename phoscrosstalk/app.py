@@ -3,6 +3,12 @@ import sys
 import numpy as np
 import pandas as pd
 import streamlit as st
+
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+import imageio.v2 as imageio
+import tempfile
+
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
@@ -189,6 +195,36 @@ def run_fine_simulation(data, t_max, num_points=200):
 
     return t_fine, P_sim, A_sim, S_sim, Kdyn_sim
 
+def layered_layout(kinases, sites, proteins=None,
+                   x_spacing=1.0, y_spacing=1.2):
+    pos = {}
+
+    # y levels
+    y_kin = 2.0
+    y_site = 1.0
+    y_prot = 0.0
+
+    # center layers
+    def center_x(n, spacing):
+        return np.linspace(-(n-1)/2, (n-1)/2, n) * spacing
+
+    # Kinases
+    xs = center_x(len(kinases), x_spacing)
+    for x, k in zip(xs, kinases):
+        pos[k] = (x, y_kin)
+
+    # Sites
+    xs = center_x(len(sites), x_spacing)
+    for x, s in zip(xs, sites):
+        pos[s] = (x, y_site)
+
+    # Proteins (optional)
+    if proteins is not None:
+        xs = center_x(len(proteins), x_spacing)
+        for x, p in zip(xs, proteins):
+            pos[p] = (x, y_prot)
+
+    return pos
 
 def calculate_scalers(Y_orig):
     """
@@ -236,9 +272,10 @@ t_fine, P_sim_fine, A_sim_fine, S_sim_fine, Kdyn_sim_fine = run_fine_simulation(
 baselines, amplitudes = calculate_scalers(data["Y_orig"])
 
 # --- Tabs ---
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs(
     ["Trajectories", "Goodness of Fit", "Parameters", "Network Map",
-     "Steady State", "Knockout Simulator", "Network Animation", "Sensitivity Analysis"]
+     "Steady State", "Knockout Simulator", "Network Animation", "Sensitivity Analysis",
+     "Kinase Flow"]
 )
 
 # ==========================================
@@ -1148,3 +1185,255 @@ with tab8:
                 st.info("The file might be too large or malformed.")
         else:
             st.warning(f"Perturbation data file missing: {pert_file}")
+
+# ==========================================
+# TAB 9: Kinase Flow Video
+# ==========================================
+with tab9:
+    st.subheader("Evolving Network Video (simulation-driven)")
+    st.write("Creates a real GIF/MP4 by drawing frames from the ODE simulation under optimized parameters.")
+
+    c1, c2 = st.columns([1, 3])
+
+    with c1:
+        duration = st.slider("Duration (min)", 10, 1000, 120, key="vid_duration")
+        n_frames = st.slider("Frames", 20, 200, 60, step=10)
+        fps = st.slider("FPS", 5, 30, 15)
+
+        # What drives kinase->site edge modulation
+        kin_edge_driver = st.selectbox("Kinase→Site edge driver", ["Kdyn", "S(kinase protein)", "A(kinase protein)"])
+
+        include_crosstalk = st.checkbox("Include Site↔Site crosstalk edges (Cg)", value=False)
+        crosstalk_mode = st.selectbox("Crosstalk modulation", ["source P_i(t)", "avg(P_i,P_j)"], disabled=not include_crosstalk)
+
+        min_eff = st.slider("Min effective strength to show", 0.0, 0.10, 0.002, step=0.001)
+        width_scale = st.slider("Edge width scale", 1.0, 40.0, 12.0)
+
+        output = st.radio("Output", ["GIF", "MP4 (needs ffmpeg)"], horizontal=False)
+        run_btn = st.button("Render video", type="primary")
+
+    with c2:
+        if run_btn:
+            with st.spinner("Simulating and rendering frames..."):
+                # 1) simulate on animation grid
+                t_anim = np.linspace(0, duration, n_frames)
+                K, M, N = len(data["proteins"]), len(data["kinases"]), len(data["sites"])
+                ModelDims.set_dims(K, M, N)
+
+                A0_anim = np.zeros((K, len(t_anim)), dtype=float)
+                if data["A_scaled"].size > 0 and data["A_scaled"].shape[1] > 0:
+                    for k, p_idx in enumerate(data["prot_idx_for_A"]):
+                        A0_anim[p_idx, 0] = data["A_scaled"][k, 0]
+
+                P_anim, A_anim, S_anim, Kdyn_anim = simulate_p_scipy(
+                    t_anim, data["P_scaled"], A0_anim, data["theta"],
+                    data["Cg"], data["Cl"], data["site_prot_idx"],
+                    data["K_site_kin"], data["R"], data["L_alpha"], data["kin_to_prot_idx"],
+                    data["receptor_mask_prot"], data["receptor_mask_kin"],
+                    data["meta"].get("mechanism", "dist"),
+                    full_output=True
+                )
+
+                # 2) build base graph for fixed layout
+                G0 = nx.DiGraph()
+                for k_name in data["kinases"]:
+                    G0.add_node(k_name, kind="kinase")
+                for s_name in data["sites"]:
+                    G0.add_node(s_name, kind="site")
+
+                # kinase->site edges (static topology)
+                ks_rows, ks_cols = np.where(data["K_site_kin"] > 0)
+                ks_edges = [(int(r), int(c), float(data["K_site_kin"][r, c])) for r, c in zip(ks_rows, ks_cols)]
+                for (r, c, w) in ks_edges:
+                    G0.add_edge(data["kinases"][c], data["sites"][r], w=w, kind="ks")
+
+                # optional crosstalk edges (static topology)
+                cg_edges = []
+                if include_crosstalk and data["Cg"].size > 0:
+                    cg_r, cg_c = np.where(data["Cg"] > 0)
+                    for r, c in zip(cg_r, cg_c):
+                        r = int(r); c = int(c)
+                        if r == c:
+                            continue
+                        w = float(data["Cg"][r, c])
+                        cg_edges.append((r, c, w))
+                        G0.add_edge(data["sites"][r], data["sites"][c], w=w, kind="cg")
+
+                # fixed layout (deterministic)
+                pos = layered_layout(
+                    kinases=data["kinases"],
+                    sites=data["sites"],
+                    proteins=data["proteins"]  # or data["proteins"] if you add them as nodes
+                )
+
+                kin_names = data["kinases"]
+                site_names = data["sites"]
+
+                kin_xy = np.array([pos[k] for k in kin_names], dtype=float) if len(kin_names) else np.zeros((0, 2))
+                site_xy = np.array([pos[s] for s in site_names], dtype=float) if len(site_names) else np.zeros((0, 2))
+
+                # helper to get kinase-protein state time series
+                def kinase_prot_state(m_idx, t_idx, which):
+                    p_idx = int(data["kin_to_prot_idx"][m_idx])
+                    if p_idx < 0 or p_idx >= K:
+                        return 0.0
+                    if which == "S":
+                        return float(S_anim[p_idx, t_idx])
+                    if which == "A":
+                        return float(A_anim[p_idx, t_idx])
+                    return 0.0
+
+                # 3) precompute global max effective strength for scaling
+                eff_vals = []
+
+                for ti in range(len(t_anim)):
+                    # driver values for kinases this frame
+                    if kin_edge_driver == "Kdyn":
+                        driver = np.clip(Kdyn_anim[:, ti], 0, 1)
+                    elif kin_edge_driver.startswith("S"):
+                        driver = np.array([np.clip(kinase_prot_state(m, ti, "S"), 0, 1) for m in range(M)])
+                    else:
+                        driver = np.array([np.clip(kinase_prot_state(m, ti, "A"), 0, 1) for m in range(M)])
+
+                    for (r, c, w) in ks_edges:
+                        eff_vals.append(w * driver[c])
+
+                    if include_crosstalk:
+                        for (r, c, w) in cg_edges:
+                            Pi = float(np.clip(P_anim[r, ti], 0, 1))
+                            Pj = float(np.clip(P_anim[c, ti], 0, 1))
+                            if crosstalk_mode.startswith("source"):
+                                mod = Pi
+                            else:
+                                mod = 0.5 * (Pi + Pj)
+                            eff_vals.append(w * mod)
+
+                eff_max = float(np.max(eff_vals)) if len(eff_vals) else 1.0
+                if eff_max < 1e-12:
+                    eff_max = 1.0
+
+                # 4) render frames -> stitch
+                tmpdir = tempfile.mkdtemp(prefix="evolve_net_")
+                frame_paths = []
+                mpl.rcParams["figure.dpi"] = 300
+
+                for ti in range(len(t_anim)):
+                    fig, ax = plt.subplots(figsize=(10, 7))
+                    ax.set_axis_off()
+
+                    # Node states
+                    kin_state = np.clip(Kdyn_anim[:, ti], 0, 1)  # display kinases by Kdyn
+                    site_state = np.clip(P_anim[:, ti], 0, 1)
+
+                    # 1. Draw Kinase Nodes & Labels
+                    # Plot nodes
+                    ax.scatter(kin_xy[:, 0], kin_xy[:, 1],
+                               s=90 + 500 * kin_state,
+                               c='red', alpha=0.6, edgecolors='black',
+                               marker="^", zorder=3)
+
+                    # Plot labels (Kinases)
+                    for idx, (x, y) in enumerate(kin_xy):
+                        ax.text(x, y + 0.04, kin_names[idx],
+                                fontsize=8, ha='center', va='bottom',
+                                fontweight='bold', color='darkred', zorder=4)
+
+                    # 2. Draw Site Nodes & Labels
+                    # Color map for sites (White -> Blue -> Green)
+                    # Simple hack: use site_state to drive color
+                    site_colors = plt.cm.winter(site_state)
+
+                    ax.scatter(site_xy[:, 0], site_xy[:, 1],
+                               s=40 + 80 * site_state,
+                               c=site_colors, edgecolors='black',
+                               marker="o", zorder=3)
+
+                    # Plot labels (Sites)
+                    for idx, (x, y) in enumerate(site_xy):
+                        # Shorten site name for readability (e.g. "EGFR_Y1068" -> "Y1068")
+                        s_label = site_names[idx].split('_')[-1]
+                        ax.text(x, y - 0.04, s_label,
+                                fontsize=7, ha='center', va='top',
+                                color='black', zorder=4)
+
+                    # Edge drivers (for kinase->site modulation)
+                    if kin_edge_driver == "Kdyn":
+                        driver = np.clip(Kdyn_anim[:, ti], 0, 1)
+                    elif kin_edge_driver.startswith("S"):
+                        driver = np.array([np.clip(kinase_prot_state(m, ti, "S"), 0, 1) for m in range(M)])
+                    else:
+                        driver = np.array([np.clip(kinase_prot_state(m, ti, "A"), 0, 1) for m in range(M)])
+
+                    # Draw kinase->site edges
+                    for (r, c, w) in ks_edges:
+                        eff = w * float(driver[c])
+                        if eff < min_eff:
+                            continue
+                        kname = kin_names[c]
+                        sname = site_names[r]
+                        x1, y1 = pos[kname]
+                        x2, y2 = pos[sname]
+                        lw = 0.5 + width_scale * (eff / eff_max)
+
+                        # Use FancyArrowPatch or annotate for arrows
+                        ax.annotate(
+                            "",
+                            xy=(x2, y2),
+                            xytext=(x1, y1),
+                            # Gray arrows, opacity scales with strength
+                            arrowprops=dict(arrowstyle="-|>", color="gray", lw=lw, alpha=0.6 + 0.4 * (eff / eff_max)),
+                            zorder=2
+                        )
+
+                    # Draw crosstalk edges (optional)
+                    if include_crosstalk:
+                        for (r, c, w) in cg_edges:
+                            Pi = float(np.clip(P_anim[r, ti], 0, 1))
+                            Pj = float(np.clip(P_anim[c, ti], 0, 1))
+                            mod = Pi if crosstalk_mode.startswith("source") else 0.5 * (Pi + Pj)
+                            eff = w * mod
+                            if eff < min_eff:
+                                continue
+                            s1 = site_names[r]
+                            s2 = site_names[c]
+                            x1, y1 = pos[s1]
+                            x2, y2 = pos[s2]
+                            lw = 0.3 + 0.7 * width_scale * (eff / eff_max)
+
+                            ax.annotate(
+                                "",
+                                xy=(x2, y2),
+                                xytext=(x1, y1),
+                                arrowprops=dict(arrowstyle="->", color="orange", lw=lw, alpha=0.5),
+                                zorder=1
+                            )
+
+                    ax.set_title(
+                        f"t={t_anim[ti]:.2f} min | Driver: {kin_edge_driver}",
+                        fontsize=12
+                    )
+
+                    fpath = os.path.join(tmpdir, f"frame_{ti:04d}.png")
+                    fig.savefig(fpath, bbox_inches="tight")
+                    plt.close(fig)
+                    frame_paths.append(fpath)
+
+                # Stitch
+                if output.startswith("GIF"):
+                    gif_path = os.path.join(tmpdir, "evolving_network.gif")
+                    frames = [imageio.imread(p) for p in frame_paths]
+                    imageio.mimsave(gif_path, frames, fps=fps)
+                    st.image(gif_path)
+                    st.download_button("Download GIF", open(gif_path, "rb"), file_name="evolving_network.gif")
+                else:
+                    mp4_path = os.path.join(tmpdir, "evolving_network.mp4")
+                    try:
+                        writer = imageio.get_writer(mp4_path, fps=fps)
+                        for p in frame_paths:
+                            writer.append_data(imageio.imread(p))
+                        writer.close()
+                        st.video(mp4_path)
+                        st.download_button("Download MP4", open(mp4_path, "rb"), file_name="evolving_network.mp4")
+                    except Exception as e:
+                        st.error(f"MP4 export failed (ffmpeg missing). Error: {e}")
+                        st.info("Use GIF output, or install ffmpeg.")
