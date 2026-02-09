@@ -5,11 +5,17 @@ import numpy as np
 
 def _compute_site_noise_weights(Y: np.ndarray) -> np.ndarray:
     """
-    Site-level weights from temporal noise in log-space.
+    Calculate site-specific weights based on the temporal noise of the signal.
 
-    Y: (N_sites, T) raw FC (non-negative or small epsilon added)
+    Estimates noise by calculating the variance of the first differences in log-space.
+    Noisier sites (high variance in step-to-step changes) are assigned lower weights
+    (inverse variance weighting), normalized to a mean of 1.0.
+
+    Args:
+        Y (np.ndarray): Raw phosphosite data matrix (N_sites x T).
+
     Returns:
-        w_site: (N_sites,) normalized ~ O(1)
+        np.ndarray: Vector of weights (N_sites,), clipped and normalized.
     """
     logY = np.log1p(np.clip(Y, 1e-3, None))
     diff = np.diff(logY, axis=1)  # (N, T-1)
@@ -23,12 +29,16 @@ def _compute_site_noise_weights(Y: np.ndarray) -> np.ndarray:
 
 def _compute_protein_noise_weights(A_data: np.ndarray | None) -> np.ndarray:
     """
-    Protein-level weights from temporal noise in log-space.
+    Calculate protein-specific weights based on temporal noise.
 
-    A_data: (K_obs, T) raw FC, or None / empty if no protein data.
+    Similar to `_compute_site_noise_weights`, this down-weights protein trajectories
+    that exhibit high jaggedness/noise in log-space.
+
+    Args:
+        A_data (np.ndarray | None): Raw protein abundance data matrix (K_obs x T).
 
     Returns:
-        w_prot: (K_obs,) normalized ~ O(1), or empty array if no data.
+        np.ndarray: Vector of weights (K_obs,), or an empty array if no data is provided.
     """
     if A_data is None or A_data.size == 0:
         return np.zeros((0,), dtype=float)
@@ -44,6 +54,15 @@ def _compute_protein_noise_weights(A_data: np.ndarray | None) -> np.ndarray:
 
 
 def _time_weights_uniform(t: np.ndarray) -> np.ndarray:
+    """
+    Generate uniform temporal weights (all time points weighted equally).
+
+    Args:
+        t (np.ndarray): Time points vector.
+
+    Returns:
+        np.ndarray: Weight vector of ones.
+    """
     w_time = np.ones_like(t, dtype=float)
     w_time /= max(w_time.mean(), 1e-12)
     return w_time
@@ -53,10 +72,18 @@ def _time_weights_early_emphasis(t: np.ndarray,
                                  t_mid: float | None = None,
                                  strength: float = 2.0) -> np.ndarray:
     """
-    Early-emphasis via a decreasing function over time.
+    Generate temporal weights that decay over time, emphasizing early kinetics.
 
-    strength ~ how much heavier earliest point is vs latest.
-    t_mid: optional "half weight" time. If None, uses median(t).
+    Useful for signaling data where the initial response (transient phase) is often
+    more information-rich than the late steady state. Uses an exponential decay function.
+
+    Args:
+        t (np.ndarray): Time points vector.
+        t_mid (float, optional): Time point where weighting is reduced. Defaults to median(t).
+        strength (float): Factor determining the steepness of the decay.
+
+    Returns:
+        np.ndarray: Temporal weight vector.
     """
     t = np.asarray(t, dtype=float)
     if t_mid is None:
@@ -74,8 +101,13 @@ def _time_weights_early_emphasis(t: np.ndarray,
 
 def _time_weights_early_emphasis_moderate(t: np.ndarray) -> np.ndarray:
     """
-    A milder early-emphasis preset, just calls _time_weights_early_emphasis
-    with smaller strength.
+    A preset for early-emphasis weighting with a milder decay strength (1.5).
+
+    Args:
+        t (np.ndarray): Time points vector.
+
+    Returns:
+        np.ndarray: Temporal weight vector.
     """
     return _time_weights_early_emphasis(t, strength=1.5)
 
@@ -87,29 +119,27 @@ def build_weight_matrices(
         scheme: str = "uniform",
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Build (W_data, W_data_prot) for a given weighting scheme.
+    Construct full weight matrices for the loss function based on the selected scheme.
 
-    Parameters
-    ----------
-    t : (T,)
-        Time points.
-    Y : (N_sites, T)
-        Phosphosite data (raw FC).
-    A_data : (K_obs, T) or None
-        Protein abundance data (raw FC) if available.
-    scheme : str
-        One of:
-            - "uniform"                     : uniform time, noise-based sites/proteins
-            - "early_emphasis"              : strong emphasis on early time points
-            - "early_emphasis_moderate"     : milder early-emphasis
-            - "flat_no_noise"               : fully uniform across time AND sites
+    Combines entity-level weights (based on signal noise) and temporal weights (based on
+    the selected scheme) via an outer product. This results in specific weights for every
+    data point in the time-series.
 
-    Returns
-    -------
-    W_data : (N_sites, T)
-        Site-level weights.
-    W_data_prot : (K_obs, T)
-        Protein-level weights (empty if no A_data).
+    Schemes:
+    - **uniform**: Time points equal; noisy sites down-weighted.
+    - **early_emphasis**: Early time points weighted higher; noisy sites down-weighted.
+    - **flat_no_noise**: All weights set to 1.0 (noise ignored).
+
+    Args:
+        t (np.ndarray): Time points.
+        Y (np.ndarray): Phosphosite data matrix.
+        A_data (np.ndarray | None): Protein data matrix.
+        scheme (str): Weighting strategy identifier.
+
+    Returns:
+        tuple:
+            - W_data (np.ndarray): Weight matrix for phosphosites (N_sites x T).
+            - W_data_prot (np.ndarray): Weight matrix for proteins (K_obs x T).
     """
 
     t = np.asarray(t, dtype=float)

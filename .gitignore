@@ -210,7 +210,6 @@ __marimo__/
 data*/
 results*/
 .venv
-*.lock
 *.egg-info
 results*/
 run*/
