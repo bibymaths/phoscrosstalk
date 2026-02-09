@@ -8,10 +8,35 @@ import pickle
 import numpy as np
 import pandas as pd
 from phoscrosstalk.config import DEFAULT_TIMEPOINTS
+from phoscrosstalk.logger import get_logger
+
+logger = get_logger()
 
 
 def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
-    """Load time-series from a file."""
+    """
+    Parses a time-series CSV file to extract phosphosite data and optional protein abundance.
+
+    This function expects columns starting with 'v' or 'x' for intensity values matching the
+    provided timepoints. It identifies proteins and residues/sites, parsing position information
+    (e.g., 'S473') into numeric arrays where possible.
+
+    Args:
+        path (str): File path to the dataset (CSV).
+        timepoints (list/array): Expected time points corresponding to value columns.
+
+    Returns:
+        tuple:
+            - sites (list): formatted site labels (Protein_Residue).
+            - proteins (list): unique sorted protein names.
+            - site_prot_idx (np.ndarray): indices mapping sites to the 'proteins' list.
+            - positions (np.ndarray): numeric residue positions (NaN if parsing fails).
+            - t (np.ndarray): time points array.
+            - Y (np.ndarray): Phosphosite intensity matrix (N_sites x T).
+            - A_data (np.ndarray or None): Protein abundance matrix (N_proteins x T) if available.
+            - A_proteins (np.ndarray or None): Names of proteins in A_data.
+    """
+
     df = pd.read_csv(path, sep=None, engine="python")
 
     value_cols = [c for c in df.columns if c.startswith("v") or c.startswith("x")]
@@ -89,7 +114,19 @@ def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
 
 
 def scale_fc_to_unit_interval(Y, use_log=False):
-    """Min-Max scaling to [0, 1] based on the whole row."""
+    """
+    Performs Min-Max scaling on time-series data to normalize it to the [0, 1] interval.
+
+    Args:
+        Y (np.ndarray): Raw data matrix (N x T).
+        use_log (bool): If True, applies log1p transform before scaling.
+
+    Returns:
+        tuple:
+            - P (np.ndarray): Scaled data matrix.
+            - baselines (np.ndarray): Minimum values per row (for inverse scaling).
+            - amplitudes (np.ndarray): Range (max-min) per row (for inverse scaling).
+    """
     N, T = Y.shape
     P = np.zeros_like(Y, dtype=float)
     baselines = np.zeros(N, dtype=float)
@@ -115,6 +152,16 @@ def scale_fc_to_unit_interval(Y, use_log=False):
 
 
 def apply_scaling(Y, mode="minmax"):
+    """
+    Wrapper function to apply a specific scaling strategy to the data.
+
+    Args:
+        Y (np.ndarray): Raw data matrix.
+        mode (str): Scaling mode ('minmax', 'log-minmax', or 'none').
+
+    Returns:
+        tuple: (Scaled Matrix, Baselines, Amplitudes)
+    """
     if mode == "minmax":
         return scale_fc_to_unit_interval(Y, use_log=False)
     elif mode == "log-minmax":
@@ -129,6 +176,16 @@ def apply_scaling(Y, mode="minmax"):
 
 
 def row_normalize(C):
+    """
+    Normalizes a matrix such that each row sums to 1.0.
+    Rows summing to zero are set to 1.0 to avoid division errors.
+
+    Args:
+        C (np.ndarray): Input matrix.
+
+    Returns:
+        np.ndarray: Row-normalized matrix.
+    """
     row_sums = C.sum(axis=1, keepdims=True)
     row_sums[row_sums == 0.0] = 1.0
     return C / row_sums
@@ -136,6 +193,25 @@ def row_normalize(C):
 
 def build_C_matrices_from_db(ptm_intra_path, ptm_inter_path, sites, site_prot_idx, positions, proteins,
                              length_scale=50.0):
+    """
+    Constructs global (Cg) and local (Cl) crosstalk connectivity matrices using SQLite databases.
+
+    Global crosstalk (Cg) is derived from PTM functional association databases (intra- and inter-protein).
+    Local crosstalk (Cl) is calculated based on sequence proximity between sites on the same protein,
+    decaying exponentially with distance.
+
+    Args:
+        ptm_intra_path (str): Path to SQLite DB for intra-protein associations.
+        ptm_inter_path (str): Path to SQLite DB for inter-protein associations.
+        sites (list): List of site labels.
+        site_prot_idx (np.ndarray): Mapping of sites to proteins.
+        positions (np.ndarray): Numeric positions of sites.
+        proteins (list): List of protein names.
+        length_scale (float): Decay length for local sequence-based coupling.
+
+    Returns:
+        tuple: (Cg, Cl) - The global and local adjacency matrices.
+    """
     N = len(sites)
     idx = {s: i for i, s in enumerate(sites)}
     Cg = np.zeros((N, N), dtype=float)
@@ -183,8 +259,20 @@ def build_C_matrices_from_db(ptm_intra_path, ptm_inter_path, sites, site_prot_id
 
 
 def load_kinase_site_matrix(path, sites):
+    """
+    Loads a pre-defined Kinase-Substrate interaction matrix from a file.
+
+    Args:
+        path (str): Path to the TSV file containing 'Kinase', 'Site', and 'weight'.
+        sites (list): List of target sites in the model.
+
+    Returns:
+        tuple:
+            - K_site_kin (np.ndarray): Matrix of weights (Sites x Kinases).
+            - kinases (list): Sorted list of kinase names found in the file.
+    """
     df = pd.read_csv(path, sep="\t")
-    if "weight" not in df.columns: df["weight"] = 1.0
+    if "weight" not in df.columns: df["weight"] = 0.0
     site_to_idx = {s: i for i, s in enumerate(sites)}
     kinases = sorted(df["Kinase"].astype(str).unique())
     kin_index = {k: j for j, k in enumerate(kinases)}
@@ -200,6 +288,18 @@ def load_kinase_site_matrix(path, sites):
 
 
 def build_kinase_site_from_kea(ks_psite_table_path, sites):
+    """
+    Constructs a Kinase-Substrate matrix by aggregating citation counts from a KEA (Kinase Enrichment Analysis) table.
+
+    Args:
+        ks_psite_table_path (str): Path to KEA TSV table.
+        sites (list): List of target sites in the model.
+
+    Returns:
+        tuple:
+            - K_site_kin (np.ndarray): Row-normalized interaction matrix (Sites x Kinases).
+            - kinases (list): Sorted list of kinase names.
+    """
     df = pd.read_csv(ks_psite_table_path, sep="\t")
     df["substrate_site"] = df["substrate_site"].astype(str).str.upper()
     df["kinase"] = df["kinase"].astype(str).str.upper()
@@ -224,6 +324,20 @@ def build_kinase_site_from_kea(ks_psite_table_path, sites):
 
 
 def build_alpha_laplacian_from_unified_graph(pkl_path, kinases, weight_attr="weight_mean"):
+    """
+    Constructs a Laplacian matrix representing the kinase-kinase interaction network from a NetworkX graph.
+
+    The Laplacian (L = D - A) is used to model diffusion or regulatory coupling between kinases
+    in the network topology.
+
+    Args:
+        pkl_path (str): Path to a pickled NetworkX graph file.
+        kinases (list): List of kinase nodes to include in the matrix.
+        weight_attr (str): Edge attribute name to use as weight.
+
+    Returns:
+        np.ndarray: The Laplacian matrix (M_kinases x M_kinases).
+    """
     with open(pkl_path, "rb") as f:
         G_full = pickle.load(f)
     kin_to_idx = {k: i for i, k in enumerate(kinases)}
