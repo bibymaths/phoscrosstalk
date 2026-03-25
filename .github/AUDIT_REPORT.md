@@ -11,17 +11,22 @@
 
 ### 1.1 Undocumented Modules in Repository Structure
 
-The `README.md` repository structure tree lists only 9 files under `phoscrosstalk/`, but the actual package contains **15 Python modules**. The following are completely absent from the README structure:
+The `README.md` repository structure tree lists only 9 files under `phoscrosstalk/`, but the actual package contains **21 Python modules** (including `__init__.py`). The following are completely absent from the README structure:
 
 | File | Purpose |
 |---|---|
 | `logger.py` | Singleton `RichLogger` — primary logging abstraction used by all modules |
 | `config.py` | `ModelDims` global state container and `DEFAULT_TIMEPOINTS` constant |
+| `data_loader.py` | Data ingestion, scaling, database connectivity, and matrix construction |
 | `weighting.py` | Weight-matrix construction for time-series and protein data |
 | `fretchet.py` | Numba-parallelized discrete Fréchet distance used for best-solution selection |
 | `hyperparam.py` | `BOUNDS_CONFIG`, `create_bounds`, and hyperparameter scan logic |
 | `post_processing.py` | Cytoscape export, residual heatmaps, parameter clustermaps, run-metadata provenance |
 | `debug_main.py` | Drop-in diagnostic helpers for matrix sanity checks before optimization |
+| `equations.py` | LaTeX ODE report generation from fitted parameters |
+| `multistarts.py` | Multi-start ensemble optimization and Fréchet-based best-solution selection |
+| `steadystate.py` | Long-horizon steady-state simulation and convergence analysis |
+| `__init__.py` | Package metadata (`__version__`, `__author__`, etc.) |
 
 ### 1.2 Missing `scripts/fit_hpc.py`
 
@@ -37,7 +42,7 @@ The `README.md` repository structure tree lists only 9 files under `phoscrosstal
 
 ### 1.5 `DEFAULT_TIMEPOINTS` Assumption Undocumented
 
-`config.py` defines 14 hard-coded timepoints (`DEFAULT_TIMEPOINTS`) that are used by `data_loader.load_site_data` when parsing the input CSV. If the user's data has a different number or order of time columns the pipeline raises a `ValueError`. This critical constraint is not stated anywhere in the documentation.
+`config.py` defines 14 hard-coded timepoints (`DEFAULT_TIMEPOINTS`) that are used by `data_loader.load_site_data` when parsing the input CSV. If the user's data has a different **number** of time columns the pipeline raises a `ValueError`; however, the **order** of time columns is not validated, so differing column order will not error but can silently misalign values to timepoints. This critical constraint and misalignment risk are not stated anywhere in the documentation.
 
 ### 1.6 No Documentation for `scripts/uniprot.sh`
 
@@ -65,7 +70,7 @@ The SLURM script is undocumented: there is no README section, HPC guide, or doc 
 
 ### 1.12 `post_processing.py` Outputs Absent from README
 
-The pipeline generates `run_config.json`, `cytoscape_network.csv`, `residual_heatmap.png`, and `parameter_clustermap.png` via `post_processing.py`. None of these outputs appear in the README's **Output Files** table.
+The pipeline generates `run_config.json`, `network_cytoscape_edges.csv`, `residuals_heatmap.png`, and `parameter_correlation_clustermap.png` via `post_processing.py`. None of these outputs appear in the README's **Output Files** table.
 
 ### 1.13 `preopt_snapshot/` Folder Not Listed in README Output Files
 
@@ -84,7 +89,7 @@ main.py, data_curator.py, core_mechanisms.py, optimization.py,
 simulation.py, analysis.py, sensitivity.py, knockouts.py, app.py
 ```
 
-Seven additional modules (`logger.py`, `config.py`, `weighting.py`, `fretchet.py`, `hyperparam.py`, `post_processing.py`, `debug_main.py`) exist in the package but are omitted. The structure ends with `└── README.md`, implying `README.md` is inside the package directory — which is incorrect; the real `README.md` is at the repository root.
+Seven additional modules (`logger.py`, `config.py`, `weighting.py`, `fretchet.py`, `hyperparam.py`, `post_processing.py`, `debug_main.py`) exist in the package but are omitted, alongside `data_loader.py`, `equations.py`, `multistarts.py`, `steadystate.py`, and `__init__.py`. The structure ends with `└── README.md`, implying `README.md` is inside the package directory — which is incorrect; the real `README.md` is at the repository root.
 
 ### 2.2 Installation Instructions Reference Non-Existent `requirements.txt`
 
@@ -96,7 +101,7 @@ The README badge and **Installation** section say "Python ≥ 3.10". The `pyproj
 
 ### 2.4 `docs/input_data.md` References Non-Existent Script Files
 
-The document names five helper scripts as independent files:
+The document names **seven** helper scripts as independent files:
 
 - `build_kinase_networks.py`
 - `build_site_level_ks_map.py`
@@ -108,25 +113,26 @@ The document names five helper scripts as independent files:
 
 All of this logic is consolidated inside **`data_curator.py`** as methods of the `DataCurator` class. None of the individual script files exist in the repository, making `docs/input_data.md` a description of a prior (or hypothetical) architecture rather than the current one.
 
-### 2.5 `docs/input_data.md` Describes `.graphml` Output That Is Not Produced
+### 2.5 `docs/input_data.md` Describes `.graphml` Output But Does Not Document It
 
-The document states that `build_kinase_networks.py` generates both `unified_kinase_graph.gpickle` **and** `unified_kinase_graph.graphml`. Examining `data_curator.py`, the `graphml` export path exists in code but the `.graphml` file is not mentioned in `docs/curated_data.md`'s output artifact table, and the README never references it. Users do not know this portable format exists.
+The document states that `build_kinase_networks.py` generates both `unified_kinase_graph.gpickle` **and** `unified_kinase_graph.graphml`. Examining `data_curator.py`, both files are indeed written (the `.graphml` export is present at line 320). However, the `.graphml` file is not mentioned in `docs/curated_data.md`'s output artifact table, and the README never references it. Users do not know this portable, Cytoscape-compatible format exists as an additional output.
 
 ### 2.6 README Describes "NSGA-II" but Multi-Start Uses "UNSGA-III + NSGA-2"
 
-The README's **Multi-Objective Evolutionary Optimization** section states strategies include "NSGA-II (diversity-focused) and UNSGA-III (convergence-focused)." The actual `multistarts.py` runs three named strategies:
+The README's **Multi-Objective Evolutionary Optimization** section states strategies include "NSGA-II (diversity-focused) and UNSGA-III (convergence-focused)." The actual `multistarts.py` runs **four** named strategies:
 
 1. `Balanced (UNSGA3, p=12)` 
 2. `High-Res (UNSGA3, p=15)`
-3. `Diversity (NSGA2)`
+3. `Super High-Res (UNSGA3, p=20)`
+4. `Diversity (NSGA2)`
 
-The README omits the fact that two separate UNSGA-III runs are used (with different partition densities), describing the ensemble as simply two algorithms rather than three.
+The README omits the fact that three separate UNSGA-III runs are used (with increasing partition densities), describing the ensemble as simply two algorithms rather than four.
 
 ### 2.7 README Refers to "NSGA-II" as Optimization but Badge Shows "NSGA3 | UNSGA3"
 
 The shield badge in the README reads `Optimization-NSGA3 | UNSGA3` but the body text says "NSGA-II (diversity-focused)". There is a direct contradiction between the badge and the prose.
 
-### 2.8 `docs/snapshot_preoptimization.md`: States No `*.npz` Is Used, Contradicting `main.py`
+### 2.8 `docs/snapshot_preoptimization.md`: States No `*.npz` Is Used, Contradicting `analysis.py` and `app.py`
 
 The snapshot doc explicitly states: *"No `*.npz` is used."* However, `analysis.py`'s `save_fitted_simulation()` writes `fitted_params.npz`, and `app.py`'s `load_snapshot_data()` reads `fitted_params.npz` from the output directory. The snapshot folder itself does not use `.npz`, but the overall pipeline absolutely does. This phrasing creates a misleading impression.
 
@@ -222,9 +228,9 @@ There is no documentation on expected failure modes, such as:
 
 `optimization.py` contains a `create_bounds(K, M, N)` function. `hyperparam.py` also contains an identically named `create_bounds(K=None, M=None, N=None)` function with the same logic but different default handling. `main.py` imports `create_bounds` from `optimization.py`, while `hyperparam.py` uses its own local version internally. This creates two sources of truth for parameter bounds, and any change to bound values must be synchronised manually in both places.
 
-### 4.2 `build_full_A0` Defined in Both `optimization.py` and Imported from `simulation.py`
+### 4.2 `build_full_A0` Defined in Both `optimization.py` and `simulation.py`
 
-`optimization.py` defines `build_full_A0`. `knockouts.py`, `steadystate.py`, `sensitivity.py`, and `app.py` all import it from `simulation.py` (e.g. `from phoscrosstalk.simulation import simulate_p_scipy, build_full_A0`). However, `simulation.py` itself re-imports or re-exports this function from `optimization.py`. This indirect dependency chain is opaque and creates ambiguity about the canonical source of this utility.
+`optimization.py` defines `build_full_A0`. `simulation.py` also defines its own independent `build_full_A0` function (at line 135). `knockouts.py`, `steadystate.py`, `sensitivity.py`, and `app.py` all import the function from `simulation.py` (e.g. `from phoscrosstalk.simulation import simulate_p_scipy, build_full_A0`). This results in two parallel implementations of the same utility, creating ambiguity about the canonical source and increasing the risk of the two definitions drifting out of sync.
 
 ### 4.3 `docs/phoscrosstalk.md` and `docs/curated_data.md` Overlap on Curator Usage
 
@@ -234,9 +240,9 @@ There is no documentation on expected failure modes, such as:
 
 `docs/useful_cli.md` currently contains two shell one-liners (concatenating `.py` files and cleaning `__pycache__`). These are developer housekeeping snippets, not user-facing CLI documentation. The filename implies a more substantive reference, creating confusion about the document's intended scope.
 
-### 4.5 README Duplicated Within Repository
+### 4.5 README Location Consistency
 
-There is a `README.md` at the repository root and a second `README.md` at `phoscrosstalk/README.md` (inside the package directory). Both are identical. This duplication can lead to documentation drift if one is updated and the other is not.
+The repository exposes a single user-facing `README.md` at the repository root; there is no separate `README.md` inside the `phoscrosstalk/` package directory. The README's own repository structure tree should reflect this by removing the `└── README.md` entry shown under the package folder — its presence implies a package-level README that does not exist, potentially confusing contributors about where documentation should live.
 
 ### 4.6 Commented-Out Debug Calls Scattered Throughout `main.py`
 
