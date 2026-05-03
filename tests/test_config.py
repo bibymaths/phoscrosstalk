@@ -2,7 +2,6 @@
 Tests for config.py ModelDims singleton.
 """
 
-import pytest
 from phoscrosstalk.config import ModelDims
 
 

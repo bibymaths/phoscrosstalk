@@ -44,15 +44,16 @@ logger = get_logger()
 
 # Weight combinations used to generate pseudo-Pareto diversity
 _WEIGHT_COMBOS = [
-    (1.0, 1.0, 1.0),    # balanced (default)
-    (3.0, 1.0, 0.5),    # emphasise phosphosite fit
-    (1.0, 3.0, 0.5),    # emphasise abundance fit
-    (1.0, 1.0, 3.0),    # emphasise regularisation
+    (1.0, 1.0, 1.0),  # balanced (default)
+    (3.0, 1.0, 0.5),  # emphasise phosphosite fit
+    (1.0, 3.0, 0.5),  # emphasise abundance fit
+    (1.0, 1.0, 3.0),  # emphasise regularisation
 ]
 
 
 class OptimizationResult:
     """Minimal result container compatible with the main.py caller."""
+
     def __init__(self, X, F):
         self.X = X
         self.F = F
@@ -74,12 +75,42 @@ def run_multi_start_optimization(problem, args, P_scaled):
     best_idx      : int
     frechet_scores: np.ndarray (n_solutions,)
     """
-    n_starts = max(1, getattr(args, "pop_size", 20))
-    max_steps = max(64, getattr(args, "gen", 200))
+    # Derive the number of starts and max steps from the parsed CLI args.
+    # Prefer the new attributes when present; fall back to deprecated ones.
+    if hasattr(args, "n_starts") and args.n_starts is not None:
+        n_starts = int(args.n_starts)
+    else:
+        n_starts = int(getattr(args, "pop_size", 20))
+    if hasattr(args, "max_steps") and args.max_steps is not None:
+        max_steps = int(args.max_steps)
+    else:
+        max_steps = int(getattr(args, "gen", 200))
 
-    w_phospho  = getattr(args, "loss_weight_phospho",  1.0)
+    # Sanity defaults
+    n_starts = max(1, n_starts)
+    max_steps = max(64, max_steps)
+
+    # Warn if deprecated fields were used instead of the preferred ones
+    if (
+        hasattr(args, "pop_size")
+        and args.pop_size is not None
+        and (not hasattr(args, "n_starts") or args.n_starts is None)
+    ):
+        logger.warning(
+            f"[!] --pop-size ({args.pop_size}) is deprecated; use --n-starts instead."
+        )
+    if (
+        hasattr(args, "gen")
+        and args.gen is not None
+        and (not hasattr(args, "max_steps") or args.max_steps is None)
+    ):
+        logger.warning(
+            f"[!] --gen ({args.gen}) is deprecated; use --max-steps instead."
+        )
+
+    w_phospho = getattr(args, "loss_weight_phospho", 1.0)
     w_abundance = getattr(args, "loss_weight_abundance", 1.0)
-    w_reg       = getattr(args, "loss_weight_reg",       1.0)
+    w_reg = getattr(args, "loss_weight_reg", 1.0)
 
     # Warn if evolutionary algorithm flags were passed
     algo = getattr(args, "algorithm", None)
@@ -182,7 +213,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
     # Evaluate Fréchet distance for model selection
     logger.info("[*] Calculating Fréchet Distances for Model Selection...")
     frechet_scores = np.full(len(X_combined), np.inf)
-    true_coords    = np.ascontiguousarray(P_scaled, dtype=np.float64)
+    true_coords = np.ascontiguousarray(P_scaled, dtype=np.float64)
 
     for i in range(len(X_combined)):
         P_pred = problem.simulate(X_combined[i])
@@ -192,7 +223,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
         except Exception as e:
             logger.warning(f"    Fréchet error at idx {i}: {e}")
 
-    best_idx   = int(np.argmin(frechet_scores))
+    best_idx = int(np.argmin(frechet_scores))
     best_score = frechet_scores[best_idx]
     logger.success(
         f"[*] Best Solution: Fréchet Distance = {best_score:.6f} (idx={best_idx})"
@@ -211,19 +242,19 @@ def _generate_starts(n_starts, xl, xu, weight_combos):
     the pseudo-Pareto ensemble explores different trade-offs.
     The remaining entries are random restarts with the default weights.
     """
-    dim    = len(xl)
+    dim = len(xl)
     starts = []
 
     # Diverse starts: one per weight combo
     for seed_offset, wc in enumerate(weight_combos):
-        rng    = np.random.default_rng(seed_offset)
+        rng = np.random.default_rng(seed_offset)
         theta0 = xl + rng.random(dim) * (xu - xl)
         starts.append((theta0, wc))
 
     default_wc = weight_combos[0]  # balanced
-    n_extra    = max(0, n_starts - len(weight_combos))
+    n_extra = max(0, n_starts - len(weight_combos))
     for i in range(n_extra):
-        rng    = np.random.default_rng(100 + i)
+        rng = np.random.default_rng(100 + i)
         theta0 = xl + rng.random(dim) * (xu - xl)
         starts.append((theta0, default_wc))
 

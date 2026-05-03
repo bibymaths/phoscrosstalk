@@ -25,7 +25,10 @@ from phoscrosstalk.sensitivity import run_global_sensitivity, _generate_param_la
 
 # from phoscrosstalk.debug_main import _sanity_report_data, _sanity_report_C, _coverage_report_K_site_kin, _sanity_report_R,  _sanity_report_weights, _one_shot_sim_check, sim_summary
 from phoscrosstalk.weighting import build_weight_matrices
-from phoscrosstalk.optimization import NetworkProblem as NetworkOptimizationProblem, create_bounds
+from phoscrosstalk.optimization import (
+    NetworkProblem as NetworkOptimizationProblem,
+    create_bounds,
+)
 from phoscrosstalk.logger import get_logger
 
 logger = get_logger()
@@ -166,44 +169,75 @@ def main():
     # ------------------------------------------------------------------
     # OPTIMIZATION SETTINGS
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # OPTIMISATION SETTINGS
+    #
+    # Note: The traditional pymoo flags (--gen, --pop-size, --algorithm) have
+    # been superseded by JAX/Optimistix-native options.  We retain the old
+    # names as deprecated aliases for one release cycle.  New scripts should
+    # use --n-starts and --max-steps to control the number of multi-start
+    # initialisations and the maximum optimiser iterations, respectively.
+
     parser.add_argument(
-        "--gen",
+        "--n-starts",
         type=int,
-        default=200,
-        help="Max optimiser steps per run (maps to max_steps for Optimistix).",
-    )
-    parser.add_argument(
-        "--pop-size",
-        type=int,
-        default=5,
-        help="Number of multi-start restarts (maps to n_starts for Optimistix).",
-    )
-    parser.add_argument(
-        "--cores",
-        type=int,
-        default=os.cpu_count(),
-        help=(
-            "Number of CPU cores (accepted for backward compatibility). "
-            "The JAX/Optimistix backend manages its own parallelism; "
-            "this flag does not directly control worker count. "
-            "Pass it to avoid breaking existing scripts."
-        ),
-    )
-    parser.add_argument(
-        "--algorithm",
         default=None,
-        help="Legacy flag (nsga2/unsga3); accepted for backward compatibility but ignored.",
-    )
-    parser.add_argument(
-        "--optimizer",
-        default="bfgs",
-        help="Optimistix optimiser to use (currently 'bfgs' is the only option).",
+        help=(
+            "Number of multi-start initialisations. Replaces the deprecated "
+            "--pop-size argument."
+        ),
     )
     parser.add_argument(
         "--max-steps",
         type=int,
         default=None,
-        help="Override --gen; maximum steps for the Optimistix minimiser.",
+        help=(
+            "Maximum number of optimisation steps per run. Replaces the deprecated "
+            "--gen argument."
+        ),
+    )
+
+    # Deprecated flags kept for backward compatibility.  These are accepted
+    # silently and mapped onto the new parameters.  They remain in the help
+    # output so that existing scripts do not break, but users are encouraged
+    # to migrate to --n-starts/--max-steps and remove these flags entirely.
+    parser.add_argument(
+        "--gen",
+        type=int,
+        default=None,
+        help=("[DEPRECATED] Max optimiser steps per run.  Use --max-steps instead."),
+    )
+    parser.add_argument(
+        "--pop-size",
+        type=int,
+        default=None,
+        help=("[DEPRECATED] Number of multi-start restarts.  Use --n-starts instead."),
+    )
+    parser.add_argument(
+        "--cores",
+        type=int,
+        default=None,
+        help=(
+            "[DEPRECATED] Number of CPU cores.  The JAX backend manages its own "
+            "parallelism; this flag is ignored.  Control JAX threading via "
+            "environment variables such as XLA_FLAGS."
+        ),
+    )
+    parser.add_argument(
+        "--algorithm",
+        default=None,
+        help=(
+            "[DEPRECATED] Legacy NSGA2/UNSGA3 algorithm selector.  Ignored in the "
+            "Optimistix backend."
+        ),
+    )
+    parser.add_argument(
+        "--optimizer",
+        default=None,
+        help=(
+            "[DEPRECATED] Optimistix optimiser name.  Only BFGS is supported at "
+            "present.  Ignored."
+        ),
     )
     parser.add_argument(
         "--rtol",
@@ -280,6 +314,61 @@ def main():
 
     results_dir = os.path.join(args.outdir)
     logger.header(f"[*] Output directory: {args.outdir}")
+
+    # ------------------------------------------------------------------
+    # Backwards-compatibility mapping for deprecated optimisation flags
+    #
+    # Prefer the new --n-starts and --max-steps flags when provided.  If
+    # unspecified, fall back to the deprecated counterparts to avoid
+    # breaking older scripts.  Warn users when both old and new flags are
+    # supplied so they are aware of the precedence.
+
+    # Determine n_starts
+    if args.n_starts is None:
+        if args.pop_size is not None:
+            args.n_starts = args.pop_size
+        else:
+            args.n_starts = 5
+    else:
+        if args.pop_size is not None:
+            logger.warning(
+                "[!] Both --n-starts and --pop-size were provided; "
+                "using --n-starts and ignoring the deprecated --pop-size flag."
+            )
+
+    # Determine max_steps
+    if args.max_steps is None:
+        if args.gen is not None:
+            args.max_steps = args.gen
+        else:
+            args.max_steps = 200
+    else:
+        if args.gen is not None:
+            logger.warning(
+                "[!] Both --max-steps and --gen were provided; "
+                "using --max-steps and ignoring the deprecated --gen flag."
+            )
+
+    # Normalise types and ensure positive values
+    args.n_starts = max(1, int(args.n_starts))
+    args.max_steps = max(1, int(args.max_steps))
+
+    # Warn that --cores, --algorithm and --optimizer are ignored
+    if args.cores is not None:
+        logger.warning(
+            "[!] The --cores flag no longer controls parallelism.  "
+            "Set JAX threading via environment variables (e.g., "
+            "XLA_FLAGS=--xla_cpu_multi_thread_eigen=true intra_op_parallelism_threads=<N>) "
+            "prior to running this script."
+        )
+    if args.algorithm:
+        logger.warning(
+            f"[!] --algorithm {args.algorithm!r} is ignored by the Optimistix backend."
+        )
+    if args.optimizer:
+        logger.warning(
+            f"[!] --optimizer {args.optimizer!r} is ignored.  Only BFGS is currently supported."
+        )
 
     # 1. Load Data
     (sites, proteins, site_prot_idx, positions, t, Y, A_data, A_proteins) = (
@@ -492,13 +581,11 @@ def main():
         args=args,
     )
 
-    # 7. Optimization
+    # 7. Optimisation
 
-    # Apply --max-steps if provided (overrides --gen)
-    if args.max_steps is not None:
-        args.gen = args.max_steps
-
-    logger.info(f"[*] Initializing Optimistix problem ({args.pop_size} starts, max_steps={args.gen})...")
+    logger.info(
+        f"[*] Initialising Optimistix problem ({args.n_starts} starts, max_steps={args.max_steps})..."
+    )
 
     problem = NetworkOptimizationProblem(
         t,

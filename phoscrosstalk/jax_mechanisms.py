@@ -40,7 +40,6 @@ compute_objectives_jax(theta, P_data, P_sim, A_scaled, A_sim, W_data,
 from __future__ import annotations
 
 import numpy as np
-import jax
 import jax.numpy as jnp
 
 
@@ -71,46 +70,66 @@ def decode_theta_jax(theta, K: int, M: int, N: int):
         gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net  scalar
     """
     idx = 0
-    log_k_act   = theta[idx : idx + K]; idx += K
-    log_k_deact = theta[idx : idx + K]; idx += K
-    log_s_prod  = theta[idx : idx + K]; idx += K
-    log_d_deg   = theta[idx : idx + K]; idx += K
+    log_k_act = theta[idx : idx + K]
+    idx += K
+    log_k_deact = theta[idx : idx + K]
+    idx += K
+    log_s_prod = theta[idx : idx + K]
+    idx += K
+    log_d_deg = theta[idx : idx + K]
+    idx += K
 
-    log_beta_g = theta[idx]; idx += 1
-    log_beta_l = theta[idx]; idx += 1
+    log_beta_g = theta[idx]
+    idx += 1
+    log_beta_l = theta[idx]
+    idx += 1
 
-    log_alpha   = theta[idx : idx + M]; idx += M
-    log_kK_act  = theta[idx : idx + M]; idx += M
-    log_kK_deact = theta[idx : idx + M]; idx += M
+    log_alpha = theta[idx : idx + M]
+    idx += M
+    log_kK_act = theta[idx : idx + M]
+    idx += M
+    log_kK_deact = theta[idx : idx + M]
+    idx += M
 
-    log_k_off   = theta[idx : idx + N]; idx += N
-    raw_gamma   = theta[idx : idx + 4]
+    log_k_off = theta[idx : idx + N]
+    idx += N
+    raw_gamma = theta[idx : idx + 4]
 
-    clip = lambda v: jnp.clip(v, -20.0, 10.0)
+    def clip(v):
+        return jnp.clip(v, -20.0, 10.0)
 
-    k_act    = jnp.exp(clip(log_k_act))
-    k_deact  = jnp.exp(clip(log_k_deact))
-    s_prod   = jnp.exp(clip(log_s_prod))
-    d_deg    = jnp.exp(clip(log_d_deg))
-    alpha    = jnp.exp(clip(log_alpha))
-    kK_act   = jnp.exp(clip(log_kK_act))
+    k_act = jnp.exp(clip(log_k_act))
+    k_deact = jnp.exp(clip(log_k_deact))
+    s_prod = jnp.exp(clip(log_s_prod))
+    d_deg = jnp.exp(clip(log_d_deg))
+    alpha = jnp.exp(clip(log_alpha))
+    kK_act = jnp.exp(clip(log_kK_act))
     kK_deact = jnp.exp(clip(log_kK_deact))
-    k_off    = jnp.exp(clip(log_k_off))
+    k_off = jnp.exp(clip(log_k_off))
 
     beta_g = jnp.exp(jnp.clip(log_beta_g, -20.0, 10.0))
     beta_l = jnp.exp(jnp.clip(log_beta_l, -20.0, 10.0))
 
-    gamma_S_p   = 2.0 * jnp.tanh(raw_gamma[0])
-    gamma_A_S   = 2.0 * jnp.tanh(raw_gamma[1])
-    gamma_A_p   = 2.0 * jnp.tanh(raw_gamma[2])
+    gamma_S_p = 2.0 * jnp.tanh(raw_gamma[0])
+    gamma_A_S = 2.0 * jnp.tanh(raw_gamma[1])
+    gamma_A_p = 2.0 * jnp.tanh(raw_gamma[2])
     gamma_K_net = 2.0 * jnp.tanh(raw_gamma[3])
 
     return (
-        k_act, k_deact, s_prod, d_deg,
-        beta_g, beta_l,
-        alpha, kK_act, kK_deact,
+        k_act,
+        k_deact,
+        s_prod,
+        d_deg,
+        beta_g,
+        beta_l,
+        alpha,
+        kK_act,
+        kK_deact,
         k_off,
-        gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net,
+        gamma_S_p,
+        gamma_A_S,
+        gamma_A_p,
+        gamma_K_net,
     )
 
 
@@ -178,33 +197,48 @@ def make_rhs(K: int, M: int, N: int, mechanism: str):
     callable  – JAX-traceable RHS
     """
     if mechanism not in {"dist", "seq", "rand"}:
-        raise ValueError(f"Unknown mechanism '{mechanism}'. Use 'dist', 'seq', or 'rand'.")
+        raise ValueError(
+            f"Unknown mechanism '{mechanism}'. Use 'dist', 'seq', or 'rand'."
+        )
 
     def rhs(t, y, args):
         (
             theta,
-            Cg, Cl,
+            Cg,
+            Cl,
             site_prot_idx,
-            K_site_kin, R, L_alpha,
+            K_site_kin,
+            R,
+            L_alpha,
             kin_to_prot_idx,
-            receptor_mask_prot, receptor_mask_kin,
+            receptor_mask_prot,
+            receptor_mask_kin,
             prev_site_idx,
         ) = args
 
         # --- Decode parameters --------------------------------------------------
         (
-            k_act, k_deact, s_prod, d_deg,
-            beta_g, beta_l,
-            alpha, kK_act, kK_deact,
+            k_act,
+            k_deact,
+            s_prod,
+            d_deg,
+            beta_g,
+            beta_l,
+            alpha,
+            kK_act,
+            kK_deact,
             k_off,
-            gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net,
+            gamma_S_p,
+            gamma_A_S,
+            gamma_A_p,
+            gamma_K_net,
         ) = decode_theta_jax(theta, K, M, N)
 
         # --- Unpack + clip state ------------------------------------------------
-        S    = y[:K]
-        A    = y[K : 2 * K]
+        S = y[:K]
+        A = y[K : 2 * K]
         Kdyn = jnp.clip(y[2 * K : 2 * K + M], 0.0, 1.0)
-        p    = jnp.clip(y[2 * K + M :],        0.0, 1.0)
+        p = jnp.clip(y[2 * K + M :], 0.0, 1.0)
 
         # Smooth external stimulus: sigmoid ramp from 0→1
         u = 1.0 / (1.0 + jnp.exp(-t / 0.1))
@@ -217,44 +251,42 @@ def make_rhs(K: int, M: int, N: int, mechanism: str):
         # num_p[k] = sum of p[i] for all sites i on protein k
         # den[k]   = count of sites on protein k
         num_p = jnp.zeros(K).at[site_prot_idx].add(p)
-        den   = jnp.zeros(K).at[site_prot_idx].add(1.0)
+        den = jnp.zeros(K).at[site_prot_idx].add(1.0)
         num_c = jnp.zeros(K).at[site_prot_idx].add(coup)
 
         safe_den = jnp.where(den > 0.0, den, 1.0)
-        mp = num_p / safe_den   # mean phospho per protein  (K,)
-        mc = num_c / safe_den   # mean coupling per protein (K,)
+        mp = num_p / safe_den  # mean phospho per protein  (K,)
+        mc = num_c / safe_den  # mean coupling per protein (K,)
 
         # --- 1. Protein signalling state (S) ------------------------------------
         D_S = 1.0 + gamma_S_p * mp + mc + receptor_mask_prot * u
         D_S = jnp.clip(D_S, 0.0, None)
-        dS  = k_act * D_S * (1.0 - S) - k_deact * S
+        dS = k_act * D_S * (1.0 - S) - k_deact * S
 
         # --- 2. Protein abundance (A) -------------------------------------------
         s_eff = jnp.clip(s_prod * (1.0 + gamma_A_S * S), 0.0, None)
-        dA    = s_eff - d_deg * A
+        dA = s_eff - d_deg * A
 
         # --- 3. Kinase dynamics (Kdyn) ------------------------------------------
-        u_sub = R @ p                          # (M,)  substrate pressure
+        u_sub = R @ p  # (M,)  substrate pressure
 
         # Network regularisation: L_alpha @ Kdyn (only if lambda_net non-zero)
-        u_net = -(L_alpha @ Kdyn)              # (M,)  note: sign matches Numba code
+        u_net = -(L_alpha @ Kdyn)  # (M,)  note: sign matches Numba code
 
         U = u_sub + gamma_K_net * u_net
 
         # Add protein-state contributions for kinases that map to a protein
-        valid_prot  = kin_to_prot_idx >= 0
-        safe_p_idx  = jnp.where(valid_prot, kin_to_prot_idx, 0)
-        prot_contrib = (
-            gamma_A_S * S[safe_p_idx] + gamma_A_p * A[safe_p_idx]
-        )
+        valid_prot = kin_to_prot_idx >= 0
+        safe_p_idx = jnp.where(valid_prot, kin_to_prot_idx, 0)
+        prot_contrib = gamma_A_S * S[safe_p_idx] + gamma_A_p * A[safe_p_idx]
         U = U + jnp.where(valid_prot, prot_contrib, 0.0)
         U = U + receptor_mask_kin * u
 
         dKdyn = kK_act * jnp.tanh(U) * (1.0 - Kdyn) - kK_deact * Kdyn
 
         # --- 4. Phosphosite dynamics (p) ----------------------------------------
-        k_on_eff   = K_site_kin @ (alpha * Kdyn)      # (N,)
-        coup_clamp = jnp.clip(coup, 0.0, None)        # (N,)
+        k_on_eff = K_site_kin @ (alpha * Kdyn)  # (N,)
+        coup_clamp = jnp.clip(coup, 0.0, None)  # (N,)
 
         if mechanism == "dist":
             # Distributive: all sites phosphorylated independently
@@ -264,7 +296,7 @@ def make_rhs(K: int, M: int, N: int, mechanism: str):
             # Sequential: gate = occupancy of the preceding site on the same
             # protein (1.0 for the first site, which has prev_site_idx == -1)
             safe_prev = jnp.where(prev_site_idx >= 0, prev_site_idx, 0)
-            gate      = jnp.where(prev_site_idx >= 0, p[safe_prev], 1.0)
+            gate = jnp.where(prev_site_idx >= 0, p[safe_prev], 1.0)
 
         else:
             # rand / competitive crowding: gate proportional to 1/(vacant fraction)
@@ -273,17 +305,19 @@ def make_rhs(K: int, M: int, N: int, mechanism: str):
             # Gate = 1 / (CROWDING_BASELINE + CROWDING_WEIGHT * vacant_fraction + CROWDING_EPSILON)
             # The 0.5 + 0.5 decomposition ensures gate → 1 when all sites are occupied
             # and gate → 2 when no sites are occupied (maximum competition).
-            CROWDING_BASELINE = 0.5   # minimum denominator contribution
-            CROWDING_WEIGHT   = 0.5   # scales the vacant-fraction contribution
-            CROWDING_EPSILON  = 1e-9  # numerical stability guard against zero division
-            vacant_frac = 1.0 - mp[site_prot_idx]      # (N,)
-            gate = 1.0 / (CROWDING_BASELINE + CROWDING_WEIGHT * vacant_frac + CROWDING_EPSILON)
+            CROWDING_BASELINE = 0.5  # minimum denominator contribution
+            CROWDING_WEIGHT = 0.5  # scales the vacant-fraction contribution
+            CROWDING_EPSILON = 1e-9  # numerical stability guard against zero division
+            vacant_frac = 1.0 - mp[site_prot_idx]  # (N,)
+            gate = 1.0 / (
+                CROWDING_BASELINE + CROWDING_WEIGHT * vacant_frac + CROWDING_EPSILON
+            )
 
-        v_raw   = k_on_eff * (1.0 + coup_clamp) * gate * (1.0 - p)
-        v_on    = v_raw / (1.0 + jnp.abs(v_raw))
+        v_raw = k_on_eff * (1.0 + coup_clamp) * gate * (1.0 - p)
+        v_on = v_raw / (1.0 + jnp.abs(v_raw))
 
         v_off_r = k_off * p
-        v_off   = v_off_r / (1.0 + v_off_r)
+        v_off = v_off_r / (1.0 + v_off_r)
 
         dp = v_on - v_off
 
@@ -348,14 +382,14 @@ def compute_objectives_jax(
 
     # 2. Protein abundance loss
     if A_scaled.size > 0:
-        A_sim_obs = A_sim[prot_idx_for_A, :]      # (K_obs, T_A)
-        diff_A    = A_scaled - A_sim_obs
+        A_sim_obs = A_sim[prot_idx_for_A, :]  # (K_obs, T_A)
+        diff_A = A_scaled - A_sim_obs
         f2 = jnp.sum(jnp.log1p(W_data_prot * diff_A * diff_A)) / max(n_A, 1)
     else:
         f2 = jnp.array(0.0)
 
     # 3. Regularisation: L2 + Laplacian network term
-    reg     = reg_lambda * jnp.dot(theta, theta)
+    reg = reg_lambda * jnp.dot(theta, theta)
     reg_net = lambda_net * jnp.dot(alpha, L_alpha @ alpha)
     f3 = (reg + reg_net) / max(n_var, 1)
 

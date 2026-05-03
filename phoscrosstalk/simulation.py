@@ -14,7 +14,6 @@ The SciPy / Numba backend has been replaced by a Diffrax + JAX pipeline:
 """
 
 import numpy as np
-import jax
 import jax.numpy as jnp
 import diffrax
 
@@ -81,17 +80,21 @@ def simulate_ode(
             "running a simulation."
         )
 
-    T       = len(t_arr)
+    T = len(t_arr)
     N_sites = P_data0.shape[0]
 
     # Build initial conditions
     x0 = np.zeros(2 * K + M + N, dtype=np.float64)
 
-    a0 = np.nan_to_num(A_data0[:, 0].astype(np.float64), nan=1.0, posinf=5.0, neginf=0.0)
+    a0 = np.nan_to_num(
+        A_data0[:, 0].astype(np.float64), nan=1.0, posinf=5.0, neginf=0.0
+    )
     a0 = np.clip(a0, 0.0, 5.0)
     x0[K : 2 * K] = a0
 
-    p0 = np.nan_to_num(P_data0[:, 0].astype(np.float64), nan=0.0, posinf=1.0, neginf=0.0)
+    p0 = np.nan_to_num(
+        P_data0[:, 0].astype(np.float64), nan=0.0, posinf=1.0, neginf=0.0
+    )
     p0 = np.clip(p0, 0.0, 1.0)
     x0[2 * K + M :] = p0
 
@@ -104,26 +107,26 @@ def simulate_ode(
 
     # Convert all topology arrays to JAX float32
     args = (
-        jnp.asarray(theta,               dtype=jnp.float32),
-        jnp.asarray(Cg,                  dtype=jnp.float32),
-        jnp.asarray(Cl,                  dtype=jnp.float32),
-        jnp.asarray(site_prot_idx,       dtype=jnp.int32),
-        jnp.asarray(K_site_kin,          dtype=jnp.float32),
-        jnp.asarray(R,                   dtype=jnp.float32),
-        jnp.asarray(L_alpha,             dtype=jnp.float32),
-        jnp.asarray(kin_to_prot_idx,     dtype=jnp.int32),
-        jnp.asarray(receptor_mask_prot,  dtype=jnp.float32),
-        jnp.asarray(receptor_mask_kin,   dtype=jnp.float32),
-        jnp.asarray(prev_site_idx,       dtype=jnp.int32),
+        jnp.asarray(theta, dtype=jnp.float32),
+        jnp.asarray(Cg, dtype=jnp.float32),
+        jnp.asarray(Cl, dtype=jnp.float32),
+        jnp.asarray(site_prot_idx, dtype=jnp.int32),
+        jnp.asarray(K_site_kin, dtype=jnp.float32),
+        jnp.asarray(R, dtype=jnp.float32),
+        jnp.asarray(L_alpha, dtype=jnp.float32),
+        jnp.asarray(kin_to_prot_idx, dtype=jnp.int32),
+        jnp.asarray(receptor_mask_prot, dtype=jnp.float32),
+        jnp.asarray(receptor_mask_kin, dtype=jnp.float32),
+        jnp.asarray(prev_site_idx, dtype=jnp.int32),
     )
 
-    rhs_fn        = make_rhs(K, M, N, mechanism)
-    term          = diffrax.ODETerm(rhs_fn)
-    t_eval        = jnp.asarray(t_arr, dtype=jnp.float32)
-    y0_jax        = jnp.asarray(x0,   dtype=jnp.float32)
-    saveat        = diffrax.SaveAt(ts=t_eval)
+    rhs_fn = make_rhs(K, M, N, mechanism)
+    term = diffrax.ODETerm(rhs_fn)
+    t_eval = jnp.asarray(t_arr, dtype=jnp.float32)
+    y0_jax = jnp.asarray(x0, dtype=jnp.float32)
+    saveat = diffrax.SaveAt(ts=t_eval)
     stepsize_ctrl = diffrax.PIDController(rtol=rtol, atol=atol)
-    solver        = diffrax.Tsit5()
+    solver = diffrax.Tsit5()
 
     try:
         sol = diffrax.diffeqsolve(
@@ -153,15 +156,15 @@ def simulate_ode(
         return nan_result
 
     # Slice and clip bounded states
-    S_sim    = xs[:, :K]
-    A_sim    = xs[:, K : 2 * K]
+    S_sim = xs[:, :K]
+    A_sim = xs[:, K : 2 * K]
     Kdyn_sim = xs[:, 2 * K : 2 * K + M]
-    P_sim    = xs[:, 2 * K + M : 2 * K + M + N]
+    P_sim = xs[:, 2 * K + M : 2 * K + M + N]
 
-    np.clip(S_sim,    0.0, 1.0, out=S_sim)
+    np.clip(S_sim, 0.0, 1.0, out=S_sim)
     np.clip(Kdyn_sim, 0.0, 1.0, out=Kdyn_sim)
-    np.clip(P_sim,    0.0, 1.0, out=P_sim)
-    np.clip(A_sim,    0.0, 5.0, out=A_sim)
+    np.clip(P_sim, 0.0, 1.0, out=P_sim)
+    np.clip(A_sim, 0.0, 5.0, out=A_sim)
 
     if full_output:
         return P_sim.T, A_sim.T, S_sim.T, Kdyn_sim.T
@@ -174,9 +177,9 @@ def _nan_result(N_sites, K, M, T, full_output):
     if full_output:
         return (
             np.full((N_sites, T), np.nan),
-            np.full((K,       T), np.nan),
-            np.full((K,       T), np.nan),
-            np.full((M,       T), np.nan),
+            np.full((K, T), np.nan),
+            np.full((K, T), np.nan),
+            np.full((M, T), np.nan),
         )
     return np.full((N_sites, T), np.nan), np.full((K, T), np.nan)
 
