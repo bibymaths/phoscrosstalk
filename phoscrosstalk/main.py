@@ -129,7 +129,7 @@ def main():
     parser.add_argument(
         "--scale-mode",
         choices=["minmax", "none", "log-minmax"],
-        default="minmax",
+        default="none",
         help="Method used to normalize/scale the experimental FC values.",
     )
     parser.add_argument(
@@ -183,8 +183,7 @@ def main():
         type=int,
         default=None,
         help=(
-            "Number of multi-start initialisations. Replaces the deprecated "
-            "--pop-size argument."
+            "Number of multi-start initialisations"
         ),
     )
     parser.add_argument(
@@ -192,51 +191,7 @@ def main():
         type=int,
         default=None,
         help=(
-            "Maximum number of optimisation steps per run. Replaces the deprecated "
-            "--gen argument."
-        ),
-    )
-
-    # Deprecated flags kept for backward compatibility.  These are accepted
-    # silently and mapped onto the new parameters.  They remain in the help
-    # output so that existing scripts do not break, but users are encouraged
-    # to migrate to --n-starts/--max-steps and remove these flags entirely.
-    parser.add_argument(
-        "--gen",
-        type=int,
-        default=None,
-        help=("[DEPRECATED] Max optimiser steps per run.  Use --max-steps instead."),
-    )
-    parser.add_argument(
-        "--pop-size",
-        type=int,
-        default=None,
-        help=("[DEPRECATED] Number of multi-start restarts.  Use --n-starts instead."),
-    )
-    parser.add_argument(
-        "--cores",
-        type=int,
-        default=None,
-        help=(
-            "[DEPRECATED] Number of CPU cores.  The JAX backend manages its own "
-            "parallelism; this flag is ignored.  Control JAX threading via "
-            "environment variables such as XLA_FLAGS."
-        ),
-    )
-    parser.add_argument(
-        "--algorithm",
-        default=None,
-        help=(
-            "[DEPRECATED] Legacy NSGA2/UNSGA3 algorithm selector.  Ignored in the "
-            "Optimistix backend."
-        ),
-    )
-    parser.add_argument(
-        "--optimizer",
-        default=None,
-        help=(
-            "[DEPRECATED] Optimistix optimiser name.  Only BFGS is supported at "
-            "present.  Ignored."
+            "Maximum number of optimisation steps per run"
         ),
     )
     parser.add_argument(
