@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white" alt="Python 3.11">
+  <img src="https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/license-BSD--3--Clause-green" alt="BSD 3-Clause license">
 </p>
 
@@ -122,7 +122,7 @@ phoscrosstalk/
 
 ## Installation
 
-PhosCrosstalk requires Python 3.11 (Python ≥ 3.11, < 3.12).
+PhosCrosstalk requires Python ≥ 3.11, < 3.12.
 
 ```bash
 git clone https://github.com/<yourname>/phoscrosstalk.git
