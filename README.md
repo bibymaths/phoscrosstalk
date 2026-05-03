@@ -5,7 +5,31 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/license-BSD--3--Clause-green" alt="BSD 3-Clause license">
+  <img src="https://img.shields.io/badge/status-work%20in%20progress-orange" alt="Work in Progress">
 </p>
+
+<details>
+<summary>⚠️ <strong>Work in Progress — Click to read before using</strong></summary>
+
+<br>
+
+> **PhosCrosstalk is under active development and is not yet production-ready.**
+
+The following areas are still being built out or stabilised:
+
+- **API surface** — module interfaces, CLI flags, and config schema may change without notice
+- **ODE system** — kinetic mechanism implementations are being validated against benchmark datasets
+- **Data curator** — PTMcode2 and KEA3 ingestion pipelines are partially tested; edge cases may fail silently
+- **Optimisation backend** — multi-start BFGS convergence and scalarisation weight defaults are under tuning
+- **Dashboard** — the Streamlit app is functional but incomplete; some panels may render incorrectly
+- **Documentation** — docstrings, tutorials, and the full methods writeup are in progress
+- **Tests** — unit and integration test coverage is minimal at this stage
+
+If you use this repository right now, expect rough edges. Contributions, bug reports, and feedback are very welcome via [Issues](../../issues).
+
+A stable `v1.0` release will be tagged once core modules pass integration tests and the manuscript is submitted.
+
+</details>
 
 # PhosCrosstalk
 
