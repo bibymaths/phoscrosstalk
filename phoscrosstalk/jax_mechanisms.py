@@ -52,29 +52,29 @@ def decode_theta_jax(theta, K: int, M: int, N: int):
     """
     Decode the flat log-scale parameter vector into biological rate constants.
 
+    ``k_act`` and ``s_prod`` are no longer optimisation variables; they are
+    derived from experimental data (see :mod:`derived_rates`).  The parameter
+    vector therefore has dimension ``2*K + 2 + 3*M + N + 4``.
+
     JAX-native equivalent of core_mechanisms.decode_theta (Numba).  All
     operations use jax.numpy, so the output is differentiable w.r.t. theta.
 
     Parameters
     ----------
-    theta : jax.Array, shape (4*K + 2 + 3*M + N + 4,)
+    theta : jax.Array, shape (2*K + 2 + 3*M + N + 4,)
     K, M, N : int  –  proteins, kinases, phosphosites
 
     Returns
     -------
-    tuple of 14 entries matching core_mechanisms.decode_theta:
-        k_act, k_deact, s_prod, d_deg  (K,)
-        beta_g, beta_l                 scalar
-        alpha, kK_act, kK_deact        (M,)
-        k_off                          (N,)
+    tuple of 12 entries:
+        k_deact, d_deg         (K,)
+        beta_g, beta_l         scalar
+        alpha, kK_act, kK_deact  (M,)
+        k_off                  (N,)
         gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net  scalar
     """
     idx = 0
-    log_k_act = theta[idx : idx + K]
-    idx += K
     log_k_deact = theta[idx : idx + K]
-    idx += K
-    log_s_prod = theta[idx : idx + K]
     idx += K
     log_d_deg = theta[idx : idx + K]
     idx += K
@@ -98,9 +98,7 @@ def decode_theta_jax(theta, K: int, M: int, N: int):
     def clip(v):
         return jnp.clip(v, -20.0, 10.0)
 
-    k_act = jnp.exp(clip(log_k_act))
     k_deact = jnp.exp(clip(log_k_deact))
-    s_prod = jnp.exp(clip(log_s_prod))
     d_deg = jnp.exp(clip(log_d_deg))
     alpha = jnp.exp(clip(log_alpha))
     kK_act = jnp.exp(clip(log_kK_act))
@@ -116,9 +114,7 @@ def decode_theta_jax(theta, K: int, M: int, N: int):
     gamma_K_net = 2.0 * jnp.tanh(raw_gamma[3])
 
     return (
-        k_act,
         k_deact,
-        s_prod,
         d_deg,
         beta_g,
         beta_l,
@@ -170,7 +166,7 @@ def compute_prev_site_idx(site_prot_idx: np.ndarray, N: int) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-def make_rhs(K: int, M: int, N: int, mechanism: str):
+def make_rhs(K: int, M: int, N: int, mechanism: str, k_act_fn=None, s_prod_fn=None):
     """
     Return a JAX-compatible RHS function for ``diffrax.ODETerm``.
 
@@ -187,10 +183,20 @@ def make_rhs(K: int, M: int, N: int, mechanism: str):
     ``prev_site_idx`` is only used by the sequential mechanism; it can be
     ``None`` (or all-``-1``) for distributive/rand.
 
+    ``k_act_fn`` and ``s_prod_fn`` are optional JAX callables closed over at
+    construction time::
+
+        k_act_fn(t) -> jnp.array(shape=(K,))   # protein activation rate
+        s_prod_fn(t) -> jnp.array(shape=(K,))  # protein synthesis rate
+
+    When *None*, constant defaults are used: ``k_act = 1.0``, ``s_prod = 0.1``.
+
     Parameters
     ----------
-    K, M, N   : int   – proteins, kinases, phosphosites
-    mechanism : str   – ``"dist"`` | ``"seq"`` | ``"rand"``
+    K, M, N      : int   – proteins, kinases, phosphosites
+    mechanism    : str   – ``"dist"`` | ``"seq"`` | ``"rand"``
+    k_act_fn     : callable | None
+    s_prod_fn    : callable | None
 
     Returns
     -------
@@ -200,6 +206,22 @@ def make_rhs(K: int, M: int, N: int, mechanism: str):
         raise ValueError(
             f"Unknown mechanism '{mechanism}'. Use 'dist', 'seq', or 'rand'."
         )
+
+    # Build constant fallbacks so the RHS never branches on None
+    _k_act_const = jnp.ones(K, dtype=jnp.float32)
+    _s_prod_const = jnp.full(K, 0.1, dtype=jnp.float32)
+
+    if k_act_fn is None:
+        def _k_act_fn(t):
+            return _k_act_const
+    else:
+        _k_act_fn = k_act_fn
+
+    if s_prod_fn is None:
+        def _s_prod_fn(t):
+            return _s_prod_const
+    else:
+        _s_prod_fn = s_prod_fn
 
     def rhs(t, y, args):
         (
@@ -218,9 +240,7 @@ def make_rhs(K: int, M: int, N: int, mechanism: str):
 
         # --- Decode parameters --------------------------------------------------
         (
-            k_act,
             k_deact,
-            s_prod,
             d_deg,
             beta_g,
             beta_l,
@@ -234,6 +254,10 @@ def make_rhs(K: int, M: int, N: int, mechanism: str):
             gamma_K_net,
         ) = decode_theta_jax(theta, K, M, N)
 
+        # Derived rates (time-varying, not optimised)
+        k_act = _k_act_fn(t)
+        s_prod = _s_prod_fn(t)
+
         # --- Unpack + clip state ------------------------------------------------
         S = y[:K]
         A = y[K : 2 * K]
@@ -244,19 +268,16 @@ def make_rhs(K: int, M: int, N: int, mechanism: str):
         u = 1.0 / (1.0 + jnp.exp(-t / 0.1))
 
         # --- Coupling -----------------------------------------------------------
-        # coup = tanh(beta_g * Cg @ p  +  beta_l * Cl @ p)
         coup = jnp.tanh(beta_g * (Cg @ p) + beta_l * (Cl @ p))
 
         # --- Per-protein aggregate means ----------------------------------------
-        # num_p[k] = sum of p[i] for all sites i on protein k
-        # den[k]   = count of sites on protein k
         num_p = jnp.zeros(K).at[site_prot_idx].add(p)
         den = jnp.zeros(K).at[site_prot_idx].add(1.0)
         num_c = jnp.zeros(K).at[site_prot_idx].add(coup)
 
         safe_den = jnp.where(den > 0.0, den, 1.0)
-        mp = num_p / safe_den  # mean phospho per protein  (K,)
-        mc = num_c / safe_den  # mean coupling per protein (K,)
+        mp = num_p / safe_den
+        mc = num_c / safe_den
 
         # --- 1. Protein signalling state (S) ------------------------------------
         D_S = 1.0 + gamma_S_p * mp + mc + receptor_mask_prot * u
@@ -268,14 +289,12 @@ def make_rhs(K: int, M: int, N: int, mechanism: str):
         dA = s_eff - d_deg * A
 
         # --- 3. Kinase dynamics (Kdyn) ------------------------------------------
-        u_sub = R @ p  # (M,)  substrate pressure
+        u_sub = R @ p
 
-        # Network regularisation: L_alpha @ Kdyn (only if lambda_net non-zero)
-        u_net = -(L_alpha @ Kdyn)  # (M,)  note: sign matches Numba code
+        u_net = -(L_alpha @ Kdyn)
 
         U = u_sub + gamma_K_net * u_net
 
-        # Add protein-state contributions for kinases that map to a protein
         valid_prot = kin_to_prot_idx >= 0
         safe_p_idx = jnp.where(valid_prot, kin_to_prot_idx, 0)
         prot_contrib = gamma_A_S * S[safe_p_idx] + gamma_A_p * A[safe_p_idx]
@@ -285,30 +304,21 @@ def make_rhs(K: int, M: int, N: int, mechanism: str):
         dKdyn = kK_act * jnp.tanh(U) * (1.0 - Kdyn) - kK_deact * Kdyn
 
         # --- 4. Phosphosite dynamics (p) ----------------------------------------
-        k_on_eff = K_site_kin @ (alpha * Kdyn)  # (N,)
-        coup_clamp = jnp.clip(coup, 0.0, None)  # (N,)
+        k_on_eff = K_site_kin @ (alpha * Kdyn)
+        coup_clamp = jnp.clip(coup, 0.0, None)
 
         if mechanism == "dist":
-            # Distributive: all sites phosphorylated independently
             gate = jnp.ones(N)
 
         elif mechanism == "seq":
-            # Sequential: gate = occupancy of the preceding site on the same
-            # protein (1.0 for the first site, which has prev_site_idx == -1)
             safe_prev = jnp.where(prev_site_idx >= 0, prev_site_idx, 0)
             gate = jnp.where(prev_site_idx >= 0, p[safe_prev], 1.0)
 
         else:
-            # rand / competitive crowding: gate proportional to 1/(vacant fraction)
-            # Biological rationale: kinase is a limited resource; all unphosphorylated
-            # sites compete for it. More vacant sites → lower per-site rate.
-            # Gate = 1 / (CROWDING_BASELINE + CROWDING_WEIGHT * vacant_fraction + CROWDING_EPSILON)
-            # The 0.5 + 0.5 decomposition ensures gate → 1 when all sites are occupied
-            # and gate → 2 when no sites are occupied (maximum competition).
-            CROWDING_BASELINE = 0.5  # minimum denominator contribution
-            CROWDING_WEIGHT = 0.5  # scales the vacant-fraction contribution
-            CROWDING_EPSILON = 1e-9  # numerical stability guard against zero division
-            vacant_frac = 1.0 - mp[site_prot_idx]  # (N,)
+            CROWDING_BASELINE = 0.5
+            CROWDING_WEIGHT = 0.5
+            CROWDING_EPSILON = 1e-9
+            vacant_frac = 1.0 - mp[site_prot_idx]
             gate = 1.0 / (
                 CROWDING_BASELINE + CROWDING_WEIGHT * vacant_frac + CROWDING_EPSILON
             )
@@ -357,7 +367,7 @@ def compute_objectives_jax(
 
     Parameters
     ----------
-    theta                   : jax.Array, flat parameter vector
+    theta                   : jax.Array, flat parameter vector (2K+2+3M+N+4)
     P_data                  : jax.Array (N_sites, T)
     P_sim                   : jax.Array (N_sites, T)  – simulation output
     A_scaled                : jax.Array (K_obs, T_A) or shape (0,)
@@ -374,7 +384,7 @@ def compute_objectives_jax(
     (f1, f2, f3) : tuple of JAX scalars
     """
     # --- Decode for regularisation ---
-    _, _, _, _, _, _, alpha, _, _, _, _, _, _, _ = decode_theta_jax(theta, K, M, N)
+    _, _, _, _, alpha, _, _, _, _, _, _, _ = decode_theta_jax(theta, K, M, N)
 
     # 1. Phosphosite loss: weighted MSLE
     diff_p = P_data - P_sim

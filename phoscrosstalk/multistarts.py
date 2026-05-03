@@ -135,6 +135,8 @@ def run_multi_start_optimization(problem, args, P_scaled):
         w_phospho=w_phospho,
         w_abundance=w_abundance,
         w_reg=w_reg,
+        k_act_fn=getattr(problem, "k_act_fn", None),
+        s_prod_fn=getattr(problem, "s_prod_fn", None),
     )
 
     starts = _generate_starts(n_starts, xl, xu)

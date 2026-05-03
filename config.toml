@@ -1,0 +1,39 @@
+[paths]
+data_dir   = "data_timeseries"
+output_dir = "results"
+
+[model]
+mechanism    = "dist"
+scale_mode   = "none"
+length_scale = 50.0
+weight_scheme = "uniform"
+
+[optimisation]
+n_starts  = 3
+max_steps = 500
+loss_type = "mse"
+lambda_net = 0.0001
+reg_lambda = 0.0001
+
+[loss_weights]
+phospho   = 1.0
+abundance = 1.0
+mrna      = 1.0
+reg       = 1.0
+
+[bounds]
+# Leave empty to use internal defaults; override per-parameter as needed
+# lower = [...]
+# upper = [...]
+
+[solver]
+rtol = 1e-6
+atol = 1e-9
+max_steps = 16384
+
+[time]
+mrna_time_points = [4, 8, 15, 30, 60, 120, 240, 480, 960]
+interpolation    = "piecewise_constant"
+
+[derived_rates]
+s_prod_fn = "softplus"

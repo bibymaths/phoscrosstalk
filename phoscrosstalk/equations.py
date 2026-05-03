@@ -116,9 +116,7 @@ def _generate_latex_source(
     # 1) Decode Parameters (numeric only)
     if mode == "numeric" and theta is not None:
         (
-            k_act,
             k_deact,
-            s_prod,
             d_deg,
             beta_g,
             beta_l,
@@ -131,17 +129,22 @@ def _generate_latex_source(
             gamma_A_p,
             gamma_K_net,
         ) = decode_theta(theta, K, M, N)
+        # k_act and s_prod are derived from data, not fitted
+        k_act = None
+        s_prod = None
 
     # Parameter lookup helper
     def get_p(arr_name, idx, symbol_base):
         if mode == "numeric" and theta is not None:
             val = 0.0
             if arr_name == "k_act":
-                val = k_act[idx]
+                # Derived quantity – show symbolic form in equations
+                return symbol_base
             elif arr_name == "k_deact":
                 val = k_deact[idx]
             elif arr_name == "s_prod":
-                val = s_prod[idx]
+                # Derived quantity – show symbolic form in equations
+                return symbol_base
             elif arr_name == "d_deg":
                 val = d_deg[idx]
             elif arr_name == "alpha":
