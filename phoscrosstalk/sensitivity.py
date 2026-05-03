@@ -3,6 +3,7 @@ sensitivity.py
 Global Sensitivity Analysis (GSA) using SALib with labeled parameters
 and full perturbation data export.
 """
+
 import os
 import numpy as np
 import pandas as pd
@@ -18,6 +19,7 @@ from phoscrosstalk.simulation import simulate_p_scipy, build_full_A0
 from phoscrosstalk.logger import get_logger
 
 logger = get_logger()
+
 
 def _generate_param_labels(K, M, N, proteins, kinases, sites):
     """
@@ -55,6 +57,7 @@ def _generate_param_labels(K, M, N, proteins, kinases, sites):
 
     return labels
 
+
 def _decode_param_matrix(param_values, K, M, N):
     """
     Decodes the optimization parameters (Log-scale) back to Biological scale (Linear).
@@ -64,7 +67,7 @@ def _decode_param_matrix(param_values, K, M, N):
 
     # Parameters that are log-scaled in optimization:
     # 4*K (Prot) + 2 (Beta) + 3*M (Kin) + N (Site)
-    n_log = 4*K + 2 + 3*M + N
+    n_log = 4 * K + 2 + 3 * M + N
 
     # 1. Exponentiate rates/constants (Log -> Linear)
     # This removes negative values arising from log(small_number)
@@ -77,6 +80,7 @@ def _decode_param_matrix(param_values, K, M, N):
     decoded[:, n_log:] = 2.0 * np.tanh(decoded[:, n_log:])
 
     return decoded
+
 
 def _evaluate_single_sample(i, theta, problem, K, M, N, sites, proteins, kinases):
     """
@@ -92,20 +96,30 @@ def _evaluate_single_sample(i, theta, problem, K, M, N, sites, proteins, kinases
     A0_full = build_full_A0(K, len(problem.t), problem.A_scaled, problem.prot_idx_for_A)
 
     P_sim, A_sim, S_sim, Kdyn_sim = simulate_p_scipy(
-        problem.t, problem.P_data, A0_full, theta,
-        problem.Cg, problem.Cl, problem.site_prot_idx,
-        problem.K_site_kin, problem.R, problem.L_alpha, problem.kin_to_prot_idx,
-        problem.receptor_mask_prot, problem.receptor_mask_kin,
-        problem.mechanism, full_output=True
+        problem.t,
+        problem.P_data,
+        A0_full,
+        theta,
+        problem.Cg,
+        problem.Cl,
+        problem.site_prot_idx,
+        problem.K_site_kin,
+        problem.R,
+        problem.L_alpha,
+        problem.kin_to_prot_idx,
+        problem.receptor_mask_prot,
+        problem.receptor_mask_kin,
+        problem.mechanism,
+        full_output=True,
     )
 
     # B. Calculate Metric for Sobol (MSE on Phosphosites)
     # Filter NaNs if simulation exploded
     if not np.all(np.isfinite(P_sim)):
-        mse = 1e6 # penalty
+        mse = 1e6  # penalty
     else:
-        diff = (problem.P_data - P_sim)
-        mse = np.mean(diff ** 2)
+        diff = problem.P_data - P_sim
+        mse = np.mean(diff**2)
 
     # C. Format Data for Table
     # NOTE: In Tidy format, we do NOT repeat parameters here.
@@ -137,9 +151,10 @@ def _evaluate_single_sample(i, theta, problem, K, M, N, sites, proteins, kinases
 
     return mse, "".join(rows_buffer)
 
-def run_global_sensitivity(outdir, problem, param_bounds,
-                           proteins, kinases, sites,
-                           samples=64):
+
+def run_global_sensitivity(
+    outdir, problem, param_bounds, proteins, kinases, sites, samples=64
+):
     """
     Performs Sobol GSA using SALib, plots labeled sensitivities, and exports
     full perturbation trajectories.
@@ -166,14 +181,12 @@ def run_global_sensitivity(outdir, problem, param_bounds,
     param_names = _generate_param_labels(K, M, N, proteins, kinases, sites)
 
     if len(param_names) != dim:
-        logger.warning(f"Label count ({len(param_names)}) != Dim ({dim}). Fallback to generic.")
+        logger.warning(
+            f"Label count ({len(param_names)}) != Dim ({dim}). Fallback to generic."
+        )
         param_names = [f"p_{i}" for i in range(dim)]
 
-    problem_spec = {
-        'num_vars': dim,
-        'names': param_names,
-        'bounds': list(zip(xl, xu))
-    }
+    problem_spec = {"num_vars": dim, "names": param_names, "bounds": list(zip(xl, xu))}
 
     # 2. Generate Samples
     # calc_second_order=False keeps total runs manageable
@@ -218,8 +231,12 @@ def run_global_sensitivity(outdir, problem, param_bounds,
     # Run parallel simulations
     # 1. Create a generator for the delayed tasks
     # NOTE: We pass the RAW param_values (log scale) to simulation because simulate_p_scipy expects them.
-    tasks = (delayed(_evaluate_single_sample)(i, theta, problem, K, M, N, sites, proteins, kinases)
-             for i, theta in enumerate(param_values))
+    tasks = (
+        delayed(_evaluate_single_sample)(
+            i, theta, problem, K, M, N, sites, proteins, kinases
+        )
+        for i, theta in enumerate(param_values)
+    )
 
     # 2. Execute using return_as="generator" to stream results to tqdm
     # verbose=0 prevents joblib's native prints from breaking the tqdm bar
@@ -227,7 +244,10 @@ def run_global_sensitivity(outdir, problem, param_bounds,
 
     # 3. Collect results with progress bar
     results = [
-        res for res in tqdm(results_gen, total=len(param_values), desc="       Progress", unit="sim")
+        res
+        for res in tqdm(
+            results_gen, total=len(param_values), desc="       Progress", unit="sim"
+        )
     ]
 
     # Unpack results and write to file
@@ -239,36 +259,48 @@ def run_global_sensitivity(outdir, problem, param_bounds,
             Y_mse[i] = mse
             f_out.write(row_data)
 
-    print("") # clear line
+    print("")  # clear line
     logger.success(f"    -> Saved perturbation data to {perturbation_file}")
     logger.success(f"    -> Saved perturbation params to {param_file}")
 
     # 4. Analyze Sobol Indices
     logger.info("    -> Calculating Sobol Indices (MSE metric)...")
-    Si = sobol.analyze(problem_spec, Y_mse, calc_second_order=False, print_to_console=False)
+    Si = sobol.analyze(
+        problem_spec, Y_mse, calc_second_order=False, print_to_console=False
+    )
 
-    df_sens = pd.DataFrame({
-        "Parameter": param_names,
-        "Total_Order": Si['ST'],
-        "First_Order": Si['S1'],
-        "Confidence_Total": Si['ST_conf']
-    })
+    df_sens = pd.DataFrame(
+        {
+            "Parameter": param_names,
+            "Total_Order": Si["ST"],
+            "First_Order": Si["S1"],
+            "Confidence_Total": Si["ST_conf"],
+        }
+    )
 
     # Sort
     df_sens = df_sens.sort_values("Total_Order", ascending=False)
-    df_sens.to_csv(os.path.join(sens_dir, "sobol_indices_labeled.tsv"), sep="\t", index=False)
+    df_sens.to_csv(
+        os.path.join(sens_dir, "sobol_indices_labeled.tsv"), sep="\t", index=False
+    )
 
     # 5. Plot Top 20
     logger.info("    -> Plotting Sensitivity Ranks...")
     top_20 = df_sens.head(20)
 
     plt.figure(figsize=(10, 8))
-    sns.barplot(data=top_20, x="Total_Order", y="Parameter", color="skyblue", label="Total Effect")
+    sns.barplot(
+        data=top_20,
+        x="Total_Order",
+        y="Parameter",
+        color="skyblue",
+        label="Total Effect",
+    )
     # Overlay first order?
     # Usually easier to just plot Total for ranking, but we can do a dodged bar or overlay.
     # Simple bar chart is clearer for labels.
 
-    plt.title(f"Top 20 Parameters driving Model Error (Sobol ST)")
+    plt.title("Top 20 Parameters driving Model Error (Sobol ST)")
     plt.xlabel("Total-Order Sensitivity Index")
     plt.ylabel("Parameter")
     plt.tight_layout()

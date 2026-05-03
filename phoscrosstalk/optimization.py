@@ -2,6 +2,7 @@
 optimization.py
 Pymoo Problem definition, objective functions, and parameter bounds.
 """
+
 import numpy as np
 from numba import njit
 from pymoo.core.problem import ElementwiseProblem
@@ -11,8 +12,25 @@ from phoscrosstalk.core_mechanisms import decode_theta
 
 
 @njit(cache=True)
-def compute_objectives_nb(theta, P_data, P_sim, A_scaled, A_sim, W_data, W_data_prot,
-                          prot_idx_for_A, L_alpha, lambda_net, reg_lambda, n_p, n_A, n_var, K, M, N):
+def compute_objectives_nb(
+    theta,
+    P_data,
+    P_sim,
+    A_scaled,
+    A_sim,
+    W_data,
+    W_data_prot,
+    prot_idx_for_A,
+    L_alpha,
+    lambda_net,
+    reg_lambda,
+    n_p,
+    n_A,
+    n_var,
+    K,
+    M,
+    N,
+):
     """
     Numba-accelerated computation of the three-component objective function vector.
 
@@ -45,8 +63,22 @@ def compute_objectives_nb(theta, P_data, P_sim, A_scaled, A_sim, W_data, W_data_
         tuple: (f1, f2, f3) objective values.
     """
 
-    (k_act, k_deact, s_prod, d_deg, beta_g, beta_l, alpha, kK_act, kK_deact, k_off,
-     gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net) = decode_theta(theta, K, M, N)
+    (
+        k_act,
+        k_deact,
+        s_prod,
+        d_deg,
+        beta_g,
+        beta_l,
+        alpha,
+        kK_act,
+        kK_deact,
+        k_off,
+        gamma_S_p,
+        gamma_A_S,
+        gamma_A_p,
+        gamma_K_net,
+    ) = decode_theta(theta, K, M, N)
 
     # 1. Phosphosite loss (Shape/Kinetic)
     N_sites, T = P_data.shape
@@ -54,7 +86,7 @@ def compute_objectives_nb(theta, P_data, P_sim, A_scaled, A_sim, W_data, W_data_
     for i in range(N_sites):
         # offset = P_sim[i, 0] - P_data[i, 0] # Option to shift
         for j in range(T):
-            diff = (P_data[i, j] - P_sim[i, j])
+            diff = P_data[i, j] - P_sim[i, j]
             loss_p += np.log1p(W_data[i, j] * (diff * diff))
     f1 = loss_p / n_p
 
@@ -65,7 +97,7 @@ def compute_objectives_nb(theta, P_data, P_sim, A_scaled, A_sim, W_data, W_data_
         for k in range(K_prot_obs):
             p_idx = prot_idx_for_A[k]
             for j in range(T_A):
-                diffA = (A_scaled[k, j] - A_sim[p_idx, j])
+                diffA = A_scaled[k, j] - A_sim[p_idx, j]
                 loss_A += np.log1p(W_data_prot[k, j] * (diffA * diffA))
         f2 = loss_A / n_A
     else:
@@ -104,15 +136,18 @@ def bio_score_nb(theta, K, M, N):
         float: The calculated biological score (lower is better/more plausible).
     """
 
-    (k_act, k_deact, s_prod, d_deg, _, _, _, kK_act, kK_deact, _, _, _, _, _) = decode_theta(theta, K, M, N)
+    (k_act, k_deact, s_prod, d_deg, _, _, _, kK_act, kK_deact, _, _, _, _, _) = (
+        decode_theta(theta, K, M, N)
+    )
     t_half_kinase = np.log(2.0) / kK_deact
     t_half_protein = np.log(2.0) / d_deg
 
     median_t_kinase = np.sort(t_half_kinase)[len(t_half_kinase) // 2]
     median_t_protein = np.sort(t_half_protein)[len(t_half_protein) // 2]
 
-    return ((np.log10(median_t_kinase) - np.log10(10.0)) ** 2 +
-            (np.log10(median_t_protein) - np.log10(600.0)) ** 2)
+    return (np.log10(median_t_kinase) - np.log10(10.0)) ** 2 + (
+        np.log10(median_t_protein) - np.log10(600.0)
+    ) ** 2
 
 
 def bio_score(theta):
@@ -178,12 +213,12 @@ def create_bounds(K, M, N):
     idx = 0
     # Protein: k_act, k_deact, s_prod
     for _ in range(3):
-        xl[idx:idx + K] = np.log(1e-5)
-        xu[idx:idx + K] = np.log(10.0)
+        xl[idx : idx + K] = np.log(1e-5)
+        xu[idx : idx + K] = np.log(10.0)
         idx += K
     # Protein: d_deg (restricted)
-    xl[idx:idx + K] = np.log(1e-5)
-    xu[idx:idx + K] = np.log(0.5)
+    xl[idx : idx + K] = np.log(1e-5)
+    xu[idx : idx + K] = np.log(0.5)
     idx += K
     # Coupling
     xl[idx] = np.log(1e-5)
@@ -193,22 +228,22 @@ def create_bounds(K, M, N):
     xu[idx] = np.log(10.0)
     idx += 1
     # Kinase: alpha, kK_act, kK_deact
-    xl[idx:idx + M] = np.log(1e-5)
-    xu[idx:idx + M] = np.log(10.0)
+    xl[idx : idx + M] = np.log(1e-5)
+    xu[idx : idx + M] = np.log(10.0)
     idx += M
-    xl[idx:idx + M] = np.log(1e-5)
-    xu[idx:idx + M] = np.log(3.0)
+    xl[idx : idx + M] = np.log(1e-5)
+    xu[idx : idx + M] = np.log(3.0)
     idx += M
-    xl[idx:idx + M] = np.log(1e-5)
-    xu[idx:idx + M] = np.log(3.0)
+    xl[idx : idx + M] = np.log(1e-5)
+    xu[idx : idx + M] = np.log(3.0)
     idx += M
     # Site: k_off
-    xl[idx:idx + N] = np.log(1e-5)
-    xu[idx:idx + N] = np.log(5.0)
+    xl[idx : idx + N] = np.log(1e-5)
+    xu[idx : idx + N] = np.log(5.0)
     idx += N
     # Gammas (tanh raw)
-    xl[idx:idx + 4] = -3.0
-    xu[idx:idx + 4] = 3.0
+    xl[idx : idx + 4] = -3.0
+    xu[idx : idx + 4] = 3.0
     idx += 4
     return xl, xu, dim
 
@@ -229,10 +264,30 @@ class NetworkOptimizationProblem(ElementwiseProblem):
         mechanism (str): Kinetic mechanism identifier.
     """
 
-    def __init__(self, t, P_data, Cg, Cl, site_prot_idx, K_site_kin, R,
-                 A_scaled, prot_idx_for_A, W_data, W_data_prot, L_alpha, kin_to_prot_idx,
-                 lambda_net, reg_lambda, receptor_mask_prot, receptor_mask_kin, mechanism,
-                 xl, xu, **kwargs):
+    def __init__(
+        self,
+        t,
+        P_data,
+        Cg,
+        Cl,
+        site_prot_idx,
+        K_site_kin,
+        R,
+        A_scaled,
+        prot_idx_for_A,
+        W_data,
+        W_data_prot,
+        L_alpha,
+        kin_to_prot_idx,
+        lambda_net,
+        reg_lambda,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        mechanism,
+        xl,
+        xu,
+        **kwargs,
+    ):
         """
         Initializes the optimization problem structure.
 
@@ -299,20 +354,49 @@ class NetworkOptimizationProblem(ElementwiseProblem):
         A0_full = self._A0_full
 
         P_sim, A_sim = simulate_p_scipy(
-            self.t, self.P_data, A0_full, theta, self.Cg, self.Cl, self.site_prot_idx,
-            self.K_site_kin, self.R, self.L_alpha, self.kin_to_prot_idx,
-            self.receptor_mask_prot, self.receptor_mask_kin, self.mechanism
+            self.t,
+            self.P_data,
+            A0_full,
+            theta,
+            self.Cg,
+            self.Cl,
+            self.site_prot_idx,
+            self.K_site_kin,
+            self.R,
+            self.L_alpha,
+            self.kin_to_prot_idx,
+            self.receptor_mask_prot,
+            self.receptor_mask_kin,
+            self.mechanism,
         )
 
-        if (not np.all(np.isfinite(P_sim)) or not np.all(np.isfinite(A_sim)) or
-                np.max(P_sim) > 5.0 or np.min(P_sim) < -1e-6):
+        if (
+            not np.all(np.isfinite(P_sim))
+            or not np.all(np.isfinite(A_sim))
+            or np.max(P_sim) > 5.0
+            or np.min(P_sim) < -1e-6
+        ):
             out["F"] = np.array([1e12, 1e12, 1e12])
             return
 
         f1, f2, f3 = compute_objectives_nb(
-            theta, self.P_data, P_sim, self.A_scaled, A_sim, self.W_data, self.W_data_prot,
-            self.prot_idx_for_A, self.L_alpha, self.lambda_net, self.reg_lambda,
-            self.n_p, self.n_A, self.n_var, ModelDims.K, ModelDims.M, ModelDims.N
+            theta,
+            self.P_data,
+            P_sim,
+            self.A_scaled,
+            A_sim,
+            self.W_data,
+            self.W_data_prot,
+            self.prot_idx_for_A,
+            self.L_alpha,
+            self.lambda_net,
+            self.reg_lambda,
+            self.n_p,
+            self.n_A,
+            self.n_var,
+            ModelDims.K,
+            ModelDims.M,
+            ModelDims.N,
         )
         out["F"] = np.array([f1, f2, f3], dtype=float)
 

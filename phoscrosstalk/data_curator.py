@@ -10,7 +10,6 @@ Consolidates logic from:
 - build_site_level_ks_map.py
 """
 
-import os
 import argparse
 import gzip
 import json
@@ -19,10 +18,9 @@ import sqlite3
 import zipfile
 import zlib
 from pathlib import Path
-from typing import Dict, List, Set, Optional
+from typing import Dict, Optional
 
 import pandas as pd
-import numpy as np
 import networkx as nx
 import requests
 
@@ -31,21 +29,21 @@ from phoscrosstalk.logger import get_logger
 logger = get_logger()
 
 # --- Configuration Constants ---
-HARMONIZOME_BASE_URL = 'https://maayanlab.cloud/static/hdfs/harmonizome/data'
+HARMONIZOME_BASE_URL = "https://maayanlab.cloud/static/hdfs/harmonizome/data"
 
 # Datasets to fetch automatically
 DEFAULT_DATASETS = [
-    ('KEA Substrates of Kinases', 'kea'),
-    ('PhosphoSitePlus Phosphosite-Disease Associations', 'phosphositeplusdisease'),
-    ('PhosphoSitePlus Substrates of Kinases', 'phosphositeplus'),
+    ("KEA Substrates of Kinases", "kea"),
+    ("PhosphoSitePlus Phosphosite-Disease Associations", "phosphositeplusdisease"),
+    ("PhosphoSitePlus Substrates of Kinases", "phosphositeplus"),
 ]
 
 DEFAULT_DOWNLOADABLES = [
-    'gene_attribute_matrix.txt.gz',
-    'gene_attribute_edges.txt.gz',
-    'gene_set_library_crisp.gmt.gz',
-    'kinase_substrate_phospho-site_level_pmid_resource_database.txt',  # Specific to KEA/PSP
-    'kinase_networks.zip'  # Specific to KEA
+    "gene_attribute_matrix.txt.gz",
+    "gene_attribute_edges.txt.gz",
+    "gene_set_library_crisp.gmt.gz",
+    "kinase_substrate_phospho-site_level_pmid_resource_database.txt",  # Specific to KEA/PSP
+    "kinase_networks.zip",  # Specific to KEA
 ]
 
 
@@ -69,21 +67,21 @@ class DataCurator:
     # =========================================================================
 
     def _download_file(self, response, filepath: Path):
-        with open(filepath, 'wb') as f:
+        with open(filepath, "wb") as f:
             for chunk in response.iter_content(chunk_size=1024):
                 f.write(chunk)
 
     def _download_and_decompress_file(self, response, filepath: Path):
         decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
         # Strip .gz extension for target
-        target_path = filepath.with_suffix('')
-        with open(target_path, 'w+') as f:
+        target_path = filepath.with_suffix("")
+        with open(target_path, "w+") as f:
             while True:
                 chunk = response.raw.read(1024)
                 if not chunk:
                     break
                 string = decompressor.decompress(chunk)
-                f.write(string.decode('utf-8'))  # Decode bytes to string
+                f.write(string.decode("utf-8"))  # Decode bytes to string
 
     def download_resources(self, decompress: bool = False):
         """
@@ -100,8 +98,8 @@ class DataCurator:
             # Note: Not all datasets have all files. We try typical ones + specific KEA ones
             # For simplicity, we try to fetch specific files if they exist
             targets = DEFAULT_DOWNLOADABLES
-            if path_suffix == 'kea':
-                targets += ['kinase_networks.zip', 'gsl_database.zip']
+            if path_suffix == "kea":
+                targets += ["kinase_networks.zip", "gsl_database.zip"]
 
             for downloadable in targets:
                 url = f"{HARMONIZOME_BASE_URL}/{path_suffix}/{downloadable}"
@@ -115,7 +113,11 @@ class DataCurator:
                     response = requests.get(url, stream=True)
                     if response.status_code == 200:
                         logger.info(f"  - Downloading {downloadable}...")
-                        if decompress and downloadable.endswith('.gz') and 'zip' not in downloadable:
+                        if (
+                            decompress
+                            and downloadable.endswith(".gz")
+                            and "zip" not in downloadable
+                        ):
                             self._download_and_decompress_file(response, local_path)
                         else:
                             self._download_file(response, local_path)
@@ -148,13 +150,17 @@ class DataCurator:
             logger.info(f"Parsing intra-protein pairs from {path}...")
             with gzip.open(path, "rt") as f:
                 for line in f:
-                    if line.startswith("#") or line.strip() == "": continue
+                    if line.startswith("#") or line.strip() == "":
+                        continue
                     parts = line.strip().split("\t")
-                    if len(parts) < 13: continue
+                    if len(parts) < 13:
+                        continue
 
                     # Strict filtering for Human Phosphorylation
-                    if parts[1] != "Homo sapiens": continue
-                    if parts[2] != "phosphorylation" or parts[6] != "phosphorylation": continue
+                    if parts[1] != "Homo sapiens":
+                        continue
+                    if parts[2] != "phosphorylation" or parts[6] != "phosphorylation":
+                        continue
 
                     protein = parts[0]
                     res1 = parts[3]
@@ -170,12 +176,16 @@ class DataCurator:
             logger.info(f"Parsing inter-protein pairs from {path}...")
             with gzip.open(path, "rt") as f:
                 for line in f:
-                    if line.startswith("#") or line.strip() == "": continue
+                    if line.startswith("#") or line.strip() == "":
+                        continue
                     parts = line.strip().split("\t")
-                    if len(parts) < 13: continue
+                    if len(parts) < 13:
+                        continue
 
-                    if parts[2] != "Homo sapiens": continue
-                    if parts[3] != "phosphorylation" or parts[7] != "phosphorylation": continue
+                    if parts[2] != "Homo sapiens":
+                        continue
+                    if parts[3] != "phosphorylation" or parts[7] != "phosphorylation":
+                        continue
 
                     p1, p2 = parts[0], parts[1]
                     res1 = parts[4]
@@ -190,7 +200,8 @@ class DataCurator:
         B = load_between(between_path)
 
         # Write Intra DB
-        if out_intra.exists(): out_intra.unlink()
+        if out_intra.exists():
+            out_intra.unlink()
         conn_i = sqlite3.connect(out_intra)
         conn_i.execute("""
                        CREATE TABLE intra_pairs
@@ -206,14 +217,15 @@ class DataCurator:
         conn_i.execute("CREATE INDEX idx_intra_protein ON intra_pairs(protein)")
         conn_i.executemany(
             "INSERT INTO intra_pairs (protein, residue1, score1, residue2, score2) VALUES (?, ?, ?, ?, ?)",
-            [(p, r1, s1, r2, s2) for (p, r1, s1, _, r2, s2) in W]
+            [(p, r1, s1, r2, s2) for (p, r1, s1, _, r2, s2) in W],
         )
         conn_i.commit()
         conn_i.close()
         logger.success(f"Saved {out_intra}")
 
         # Write Inter DB
-        if out_inter.exists(): out_inter.unlink()
+        if out_inter.exists():
+            out_inter.unlink()
         conn_e = sqlite3.connect(out_inter)
         conn_e.execute("""
                        CREATE TABLE inter_pairs
@@ -227,10 +239,12 @@ class DataCurator:
                            score2   REAL NOT NULL
                        )
                        """)
-        conn_e.execute("CREATE INDEX idx_inter_proteins ON inter_pairs(protein1, protein2)")
+        conn_e.execute(
+            "CREATE INDEX idx_inter_proteins ON inter_pairs(protein1, protein2)"
+        )
         conn_e.executemany(
             "INSERT INTO inter_pairs (protein1, residue1, score1, protein2, residue2, score2) VALUES (?, ?, ?, ?, ?, ?)",
-            B
+            B,
         )
         conn_e.commit()
         conn_e.close()
@@ -261,7 +275,8 @@ class DataCurator:
         # Load TSVs from Zip
         with zipfile.ZipFile(zip_path) as zf:
             for name in zf.namelist():
-                if not name.endswith(".tsv"): continue
+                if not name.endswith(".tsv"):
+                    continue
 
                 with zf.open(name) as f:
                     df = pd.read_csv(f, sep="\t")
@@ -278,15 +293,19 @@ class DataCurator:
                         G.add_edge(s, t, weight=w, layer=layer_name)
 
                 layer_graphs[layer_name] = G
-                logger.info(f"  - Loaded layer '{layer_name}': {G.number_of_nodes()} nodes")
+                logger.info(
+                    f"  - Loaded layer '{layer_name}': {G.number_of_nodes()} nodes"
+                )
 
         # Unified Graph
         U = nx.Graph()
         for layer, G in layer_graphs.items():
             for u, v, data in G.edges(data=True):
                 w = float(data.get("weight", 1.0))
-                if not U.has_node(u): U.add_node(u)
-                if not U.has_node(v): U.add_node(v)
+                if not U.has_node(u):
+                    U.add_node(u)
+                if not U.has_node(v):
+                    U.add_node(v)
 
                 if U.has_edge(u, v):
                     e = U[u][v]
@@ -313,8 +332,10 @@ class DataCurator:
         U_gml.add_nodes_from(U.nodes())
         for u, v, data in U.edges(data=True):
             d = dict(data)
-            if "layers" in d: d["layers"] = ",".join(sorted(d["layers"]))
-            if "weights" in d: d["weights"] = json.dumps(d["weights"])
+            if "layers" in d:
+                d["layers"] = ",".join(sorted(d["layers"]))
+            if "weights" in d:
+                d["weights"] = json.dumps(d["weights"])
             U_gml.add_edge(u, v, **d)
 
         nx.write_graphml(U_gml, self.processed_dir / "unified_kinase_graph.graphml")
@@ -347,7 +368,12 @@ class DataCurator:
                     logger.error(f"Required file {fname} not found in zip.")
                     return
                 with zf.open(fname) as f:
-                    df = pd.read_csv(f, sep="\t", header=None, names=["kinase", "substrate_site", "pmid", "source"])
+                    df = pd.read_csv(
+                        f,
+                        sep="\t",
+                        header=None,
+                        names=["kinase", "substrate_site", "pmid", "source"],
+                    )
         except Exception as e:
             logger.error(f"Failed to read KS zip: {e}")
             return
@@ -355,7 +381,9 @@ class DataCurator:
         # Process
         mask = df["substrate_site"].astype(str).str.contains("_")
         df = df[mask].copy()
-        df[["substrate_gene", "site"]] = df["substrate_site"].str.rsplit("_", n=1, expand=True)
+        df[["substrate_gene", "site"]] = df["substrate_site"].str.rsplit(
+            "_", n=1, expand=True
+        )
 
         df["substrate_site_upper"] = df["substrate_site"].str.upper()
         df["substrate_gene"] = df["substrate_gene"].str.upper()
@@ -365,7 +393,9 @@ class DataCurator:
         index = {}
         for _, row in df.iterrows():
             key = row["substrate_site_upper"]
-            entry = index.setdefault(key, {"kinases": set(), "pmids": set(), "sources": set()})
+            entry = index.setdefault(
+                key, {"kinases": set(), "pmids": set(), "sources": set()}
+            )
             entry["kinases"].add(str(row["kinase"]))
             entry["pmids"].add(str(row["pmid"]))
             entry["sources"].add(str(row["source"]))
@@ -385,7 +415,9 @@ class DataCurator:
     # 5. UTILITIES (Custom conversion)
     # =========================================================================
 
-    def convert_custom_kinase_csv(self, csv_path: str, out_name: str = "kinase_sites.tsv"):
+    def convert_custom_kinase_csv(
+        self, csv_path: str, out_name: str = "kinase_sites.tsv"
+    ):
         """
         Converts a user-supplied CSV with columns [GeneID, Psite, Kinase={K1,K2}]
         into a model-ready TSV [Site, Kinase, weight].
@@ -417,15 +449,29 @@ class DataCurator:
 
 def main():
     parser = argparse.ArgumentParser(description="PhosCrosstalk Data Curation Pipeline")
-    parser.add_argument("--dir", default="data_curated", help="Root directory for data storage")
+    parser.add_argument(
+        "--dir", default="data_curated", help="Root directory for data storage"
+    )
     parser.add_argument("--download", action="store_true", help="Run downloader")
-    parser.add_argument("--ptmcode", nargs=2, metavar=('WITHIN', 'BETWEEN'),
-                        help="Build PTM databases from provided PTMcode2 .gz files")
-    parser.add_argument("--kea", action="store_true",
-                        help="Build Kinase Networks and KS Map (requires downloaded KEA data)")
-    parser.add_argument("--convert-csv", type=str, help="Convert a custom kinase CSV to TSV")
-    parser.add_argument("--all", action="store_true",
-                        help="Run full standard pipeline (assuming files are in place/downloaded)")
+    parser.add_argument(
+        "--ptmcode",
+        nargs=2,
+        metavar=("WITHIN", "BETWEEN"),
+        help="Build PTM databases from provided PTMcode2 .gz files",
+    )
+    parser.add_argument(
+        "--kea",
+        action="store_true",
+        help="Build Kinase Networks and KS Map (requires downloaded KEA data)",
+    )
+    parser.add_argument(
+        "--convert-csv", type=str, help="Convert a custom kinase CSV to TSV"
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Run full standard pipeline (assuming files are in place/downloaded)",
+    )
 
     args = parser.parse_args()
 
@@ -443,7 +489,9 @@ def main():
     elif args.all:
         # Check if user put them manually in raw?
         # PTMcode data usually isn't in Harmonizome default downloads, so we warn if missing
-        logger.warning("Skipping PTMcode DB build (requires explicit paths via --ptmcode).")
+        logger.warning(
+            "Skipping PTMcode DB build (requires explicit paths via --ptmcode)."
+        )
 
     if args.convert_csv:
         curator.convert_custom_kinase_csv(args.convert_csv)

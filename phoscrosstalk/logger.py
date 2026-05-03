@@ -3,6 +3,7 @@ logger.py
 A unified, rich-text logger for the PhosCrosstalk pipeline.
 Handles colorful console output and structured file logging.
 """
+
 import datetime
 import logging
 import os
@@ -12,14 +13,16 @@ from rich.console import Console
 from rich.theme import Theme
 
 # Define custom-theme for consistent coloring
-custom_theme = Theme({
-    "info": "cyan",
-    "warning": "yellow",
-    "error": "bold red",
-    "critical": "bold white on red",
-    "success": "bold green",
-    "header": "bold magenta"
-})
+custom_theme = Theme(
+    {
+        "info": "cyan",
+        "warning": "yellow",
+        "error": "bold red",
+        "critical": "bold white on red",
+        "success": "bold green",
+        "header": "bold magenta",
+    }
+)
 
 console = Console(theme=custom_theme)
 
@@ -33,6 +36,7 @@ class RichLogger:
     managing output styles (colors, emojis) via the `rich` library while maintaining
     standard text logs in a file.
     """
+
     _instance = None
 
     def __new__(cls, name="PhosCrosstalk", log_file="pipeline.log", level=logging.INFO):
@@ -64,7 +68,7 @@ class RichLogger:
             show_time=True,
             show_path=False,
             rich_tracebacks=True,
-            markup=True
+            markup=True,
         )
         rich_handler.setLevel(level)
         self.logger.addHandler(rich_handler)
@@ -79,7 +83,9 @@ class RichLogger:
         Avoids duplicate file handlers if called multiple times.
         """
         # Remove existing FileHandlers to avoid duplicate logs if re-configured
-        self.logger.handlers = [h for h in self.logger.handlers if not isinstance(h, logging.FileHandler)]
+        self.logger.handlers = [
+            h for h in self.logger.handlers if not isinstance(h, logging.FileHandler)
+        ]
 
         path = Path(log_file)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -88,7 +94,7 @@ class RichLogger:
         file_handler.setLevel(level)
         formatter = logging.Formatter(
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S"
+            datefmt="%Y-%m-%d %H:%M:%S",
         )
         file_handler.setFormatter(formatter)
         self.logger.addHandler(file_handler)
@@ -188,7 +194,8 @@ def get_logger(log_file="pipeline.log", timestamp=True):
         # Generate format: pipeline_2023-10-27_15-30-00.log
         ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         root, ext = os.path.splitext(log_file)
-        if not ext: ext = ".log"
+        if not ext:
+            ext = ".log"
         log_file = f"{root}_{ts}{ext}"
 
     return RichLogger(log_file=log_file)

@@ -19,9 +19,9 @@ def _compute_site_noise_weights(Y: np.ndarray) -> np.ndarray:
     """
     logY = np.log1p(np.clip(Y, 1e-3, None))
     diff = np.diff(logY, axis=1)  # (N, T-1)
-    sigma_site = np.sqrt((diff ** 2).mean(axis=1) + 1e-8)
+    sigma_site = np.sqrt((diff**2).mean(axis=1) + 1e-8)
 
-    w_site = 1.0 / (sigma_site ** 2 + 1e-4)
+    w_site = 1.0 / (sigma_site**2 + 1e-4)
     w_site = np.clip(w_site, 0.1, 20.0)
     w_site /= w_site.mean()
     return w_site
@@ -45,9 +45,9 @@ def _compute_protein_noise_weights(A_data: np.ndarray | None) -> np.ndarray:
 
     logA = np.log1p(np.clip(A_data, 1e-3, None))
     diffA = np.diff(logA, axis=1)  # (K_obs, T-1)
-    sigma_prot = np.sqrt((diffA ** 2).mean(axis=1) + 1e-8)
+    sigma_prot = np.sqrt((diffA**2).mean(axis=1) + 1e-8)
 
-    w_prot = 1.0 / (sigma_prot ** 2 + 1e-4)
+    w_prot = 1.0 / (sigma_prot**2 + 1e-4)
     w_prot = np.clip(w_prot, 0.1, 20.0)
     w_prot /= w_prot.mean()
     return w_prot
@@ -68,9 +68,9 @@ def _time_weights_uniform(t: np.ndarray) -> np.ndarray:
     return w_time
 
 
-def _time_weights_early_emphasis(t: np.ndarray,
-                                 t_mid: float | None = None,
-                                 strength: float = 2.0) -> np.ndarray:
+def _time_weights_early_emphasis(
+    t: np.ndarray, t_mid: float | None = None, strength: float = 2.0
+) -> np.ndarray:
     """
     Generate temporal weights that decay over time, emphasizing early kinetics.
 
@@ -113,10 +113,10 @@ def _time_weights_early_emphasis_moderate(t: np.ndarray) -> np.ndarray:
 
 
 def build_weight_matrices(
-        t: np.ndarray,
-        Y: np.ndarray,
-        A_data: np.ndarray | None = None,
-        scheme: str = "uniform",
+    t: np.ndarray,
+    Y: np.ndarray,
+    A_data: np.ndarray | None = None,
+    scheme: str = "uniform",
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Construct full weight matrices for the loss function based on the selected scheme.

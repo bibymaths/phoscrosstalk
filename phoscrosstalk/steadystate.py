@@ -2,6 +2,7 @@
 steadystate.py
 Simulates the network to steady state (long-term behavior) and visualizes convergence.
 """
+
 import os
 import numpy as np
 import pandas as pd
@@ -47,7 +48,7 @@ def run_steadystate_analysis(outdir, problem, theta_opt, sites, proteins, kinase
     t_long = np.concatenate([t1, t2])
 
     # 2. Simulate
-    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+    K = ModelDims.K
 
     # We need to rebuild A0 for the long timeline.
     # We assume protein abundance stimulus (if any) persists at the last observed level
@@ -61,26 +62,37 @@ def run_steadystate_analysis(outdir, problem, theta_opt, sites, proteins, kinase
 
         # We manually call simulate_p_scipy with t_long
     # Need to construct a dummy A0_full for the initial condition extractor
-    A0_initial = build_full_A0(K, 1, problem.A_scaled[:, 0:1] if problem.A_scaled.size > 0 else np.array([]),
-                               problem.prot_idx_for_A)
+    A0_initial = build_full_A0(
+        K,
+        1,
+        problem.A_scaled[:, 0:1] if problem.A_scaled.size > 0 else np.array([]),
+        problem.prot_idx_for_A,
+    )
 
     P_ss, A_ss, S_ss, Kdyn_ss = simulate_p_scipy(
         t_long,
         problem.P_data,  # For Initial Conditions
         A0_initial,
         theta_opt,
-        problem.Cg, problem.Cl, problem.site_prot_idx,
-        problem.K_site_kin, problem.R, problem.L_alpha, problem.kin_to_prot_idx,
-        problem.receptor_mask_prot, problem.receptor_mask_kin,
+        problem.Cg,
+        problem.Cl,
+        problem.site_prot_idx,
+        problem.K_site_kin,
+        problem.R,
+        problem.L_alpha,
+        problem.kin_to_prot_idx,
+        problem.receptor_mask_prot,
+        problem.receptor_mask_kin,
         problem.mechanism,
-        full_output=True
+        full_output=True,
     )
 
     # 3. Analyze Convergence
     # Check if derivatives are close to zero at the end
     delta_P = np.abs(P_ss[:, -1] - P_ss[:, -2])
-    converged_sites = np.mean(delta_P) < 1e-4
-    logger.info(f"   -> System convergence metric (mean delta P): {np.mean(delta_P):.6e}")
+    logger.info(
+        f"   -> System convergence metric (mean delta P): {np.mean(delta_P):.6e}"
+    )
 
     # 4. Save Data
     df_P = pd.DataFrame(P_ss, index=sites, columns=[f"t_{t:.1f}" for t in t_long])
@@ -96,8 +108,12 @@ def run_steadystate_analysis(outdir, problem, theta_opt, sites, proteins, kinase
 
     # 3. Save S and Kdyn
     cols = [f"t_{t:.1f}" for t in t_long]
-    pd.DataFrame(S_ss, index=proteins, columns=cols).to_csv(os.path.join(ss_dir, "steadystate_S.tsv"), sep="\t")
-    pd.DataFrame(Kdyn_ss, index=kinases, columns=cols).to_csv(os.path.join(ss_dir, "steadystate_Kdyn.tsv"), sep="\t")
+    pd.DataFrame(S_ss, index=proteins, columns=cols).to_csv(
+        os.path.join(ss_dir, "steadystate_S.tsv"), sep="\t"
+    )
+    pd.DataFrame(Kdyn_ss, index=kinases, columns=cols).to_csv(
+        os.path.join(ss_dir, "steadystate_Kdyn.tsv"), sep="\t"
+    )
 
     _plot_convergence_heatmap(ss_dir, S_ss, t_long, "Protein_Activity_S")
     _plot_convergence_heatmap(ss_dir, Kdyn_ss, t_long, "Kinase_Activity_Kdyn")
@@ -161,7 +177,7 @@ def _plot_trajectories(outdir, data, t, names, filename_suffix):
     plt.xlabel("Time (SymLog Scale)")
     plt.ylabel("Activity / Abundance")
     plt.title("Dynamics to Steady State (Top 10 High Variance)")
-    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.savefig(os.path.join(outdir, f"trajectories_{filename_suffix}.png"), dpi=300)

@@ -3,6 +3,7 @@ multi_start.py
 Implements multi-start optimization strategies and best-solution selection
 using Fréchet distance.
 """
+
 import numpy as np
 from pymoo.algorithms.moo.unsga3 import UNSGA3
 from pymoo.algorithms.moo.nsga2 import NSGA2
@@ -44,25 +45,21 @@ def run_multi_start_optimization(problem, args, P_scaled):
             "name": "Balanced (UNSGA3, p=12)",
             "algo": "unsga3",
             "partitions": 12,
-            "seed": 1
+            "seed": 1,
         },
         {
             "name": "High-Res (UNSGA3, p=15)",
             "algo": "unsga3",
             "partitions": 15,
-            "seed": 42
+            "seed": 42,
         },
         {
             "name": "Super High-Res (UNSGA3, p=20)",
             "algo": "unsga3",
             "partitions": 20,
-            "seed": 75
+            "seed": 75,
         },
-        {
-            "name": "Exploration (NSGA2)",
-            "algo": "nsga2",
-            "seed": 100
-        }
+        {"name": "Exploration (NSGA2)", "algo": "nsga2", "seed": 100},
     ]
 
     all_F = []
@@ -78,17 +75,14 @@ def run_multi_start_optimization(problem, args, P_scaled):
         if strat["algo"] == "unsga3":
             # Dynamic Reference Directions based on strategy config
             # 'das-dennis' works well for 3 objectives
-            ref_dirs = get_reference_directions("das-dennis", 3, n_partitions=strat["partitions"])
-
-            algorithm = UNSGA3(
-                pop_size=args.pop_size,
-                ref_dirs=ref_dirs
+            ref_dirs = get_reference_directions(
+                "das-dennis", 3, n_partitions=strat["partitions"]
             )
+
+            algorithm = UNSGA3(pop_size=args.pop_size, ref_dirs=ref_dirs)
 
         elif strat["algo"] == "nsga2":
-            algorithm = NSGA2(
-                pop_size=args.pop_size
-            )
+            algorithm = NSGA2(pop_size=args.pop_size)
 
         # Configure Termination (Shared logic)
         termination = DefaultMultiObjectiveTermination(
@@ -97,16 +91,12 @@ def run_multi_start_optimization(problem, args, P_scaled):
             ftol=0.0025,
             period=30,
             n_max_gen=args.gen,
-            n_max_evals=1000000
+            n_max_evals=1000000,
         )
 
         # Execute
         res = minimize(
-            problem,
-            algorithm,
-            termination,
-            seed=strat["seed"],
-            verbose=True
+            problem, algorithm, termination, seed=strat["seed"], verbose=True
         )
 
         if res.X is not None and len(res.X) > 0:
@@ -152,7 +142,9 @@ def run_multi_start_optimization(problem, args, P_scaled):
     best_idx = int(np.argmin(frechet_scores))
     best_score = frechet_scores[best_idx]
 
-    logger.success(f"[*] Best Solution Found via Multi-Start: Fréchet Distance = {best_score:.6f}")
+    logger.success(
+        f"[*] Best Solution Found via Multi-Start: Fréchet Distance = {best_score:.6f}"
+    )
 
     # Construct a merged Result object to return to main.py
     merged_res = Result()

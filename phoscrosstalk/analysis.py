@@ -2,6 +2,7 @@
 analysis.py
 Post-optimization analysis, file export, and plotting.
 """
+
 import os
 import numpy as np
 import pandas as pd
@@ -37,17 +38,23 @@ def save_pareto_results(outdir, F, X, f1, f2, f3, J, F_best):
 
     # DataFrame stats
     df_F = pd.DataFrame(F, columns=obj_names)
-    summary = pd.DataFrame({
-        "objective": obj_names,
-        "min": df_F.min().values, "mean": df_F.mean().values,
-        "median": df_F.median().values, "std": df_F.std(ddof=1).values
-    })
+    summary = pd.DataFrame(
+        {
+            "objective": obj_names,
+            "min": df_F.min().values,
+            "mean": df_F.mean().values,
+            "median": df_F.median().values,
+            "std": df_F.std(ddof=1).values,
+        }
+    )
 
     summary.to_csv(os.path.join(outdir, "pareto_stats.tsv"), sep="\t", index=False)
 
     df_front = df_F.copy()
     df_front["J_scalarized"] = J
-    df_front.to_csv(os.path.join(outdir, "pareto_front_with_J.tsv"), sep="\t", index=False)
+    df_front.to_csv(
+        os.path.join(outdir, "pareto_front_with_J.tsv"), sep="\t", index=False
+    )
 
     bio_scores = np.array([bio_score(theta) for theta in X])
     df_front["bio_score"] = bio_scores
@@ -79,7 +86,9 @@ def plot_pareto_diagnostics(outdir, F, F_best, f1, f2, f3, X):
     plt.figure(figsize=(7, 6))
     sc = plt.scatter(f1, f2, c=f3, cmap="viridis", alpha=0.7)
     plt.colorbar(sc, label="f3")
-    plt.scatter(F_best[0], F_best[1], s=120, facecolors="none", edgecolors="red", linewidths=2)
+    plt.scatter(
+        F_best[0], F_best[1], s=120, facecolors="none", edgecolors="red", linewidths=2
+    )
     plt.title("Pareto Front: f1 vs f2")
     plt.savefig(os.path.join(outdir, "pareto_f1_f2.png"), dpi=300)
     plt.close()
@@ -109,30 +118,39 @@ def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
     params_decoded = decode_theta(theta_opt, K, M, N)
 
     # Protein-specific parameters
-    df_prot = pd.DataFrame({
-        'Protein': proteins,
-        'k_act (Activation)': params_decoded[0],
-        'k_deact (Deactivation)': params_decoded[1],
-        's_prod (Synthesis)': params_decoded[2],
-        'd_deg (Degradation)': params_decoded[3]
-    })
-    df_prot.to_csv(os.path.join(outdir, "parameter_summary_proteins.tsv"), sep="\t", index=False)
+    df_prot = pd.DataFrame(
+        {
+            "Protein": proteins,
+            "k_act (Activation)": params_decoded[0],
+            "k_deact (Deactivation)": params_decoded[1],
+            "s_prod (Synthesis)": params_decoded[2],
+            "d_deg (Degradation)": params_decoded[3],
+        }
+    )
+    df_prot.to_csv(
+        os.path.join(outdir, "parameter_summary_proteins.tsv"), sep="\t", index=False
+    )
 
     # Kinase-specific parameters
-    df_kin = pd.DataFrame({
-        'Kinase': kinases,
-        'Alpha (Global Str)': params_decoded[6],
-        'kK_act (Kinase Act)': params_decoded[7],
-        'kK_deact (Kinase Deact)': params_decoded[8]
-    })
-    df_kin.to_csv(os.path.join(outdir, "parameter_summary_kinases.tsv"), sep="\t", index=False)
+    df_kin = pd.DataFrame(
+        {
+            "Kinase": kinases,
+            "Alpha (Global Str)": params_decoded[6],
+            "kK_act (Kinase Act)": params_decoded[7],
+            "kK_deact (Kinase Deact)": params_decoded[8],
+        }
+    )
+    df_kin.to_csv(
+        os.path.join(outdir, "parameter_summary_kinases.tsv"), sep="\t", index=False
+    )
 
     # Site-specific parameters
-    df_site = pd.DataFrame({
-        'Site': sites,
-        'k_off (Phosphatase Rate)': params_decoded[9]
-    })
-    df_site.to_csv(os.path.join(outdir, "parameter_summary_sites.tsv"), sep="\t", index=False)
+    df_site = pd.DataFrame(
+        {"Site": sites, "k_off (Phosphatase Rate)": params_decoded[9]}
+    )
+    df_site.to_csv(
+        os.path.join(outdir, "parameter_summary_sites.tsv"), sep="\t", index=False
+    )
 
     # Global parameters
     with open(os.path.join(outdir, "parameter_summary_global.txt"), "w") as f:
@@ -156,21 +174,30 @@ def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
 
 
 def save_fitted_simulation(
-        outdir,
-        theta_opt,
-        t,
-        sites,
-        proteins,
-        P_scaled,
-        A_scaled,
-        prot_idx_for_A,
-        baselines,
-        amplitudes,
-        Y,
-        A_data, A_bases, A_amps,
-        mechanism,
-        Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha, kin_to_prot_idx,
-        mask_p, mask_k,
+    outdir,
+    theta_opt,
+    t,
+    sites,
+    proteins,
+    P_scaled,
+    A_scaled,
+    prot_idx_for_A,
+    baselines,
+    amplitudes,
+    Y,
+    A_data,
+    A_bases,
+    A_amps,
+    mechanism,
+    Cg,
+    Cl,
+    site_prot_idx,
+    K_site_kin,
+    R,
+    L_alpha,
+    kin_to_prot_idx,
+    mask_p,
+    mask_k,
 ):
     """
     Run a simulation with optimized parameters, rescale outputs, and save comparison data.
@@ -211,12 +238,26 @@ def save_fitted_simulation(
     # Save Params (unchanged)
     params_decoded = decode_theta(theta_opt, K, M, N)
     param_names = [
-        "k_act", "k_deact", "s_prod", "d_deg",
-        "beta_g", "beta_l",
-        "alpha", "kK_act", "kK_deact", "k_off",
-        "gamma_S_p", "gamma_A_S", "gamma_A_p", "gamma_K_net",
+        "k_act",
+        "k_deact",
+        "s_prod",
+        "d_deg",
+        "beta_g",
+        "beta_l",
+        "alpha",
+        "kK_act",
+        "kK_deact",
+        "k_off",
+        "gamma_S_p",
+        "gamma_A_S",
+        "gamma_A_p",
+        "gamma_K_net",
     ]
-    save_dict = {"theta": theta_opt, "proteins": np.array(proteins), "sites": np.array(sites)}
+    save_dict = {
+        "theta": theta_opt,
+        "proteins": np.array(proteins),
+        "sites": np.array(sites),
+    }
     for name, val in zip(param_names, params_decoded):
         save_dict[name] = val
     np.savez(os.path.join(outdir, "fitted_params.npz"), **save_dict)
@@ -225,12 +266,21 @@ def save_fitted_simulation(
     A0_full = build_full_A0(K, len(t), A_scaled, prot_idx_for_A)
 
     P_sim, A_sim, S_sim, Kdyn_sim = simulate_p_scipy(
-        t, P_scaled, A0_full, theta_opt,
-        Cg, Cl, site_prot_idx,
-        K_site_kin, R, L_alpha, kin_to_prot_idx,
-        mask_p, mask_k,
+        t,
+        P_scaled,
+        A0_full,
+        theta_opt,
+        Cg,
+        Cl,
+        site_prot_idx,
+        K_site_kin,
+        R,
+        L_alpha,
+        kin_to_prot_idx,
+        mask_p,
+        mask_k,
         mechanism,
-        full_output=True
+        full_output=True,
     )
 
     # Rescale Sites (model)
@@ -287,9 +337,6 @@ def save_fitted_simulation(
 
     df_out = pd.DataFrame.from_records(records)
     df_out.to_csv(os.path.join(outdir, "fit_timeseries.tsv"), sep="\t", index=False)
-
-    # 2. Save Internal States (S and Kdyn) - NEW separate file
-    kinases = [f"K_{i}" for i in range(M)]  # Or pass kinases explicitly if available
 
     records_internal = []
     T = len(t)
@@ -350,7 +397,7 @@ def plot_internal_states(outdir, t, S_sim, Kdyn_sim, proteins):
     axS.set_title("Protein Active Fraction ($S_{sim}$)")
     axS.set_xlabel("Time (min)")
     axS.set_ylabel("Fraction Active [0-1]")
-    axS.legend(fontsize=8, loc='upper right')
+    axS.legend(fontsize=8, loc="upper right")
     axS.grid(alpha=0.3)
 
     # Panel 2: Kdyn_sim (Kinase Active Fraction)
@@ -363,7 +410,7 @@ def plot_internal_states(outdir, t, S_sim, Kdyn_sim, proteins):
     axK.set_title("Kinase Active Fraction ($K_{dyn}$)")
     axK.set_xlabel("Time (min)")
     axK.set_ylabel("Fraction Active [0-1]")
-    axK.legend(fontsize=8, loc='upper right')
+    axK.legend(fontsize=8, loc="upper right")
     axK.grid(alpha=0.3)
 
     plt.tight_layout()
@@ -408,8 +455,12 @@ def plot_fitted_simulation(outdir):
         logger.info(f"   → Plotting {prot}")
 
         fig, (axP, axS) = plt.subplots(
-            1, 2, figsize=(18, 7), sharex=True, sharey=True,
-            gridspec_kw={"wspace": 0.10}
+            1,
+            2,
+            figsize=(18, 7),
+            sharex=True,
+            sharey=True,
+            gridspec_kw={"wspace": 0.10},
         )
 
         # -------------------------
@@ -430,26 +481,45 @@ def plot_fitted_simulation(outdir):
 
             # Model: thick line, no markers
             axP.plot(
-                t_vals, y_sim,
-                "-", lw=4.0, alpha=1.0, color=color,
-                label="Protein (model)"
+                t_vals,
+                y_sim,
+                "-",
+                lw=4.0,
+                alpha=1.0,
+                color=color,
+                label="Protein (model)",
             )
 
             # Data: lighter line + square markers, same color
             if has_data:
                 axP.plot(
-                    np.asarray(t_vals)[mask_dat], y_dat[mask_dat],
-                    "-", lw=2.0, alpha=0.35, color=color,
-                    label="Protein (data)"
+                    np.asarray(t_vals)[mask_dat],
+                    y_dat[mask_dat],
+                    "-",
+                    lw=2.0,
+                    alpha=0.35,
+                    color=color,
+                    label="Protein (data)",
                 )
                 axP.scatter(
-                    np.asarray(t_vals)[mask_dat], y_dat[mask_dat],
-                    marker="s", s=55, alpha=0.6, color=color, edgecolors="none"
+                    np.asarray(t_vals)[mask_dat],
+                    y_dat[mask_dat],
+                    marker="s",
+                    s=55,
+                    alpha=0.6,
+                    color=color,
+                    edgecolors="none",
                 )
         else:
             axP.text(
-                0.5, 0.5, "No protein abundance row",
-                transform=axP.transAxes, ha="center", va="center", fontsize=10, alpha=0.7
+                0.5,
+                0.5,
+                "No protein abundance row",
+                transform=axP.transAxes,
+                ha="center",
+                va="center",
+                fontsize=10,
+                alpha=0.7,
             )
 
         # -------------------------
@@ -459,18 +529,25 @@ def plot_fitted_simulation(outdir):
 
         if sub.empty:
             axS.text(
-                0.5, 0.5, "No phosphosites",
-                transform=axS.transAxes, ha="center", va="center", fontsize=10, alpha=0.7
+                0.5,
+                0.5,
+                "No phosphosites",
+                transform=axS.transAxes,
+                ha="center",
+                va="center",
+                fontsize=10,
+                alpha=0.7,
             )
         else:
             # Colors per site within the protein (consistent between model & data)
             # If many sites, tab20 will repeat; still usable.
             cmap = plt.cm.tab20
-            n_sites = len(sub)
 
             for i, (_, row) in enumerate(sub.iterrows()):
                 res = row.get("Residue", "")
-                pos = row.get("Position", row.get("Pos", row.get("SitePos", "")))  # robust lookup
+                pos = row.get(
+                    "Position", row.get("Pos", row.get("SitePos", ""))
+                )  # robust lookup
                 # Label uses both residue and position if available
                 if pd.notna(pos) and str(pos) != "":
                     site_label = f"{res}_{pos}"
@@ -486,21 +563,34 @@ def plot_fitted_simulation(outdir):
 
                 # Model: thick line, no markers
                 axS.plot(
-                    t_vals, y_sim,
-                    "-", lw=4.0, alpha=1.0, color=c,
-                    label=f"{site_label} (model)"
+                    t_vals,
+                    y_sim,
+                    "-",
+                    lw=4.0,
+                    alpha=1.0,
+                    color=c,
+                    label=f"{site_label} (model)",
                 )
 
                 # Data: lighter line + square markers, same color
                 if has_data:
                     axS.plot(
-                        np.asarray(t_vals)[mask_dat], y_dat[mask_dat],
-                        "-", lw=2.0, alpha=0.35, color=c,
-                        label=f"{site_label} (data)"
+                        np.asarray(t_vals)[mask_dat],
+                        y_dat[mask_dat],
+                        "-",
+                        lw=2.0,
+                        alpha=0.35,
+                        color=c,
+                        label=f"{site_label} (data)",
                     )
                     axS.scatter(
-                        np.asarray(t_vals)[mask_dat], y_dat[mask_dat],
-                        marker="s", s=45, alpha=0.6, color=c, edgecolors="none"
+                        np.asarray(t_vals)[mask_dat],
+                        y_dat[mask_dat],
+                        marker="s",
+                        s=45,
+                        alpha=0.6,
+                        color=c,
+                        edgecolors="none",
                     )
 
         # -------------------------
@@ -509,7 +599,9 @@ def plot_fitted_simulation(outdir):
         fig.suptitle(f"{prot}", fontsize=14, fontweight="bold", y=0.98)
 
         axP.set_title("Protein abundance", fontsize=12, fontweight="bold")
-        axS.set_title("Phosphosites (Residue + Position)", fontsize=12, fontweight="bold")
+        axS.set_title(
+            "Phosphosites (Residue + Position)", fontsize=12, fontweight="bold"
+        )
 
         for ax in (axP, axS):
             ax.grid(alpha=0.25)
@@ -527,11 +619,13 @@ def plot_fitted_simulation(outdir):
             loc="upper left",
             bbox_to_anchor=(1.02, 1.0),
             borderaxespad=0.0,
-            frameon=True
+            frameon=True,
         )
 
         plt.tight_layout()
-        plt.savefig(os.path.join(outdir, f"fit_{prot}.png"), dpi=300, bbox_inches="tight")
+        plt.savefig(
+            os.path.join(outdir, f"fit_{prot}.png"), dpi=300, bbox_inches="tight"
+        )
         plt.close(fig)
 
 
@@ -637,7 +731,9 @@ def plot_goodness_of_fit(file, outdir):
 
     # R^2 (safe)
     y_mean = float(np.mean(y))
-    ss_res = float(np.sum((y - x) ** 2))  # here "residual" is y-x (since identity is the target)
+    ss_res = float(
+        np.sum((y - x) ** 2)
+    )  # here "residual" is y-x (since identity is the target)
     ss_tot = float(np.sum((y - y_mean) ** 2))
     r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else float("nan")
 
@@ -664,7 +760,14 @@ def plot_goodness_of_fit(file, outdir):
             # pick the worst point for labeling
             j = int(np.argmax(ar))
             outside_items.append(row["Label"])
-            outside_points.append((float(data_vals[m][j]), float(sim_vals[m][j]), row["Label"], float(ar[j])))
+            outside_points.append(
+                (
+                    float(data_vals[m][j]),
+                    float(sim_vals[m][j]),
+                    row["Label"],
+                    float(ar[j]),
+                )
+            )
 
     # Sort by deviation and limit labels to avoid unreadable plot
     outside_points.sort(key=lambda t: t[3], reverse=True)
@@ -688,7 +791,9 @@ def plot_goodness_of_fit(file, outdir):
             alpha=0.35,
             color="green",
             s=40,
-            label="Phosphosite" if idx == df[df["Type"] == "Phosphosite"].index[0] else None,
+            label="Phosphosite"
+            if idx == df[df["Type"] == "Phosphosite"].index[0]
+            else None,
         )
 
     # Abundance (protein / kinases, depending on your file semantics)
@@ -704,7 +809,9 @@ def plot_goodness_of_fit(file, outdir):
             alpha=0.55,
             color="blue",
             s=40,
-            label="Abundance" if idx == df[df["Type"] != "Phosphosite"].index[0] else None,
+            label="Abundance"
+            if idx == df[df["Type"] != "Phosphosite"].index[0]
+            else None,
         )
 
     # Identity line and CI band
@@ -720,8 +827,10 @@ def plot_goodness_of_fit(file, outdir):
     plt.plot(xx, xx - delta, "k:", lw=1.5)
 
     # Label outside-band points (top deviators only)
-    for (px, py, lab, dev) in outside_points:
-        plt.scatter([px], [py], s=70, facecolors="none", edgecolors="black", linewidths=1.5)
+    for px, py, lab, dev in outside_points:
+        plt.scatter(
+            [px], [py], s=70, facecolors="none", edgecolors="black", linewidths=1.5
+        )
         plt.text(px, py, f"  {lab}", fontsize=9, va="center")
 
     # Metrics box
@@ -734,11 +843,14 @@ def plot_goodness_of_fit(file, outdir):
         f"Outside band (items): {len(set(outside_items))}"
     )
     plt.gca().text(
-        0.02, 0.98, txt,
+        0.02,
+        0.98,
+        txt,
         transform=plt.gca().transAxes,
-        va="top", ha="left",
+        va="top",
+        ha="left",
         fontsize=10,
-        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8, edgecolor="gray")
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8, edgecolor="gray"),
     )
 
     plt.xlabel("Observed")
@@ -812,36 +924,38 @@ def _save_index_tsv(path: str, vec: np.ndarray) -> None:
         None
     """
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    np.savetxt(path, np.asarray(vec, dtype=int).reshape(-1, 1), fmt="%d", delimiter="\t")
+    np.savetxt(
+        path, np.asarray(vec, dtype=int).reshape(-1, 1), fmt="%d", delimiter="\t"
+    )
 
 
 def _save_preopt_snapshot_txt_csv(
-        outdir,
-        *,
-        t,
-        sites,
-        proteins,
-        kinases,
-        positions,
-        P_scaled,
-        Y,
-        A_scaled,
-        A_data,
-        A_proteins,
-        W_data,
-        W_data_prot,
-        Cg,
-        Cl,
-        site_prot_idx,
-        K_site_kin,
-        R,
-        L_alpha,
-        kin_to_prot_idx,
-        receptor_mask_prot,
-        receptor_mask_kin,
-        xl,
-        xu,
-        args,
+    outdir,
+    *,
+    t,
+    sites,
+    proteins,
+    kinases,
+    positions,
+    P_scaled,
+    Y,
+    A_scaled,
+    A_data,
+    A_proteins,
+    W_data,
+    W_data_prot,
+    Cg,
+    Cl,
+    site_prot_idx,
+    K_site_kin,
+    R,
+    L_alpha,
+    kin_to_prot_idx,
+    receptor_mask_prot,
+    receptor_mask_kin,
+    xl,
+    xu,
+    args,
 ) -> None:
     """
     Save a comprehensive snapshot of all model inputs and configuration before optimization.
@@ -894,27 +1008,29 @@ def _save_preopt_snapshot_txt_csv(
         a = np.asarray(arr)
         return f"{name}\t{tuple(a.shape)}"
 
-    lines.extend([
-        _shape("t", t),
-        _shape("positions", positions),
-        _shape("Y", Y),
-        _shape("P_scaled", P_scaled),
-        _shape("A_data", A_data if A_data is not None else np.zeros((0, 0))),
-        _shape("A_scaled", A_scaled),
-        _shape("W_data", W_data),
-        _shape("W_data_prot", W_data_prot),
-        _shape("Cg", Cg),
-        _shape("Cl", Cl),
-        _shape("K_site_kin", K_site_kin),
-        _shape("R", R),
-        _shape("L_alpha", L_alpha),
-        _shape("site_prot_idx", site_prot_idx),
-        _shape("kin_to_prot_idx", kin_to_prot_idx),
-        _shape("receptor_mask_prot", receptor_mask_prot),
-        _shape("receptor_mask_kin", receptor_mask_kin),
-        _shape("xl", xl),
-        _shape("xu", xu),
-    ])
+    lines.extend(
+        [
+            _shape("t", t),
+            _shape("positions", positions),
+            _shape("Y", Y),
+            _shape("P_scaled", P_scaled),
+            _shape("A_data", A_data if A_data is not None else np.zeros((0, 0))),
+            _shape("A_scaled", A_scaled),
+            _shape("W_data", W_data),
+            _shape("W_data_prot", W_data_prot),
+            _shape("Cg", Cg),
+            _shape("Cl", Cl),
+            _shape("K_site_kin", K_site_kin),
+            _shape("R", R),
+            _shape("L_alpha", L_alpha),
+            _shape("site_prot_idx", site_prot_idx),
+            _shape("kin_to_prot_idx", kin_to_prot_idx),
+            _shape("receptor_mask_prot", receptor_mask_prot),
+            _shape("receptor_mask_kin", receptor_mask_kin),
+            _shape("xl", xl),
+            _shape("xu", xu),
+        ]
+    )
     _save_txt(os.path.join(snap_dir, "meta.txt"), "\n".join(lines))
 
     # --- labels (txt) ---
@@ -922,7 +1038,10 @@ def _save_preopt_snapshot_txt_csv(
     _save_txt(os.path.join(snap_dir, "proteins.txt"), "\n".join(map(str, proteins)))
     _save_txt(os.path.join(snap_dir, "kinases.txt"), "\n".join(map(str, kinases)))
     if A_proteins is not None:
-        _save_txt(os.path.join(snap_dir, "A_proteins.txt"), "\n".join(map(str, list(A_proteins))))
+        _save_txt(
+            os.path.join(snap_dir, "A_proteins.txt"),
+            "\n".join(map(str, list(A_proteins))),
+        )
     else:
         _save_txt(os.path.join(snap_dir, "A_proteins.txt"), "")
 
@@ -951,7 +1070,9 @@ def _save_preopt_snapshot_txt_csv(
     _save_matrix_tsv(os.path.join(snap_dir, "L_alpha.tsv"), L_alpha)
 
     _save_index_tsv(os.path.join(snap_dir, "kin_to_prot_idx.tsv"), kin_to_prot_idx)
-    _save_index_tsv(os.path.join(snap_dir, "receptor_mask_prot.tsv"), receptor_mask_prot)
+    _save_index_tsv(
+        os.path.join(snap_dir, "receptor_mask_prot.tsv"), receptor_mask_prot
+    )
     _save_index_tsv(os.path.join(snap_dir, "receptor_mask_kin.tsv"), receptor_mask_kin)
 
     _save_vector_tsv(os.path.join(snap_dir, "xl.tsv"), xl)

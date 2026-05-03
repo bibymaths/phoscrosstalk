@@ -2,6 +2,7 @@
 knockouts.py
 Systematic in-silico knockout screens (Kinase, Protein, and Phosphosite KO).
 """
+
 import os
 import numpy as np
 import pandas as pd
@@ -44,24 +45,38 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
     ko_dir = os.path.join(outdir, "knockouts")
     os.makedirs(ko_dir, exist_ok=True)
 
-    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+    K = ModelDims.K
 
     # 1. Establish Wild Type (WT) Baseline
     t_eval = np.array([0, 240.0])
 
     def get_steady_state(theta_in, K_mat_in=None):
-        if K_mat_in is None: K_mat_in = problem.K_site_kin
+        if K_mat_in is None:
+            K_mat_in = problem.K_site_kin
 
-        A0 = build_full_A0(K, len(t_eval), problem.A_scaled[:, 0:1] if problem.A_scaled.size > 0 else np.array([]),
-                           problem.prot_idx_for_A)
+        A0 = build_full_A0(
+            K,
+            len(t_eval),
+            problem.A_scaled[:, 0:1] if problem.A_scaled.size > 0 else np.array([]),
+            problem.prot_idx_for_A,
+        )
 
         P, _, S, Kdyn = simulate_p_scipy(
-            t_eval, problem.P_data, A0, theta_in,
-            problem.Cg, problem.Cl, problem.site_prot_idx,
-            K_mat_in, problem.R, problem.L_alpha, problem.kin_to_prot_idx,
-            problem.receptor_mask_prot, problem.receptor_mask_kin,
+            t_eval,
+            problem.P_data,
+            A0,
+            theta_in,
+            problem.Cg,
+            problem.Cl,
+            problem.site_prot_idx,
+            K_mat_in,
+            problem.R,
+            problem.L_alpha,
+            problem.kin_to_prot_idx,
+            problem.receptor_mask_prot,
+            problem.receptor_mask_kin,
             problem.mechanism,
-            full_output=True
+            full_output=True,
         )
         return P[:, -1], S[:, -1], Kdyn[:, -1]
 
@@ -102,7 +117,8 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
                 # We determine vmax to handle high fold changes gracefully.
                 vals = df.values.flatten()
                 vmax = np.percentile(vals, 98)
-                if vmax < 1.5: vmax = 1.5  # Minimum contrast
+                if vmax < 1.5:
+                    vmax = 1.5  # Minimum contrast
 
                 g = sns.clustermap(
                     df,
@@ -111,7 +127,7 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
                     vmin=0.0,  # Floor at 0.0
                     vmax=vmax,
                     figsize=(10, 10),
-                    cbar_kws={'label': 'Fold Change (KO/WT)'}
+                    cbar_kws={"label": "Fold Change (KO/WT)"},
                 )
                 g.fig.suptitle(f"Fold Change {name} upon Knockout")
                 plt.savefig(os.path.join(ko_dir, f"clustermap_{name}_fc.png"), dpi=300)
@@ -154,7 +170,8 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
     try:
         vals = df_filtered.values.flatten()
         vmax = np.percentile(vals, 98)
-        if vmax < 2.0: vmax = 2.0
+        if vmax < 2.0:
+            vmax = 2.0
 
         g = sns.clustermap(
             df_filtered,
@@ -165,9 +182,9 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
             figsize=(14, 14),
             xticklabels=False,
             yticklabels=True,
-            dendrogram_ratio=(.1, .2),
+            dendrogram_ratio=(0.1, 0.2),
             cbar_pos=(0.02, 0.8, 0.03, 0.18),
-            cbar_kws={'label': 'Fold Change (KO/WT)'}
+            cbar_kws={"label": "Fold Change (KO/WT)"},
         )
         g.ax_heatmap.set_xlabel("Downstream Phosphosites")
         g.ax_heatmap.set_ylabel("Perturbation (KO)")
