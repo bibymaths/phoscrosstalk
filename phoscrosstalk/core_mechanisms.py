@@ -53,27 +53,28 @@ def clip_scalar(x, lo, hi):
 @njit(cache=True, fastmath=True)
 def decode_theta(theta, K, M, N):
     """
-    Decodes the flat parameter vector `theta` into individual biological parameters.
+    Decodes the flat parameter vector ``theta`` into individual biological parameters.
+
+    ``k_act`` and ``s_prod`` are no longer optimisation variables; they are
+    derived from experimental data (mRNA / kinase signals) at run-time.  The
+    parameter vector therefore has dimension ``2*K + 2 + 3*M + N + 4``.
 
     Performs unpacking, clipping to valid log-ranges, and exponentiation.
 
     Args:
-        theta (np.ndarray): Flat parameter vector.
+        theta (np.ndarray): Flat parameter vector of length ``2*K+2+3*M+N+4``.
         K (int): Number of proteins.
         M (int): Number of kinases.
         N (int): Number of phosphosites.
 
     Returns:
-        tuple: A tuple containing arrays/scalars for:
-               (k_act, k_deact, s_prod, d_deg, beta_g, beta_l, alpha,
-                kK_act, kK_deact, k_off, gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net)
+        tuple: A tuple of 12 entries:
+               (k_deact, d_deg, beta_g, beta_l, alpha,
+                kK_act, kK_deact, k_off,
+                gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net)
     """
     idx0 = 0
-    log_k_act = theta[idx0 : idx0 + K]
-    idx0 += K
     log_k_deact = theta[idx0 : idx0 + K]
-    idx0 += K
-    log_s_prod = theta[idx0 : idx0 + K]
     idx0 += K
     log_d_deg = theta[idx0 : idx0 + K]
     idx0 += K
@@ -95,9 +96,7 @@ def decode_theta(theta, K, M, N):
     raw_gamma = theta[idx0 : idx0 + 4]
 
     # clip then exp
-    k_act = np.exp(np.clip(log_k_act, -20.0, 10.0))
     k_deact = np.exp(np.clip(log_k_deact, -20.0, 10.0))
-    s_prod = np.exp(np.clip(log_s_prod, -20.0, 10.0))
     d_deg = np.exp(np.clip(log_d_deg, -20.0, 10.0))
     alpha = np.exp(np.clip(log_alpha, -20.0, 10.0))
     kK_act = np.exp(np.clip(log_kK_act, -20.0, 10.0))
@@ -113,9 +112,7 @@ def decode_theta(theta, K, M, N):
     gamma_K_net = 2.0 * math.tanh(raw_gamma[3])
 
     return (
-        k_act,
         k_deact,
-        s_prod,
         d_deg,
         beta_g,
         beta_l,

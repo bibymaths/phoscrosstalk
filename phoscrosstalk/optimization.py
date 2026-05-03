@@ -40,13 +40,13 @@ def bio_score_nb(theta, K, M, N):
     vector theta and penalizes deviations from expected biological time scales.
 
     Args:
-        theta (np.ndarray): Parameter vector.
+        theta (np.ndarray): Parameter vector (length 2*K+2+3*M+N+4).
         K, M, N (int): Model dimensions.
 
     Returns:
         float: The calculated biological score (lower is better/more plausible).
     """
-    (k_act, k_deact, s_prod, d_deg, _, _, _, kK_act, kK_deact, _, _, _, _, _) = (
+    (k_deact, d_deg, _, _, _, kK_act, kK_deact, _, _, _, _, _) = (
         decode_theta(theta, K, M, N)
     )
     t_half_kinase = np.log(2.0) / kK_deact
@@ -77,21 +77,24 @@ def create_bounds(K, M, N):
     """
     Generates the lower (xl) and upper (xu) bound vectors for the optimization search space.
 
+    ``k_act`` and ``s_prod`` are no longer optimisation variables.
+    The dimension is now ``2*K + 2 + 3*M + N + 4``.
+
     Args:
         K, M, N (int): Model dimensions.
 
     Returns:
         tuple: (xl, xu, dim)
     """
-    dim = 4 * K + 2 + 3 * M + N + 4
+    dim = 2 * K + 2 + 3 * M + N + 4
     xl, xu = np.zeros(dim), np.zeros(dim)
     idx = 0
-    # Protein: k_act, k_deact, s_prod
-    for _ in range(3):
-        xl[idx : idx + K] = np.log(1e-5)
-        xu[idx : idx + K] = np.log(10.0)
-        idx += K
-    # Protein: d_deg (restricted)
+    # Protein: k_deact, d_deg (k_act and s_prod removed – derived from data)
+    # k_deact
+    xl[idx : idx + K] = np.log(1e-5)
+    xu[idx : idx + K] = np.log(10.0)
+    idx += K
+    # d_deg (restricted upper bound for biological plausibility)
     xl[idx : idx + K] = np.log(1e-5)
     xu[idx : idx + K] = np.log(0.5)
     idx += K
@@ -153,31 +156,50 @@ def make_loss_fn(
     rtol=1e-6,
     atol=1e-9,
     max_steps=16384,
+    k_act_fn=None,
+    s_prod_fn=None,
+    t_mrna=None,
+    rna_data_scaled=None,
+    w_mrna=1.0,
 ):
     """
     Build a JAX-differentiable scalarized loss function for Optimistix.
 
     The returned function ``loss_fn(theta, args)`` is compatible with
     ``optimistix.minimise``. It:
-      1. Runs diffrax.diffeqsolve inside the loss.
+      1. Runs diffrax.diffeqsolve inside the loss (over a unified time grid).
       2. Computes f1 (phosphosite), f2 (abundance), f3 (regularisation).
-      3. Returns ``total_loss = w_phospho*f1 + w_abundance*f2 + w_reg*f3``,
-         plus (f1, f2, f3) as auxiliary output.
+      3. Optionally computes f4 (mRNA) when *t_mrna* and *rna_data_scaled*
+         are provided.
+      4. Returns the weighted total loss plus (f1, f2, f3) as auxiliary output.
 
-    Parameters are frozen at creation time (topology arrays, scalars, weights).
-    Only ``theta`` varies during optimisation.
+    Parameters are frozen at creation time; only ``theta`` varies.
     """
     K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
 
     n_p = max(1, P_data.size)
     n_A = max(1, A_scaled.size)
-    n_var = 4 * K + 2 + 3 * M + N + 4
+    n_var = 2 * K + 2 + 3 * M + N + 4
 
     prev_site_idx = compute_prev_site_idx(site_prot_idx.astype(np.int32), N)
 
+    # Build unified time grid (protein ∪ mRNA)
+    if t_mrna is not None and len(t_mrna) > 0:
+        all_times = np.union1d(t, t_mrna)
+    else:
+        all_times = np.unique(t)
+    all_times = np.sort(all_times).astype(np.float64)
+
+    # Index maps: where in solver output do the protein / mRNA times land?
+    prot_time_idx = np.searchsorted(all_times, t)
+    if t_mrna is not None and len(t_mrna) > 0:
+        mrna_time_idx = np.searchsorted(all_times, t_mrna)
+    else:
+        mrna_time_idx = None
+
     # Build initial state from data
-    T = P_data.shape[1]
-    A0_full = build_full_A0(K, T, A_scaled, prot_idx_for_A)
+    T_prot = P_data.shape[1]
+    A0_full = build_full_A0(K, T_prot, A_scaled, prot_idx_for_A)
 
     x0 = np.zeros(2 * K + M + N, dtype=np.float64)
     a0 = np.nan_to_num(A0_full[:, 0], nan=1.0, posinf=5.0, neginf=0.0)
@@ -198,7 +220,7 @@ def make_loss_fn(
     psi_j = jnp.asarray(prev_site_idx, dtype=jnp.int32)
 
     y0_j = jnp.asarray(x0, dtype=jnp.float32)
-    t_eval = jnp.asarray(t, dtype=jnp.float32)
+    t_eval = jnp.asarray(all_times, dtype=jnp.float32)
 
     P_data_j = jnp.asarray(P_data, dtype=jnp.float32)
     A_scaled_j = jnp.asarray(A_scaled, dtype=jnp.float32)
@@ -207,16 +229,33 @@ def make_loss_fn(
     prot_idx_j = jnp.asarray(prot_idx_for_A, dtype=jnp.int32)
     La_loss_j = jnp.asarray(L_alpha, dtype=jnp.float32)
 
-    rhs_fn = make_rhs(K, M, N, mechanism)
+    prot_idx_solver = jnp.asarray(prot_time_idx, dtype=jnp.int32)
+
+    # mRNA arrays (if available)
+    has_mrna = (
+        t_mrna is not None
+        and rna_data_scaled is not None
+        and len(t_mrna) > 0
+        and mrna_time_idx is not None
+    )
+    if has_mrna:
+        rna_j = jnp.asarray(rna_data_scaled, dtype=jnp.float32)
+        mrna_idx_j = jnp.asarray(mrna_time_idx, dtype=jnp.int32)
+        n_rna = max(1, rna_data_scaled.size)
+    else:
+        rna_j = None
+        mrna_idx_j = None
+        n_rna = 1
+
+    rhs_fn = make_rhs(K, M, N, mechanism, k_act_fn=k_act_fn, s_prod_fn=s_prod_fn)
     term = diffrax.ODETerm(rhs_fn)
     solver = diffrax.Tsit5()
     sctrl = diffrax.PIDController(rtol=rtol, atol=atol)
     saveat = diffrax.SaveAt(ts=t_eval)
 
-    t0_val = float(t[0])
-    t1_val = float(t[-1])
+    t0_val = float(all_times[0])
+    t1_val = float(all_times[-1])
 
-    # Large penalty for failed solves
     FAILED_SOLVE_PENALTY = jnp.float32(1e6)
 
     def loss_fn(theta, _args):
@@ -250,10 +289,12 @@ def make_loss_fn(
             throw=False,
         )
 
-        xs = sol.ys  # (T, 2K+M+N)
+        xs = sol.ys  # (T_unified, 2K+M+N)
 
-        P_sim = jnp.clip(xs[:, 2 * K + M :], 0.0, 1.0).T  # (N, T)
-        A_sim = jnp.clip(xs[:, K : 2 * K], 0.0, 5.0).T  # (K, T)
+        # Sample at protein time indices
+        xs_prot = xs[prot_idx_solver, :]
+        P_sim = jnp.clip(xs_prot[:, 2 * K + M :], 0.0, 1.0).T  # (N, T_prot)
+        A_sim = jnp.clip(xs_prot[:, K : 2 * K], 0.0, 5.0).T  # (K, T_prot)
 
         f1, f2, f3 = compute_objectives_jax(
             theta_j,
@@ -359,6 +400,8 @@ class NetworkProblem:
         mechanism,
         xl,
         xu,
+        k_act_fn=None,
+        s_prod_fn=None,
         **kwargs,  # absorb legacy keyword args (elementwise_runner, etc.)
     ):
         self.t = t
@@ -381,6 +424,8 @@ class NetworkProblem:
         self.mechanism = mechanism
         self.xl = xl
         self.xu = xu
+        self.k_act_fn = k_act_fn
+        self.s_prod_fn = s_prod_fn
 
     def simulate(self, x):
         """
@@ -411,6 +456,8 @@ class NetworkProblem:
             self.receptor_mask_prot,
             self.receptor_mask_kin,
             self.mechanism,
+            k_act_fn=self.k_act_fn,
+            s_prod_fn=self.s_prod_fn,
         )
         return P_sim
 
