@@ -17,22 +17,25 @@ from phoscrosstalk.logger import get_logger
 logger = get_logger()
 
 
-def save_pareto_results(outdir, F, X, f1, f2, f3, J, F_best):
+def save_run_results(outdir, F, X, f1, f2, f3, J, F_best):
     """
-    Save Pareto front optimization results, including statistics and scalarized scores, to disk.
+    Save multi-start optimization results, including loss component statistics and
+    total loss scores, to disk.
 
     Args:
         outdir (str): Path to the output directory.
-        F (np.ndarray): Array of objective values for the Pareto front (shape: n_points x 3).
-        X (np.ndarray): Array of parameter values for the Pareto front.
-        f1 (np.ndarray): Array of values for objective 1 (Phosphosite error).
-        f2 (np.ndarray): Array of values for objective 2 (Protein error).
-        f3 (np.ndarray): Array of values for objective 3 (Complexity/Regularization).
-        J (np.ndarray): Array of scalarized objective values.
-        F_best (np.ndarray): The objective values corresponding to the best scalarized solution.
+        F (np.ndarray): Array of loss components for all solutions (shape: n_solutions x 3).
+        X (np.ndarray): Array of parameter values for all solutions.
+        f1 (np.ndarray): Phosphosite error component for each solution.
+        f2 (np.ndarray): Protein abundance error component for each solution.
+        f3 (np.ndarray): Regularization component for each solution.
+        J (np.ndarray): Total loss (scalar objective) per solution, used for model selection.
+        F_best (np.ndarray): The loss components corresponding to the selected best solution.
 
     Returns:
-        None: Files are written to `outdir` (pareto_stats.tsv, pareto_front_with_J.tsv, etc.).
+        None: Files are written to `outdir`.  Output filenames are preserved for
+              backward compatibility with external readers (pareto_stats.tsv,
+              pareto_front_with_J.tsv, pareto_points.tsv, pareto_front.npz).
     """
     obj_names = ["f1_P_sites", "f2_protein", "f3_complexity"]
 
@@ -63,24 +66,30 @@ def save_pareto_results(outdir, F, X, f1, f2, f3, J, F_best):
     np.savez(os.path.join(outdir, "pareto_front.npz"), F=F, X=X, J=J)
 
 
-def plot_pareto_diagnostics(outdir, F, F_best, f1, f2, f3, X):
-    """
-    Plot diagnostic visualizations for the Pareto front analysis.
+# Backward-compatibility alias
+save_pareto_results = save_run_results
 
-    Generates a scatter plot of objective space (f1 vs f2 colored by f3) and
-    a heatmap of parameter correlations.
+
+def plot_run_diagnostics(outdir, F, F_best, f1, f2, f3, X):
+    """
+    Plot diagnostic visualizations for the multi-start optimization results.
+
+    Generates a scatter plot of loss component space (f1 vs f2 colored by f3)
+    with the selected best solution highlighted, and a heatmap of parameter
+    correlations across all runs.
 
     Args:
         outdir (str): Path to the output directory.
-        F (np.ndarray): Pareto front objective values.
-        F_best (np.ndarray): Objective values of the best selected point.
-        f1 (np.ndarray): Values for objective function 1.
-        f2 (np.ndarray): Values for objective function 2.
-        f3 (np.ndarray): Values for objective function 3.
-        X (np.ndarray): Parameter values associated with the Pareto front.
+        F (np.ndarray): Loss components for all solutions.
+        F_best (np.ndarray): Loss components of the selected best solution.
+        f1 (np.ndarray): Phosphosite error component for each solution.
+        f2 (np.ndarray): Protein abundance error component for each solution.
+        f3 (np.ndarray): Regularization component for each solution.
+        X (np.ndarray): Parameter values for all solutions.
 
     Returns:
         None: Saves 'pareto_f1_f2.png' and 'pareto_param_corr.png' to `outdir`.
+              Output filenames are preserved for backward compatibility.
     """
     # F1 vs F2
     plt.figure(figsize=(7, 6))
@@ -89,7 +98,7 @@ def plot_pareto_diagnostics(outdir, F, F_best, f1, f2, f3, X):
     plt.scatter(
         F_best[0], F_best[1], s=120, facecolors="none", edgecolors="red", linewidths=2
     )
-    plt.title("Pareto Front: f1 vs f2")
+    plt.title("Optimization Results: f1 vs f2")
     plt.savefig(os.path.join(outdir, "pareto_f1_f2.png"), dpi=300)
     plt.close()
 
@@ -98,6 +107,10 @@ def plot_pareto_diagnostics(outdir, F, F_best, f1, f2, f3, X):
     sns.heatmap(np.corrcoef(X.T), ax=ax, cmap="coolwarm", center=0.0, square=True)
     fig.savefig(os.path.join(outdir, "pareto_param_corr.png"), dpi=300)
     plt.close(fig)
+
+
+# Backward-compatibility alias
+plot_pareto_diagnostics = plot_run_diagnostics
 
 
 def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):

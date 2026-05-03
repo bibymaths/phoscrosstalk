@@ -61,7 +61,6 @@ def run_hyperparameter_scan(
     receptor_mask_prot,
     receptor_mask_kin,
     mechanism,
-    cores,
 ):
     """
     Grid search over (length_scale, lambda_net, reg_lambda) using short Optimistix runs.

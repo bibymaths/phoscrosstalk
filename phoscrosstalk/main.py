@@ -114,7 +114,7 @@ def main():
     parser.add_argument(
         "--outdir",
         default="network_fit",
-        help="Directory where results, logs, and Pareto front files are saved.",
+        help="Directory where results, logs, and output files are saved.",
     )
 
     # ------------------------------------------------------------------
@@ -524,7 +524,6 @@ def main():
             receptor_mask_prot,
             receptor_mask_kin,
             args.mechanism,
-            args.cores,
         )
         # Apply Best Params
         args.length_scale = best_params["length_scale"]
@@ -610,15 +609,15 @@ def main():
         xu,
     )
 
-    res, best_idx, J = run_multi_start_optimization(problem, args, P_scaled)
+    res, best_idx, total_losses = run_multi_start_optimization(problem, args, P_scaled)
 
     # 8. Analysis & Saving
-    # Find best solution using Fretchet distance for all trajectories as primary criterion
+    # Find best solution by minimum total loss (single-objective criterion)
     F, X = res.F, res.X
     f1, f2, f3 = F[:, 0], F[:, 1], F[:, 2]
 
-    analysis.save_pareto_results(args.outdir, F, X, f1, f2, f3, J, F[best_idx])
-    analysis.plot_pareto_diagnostics(args.outdir, F, F[best_idx], f1, f2, f3, X)
+    analysis.save_run_results(args.outdir, F, X, f1, f2, f3, total_losses, F[best_idx])
+    analysis.plot_run_diagnostics(args.outdir, F, F[best_idx], f1, f2, f3, X)
 
     analysis.save_fitted_simulation(
         args.outdir,
