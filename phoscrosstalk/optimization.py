@@ -7,7 +7,7 @@ import numpy as np
 from numba import njit
 from pymoo.core.problem import ElementwiseProblem
 from phoscrosstalk.config import ModelDims
-from phoscrosstalk.simulation import simulate_p_scipy
+from phoscrosstalk.simulation import simulate_p_scipy, build_full_A0
 from phoscrosstalk.core_mechanisms import decode_theta
 
 
@@ -161,30 +161,6 @@ def bio_score(theta):
         float: Biological score.
     """
     return float(bio_score_nb(theta, ModelDims.K, ModelDims.M, ModelDims.N))
-
-
-def build_full_A0(K, T, A_scaled, prot_idx_for_A):
-    """
-    Constructs the full initial condition/forcing matrix for Protein Abundance (A).
-
-    Maps the sparse observed protein data (`A_scaled`) into the full system matrix (`A0_full`)
-    of size K x T. Proteins without observed data are initialized to zero (or handled by the ODE default).
-
-    Args:
-        K (int): Total number of proteins in the model.
-        T (int): Number of time points.
-        A_scaled (np.ndarray): Observed protein data matrix.
-        prot_idx_for_A (np.ndarray): Indices of proteins corresponding to rows in `A_scaled`.
-
-    Returns:
-        np.ndarray: The full K x T protein abundance matrix.
-    """
-
-    A0_full = np.zeros((K, T), dtype=float)
-    if A_scaled.size > 0:
-        for k, p_idx in enumerate(prot_idx_for_A):
-            A0_full[p_idx, :] = A_scaled[k, :]
-    return A0_full
 
 
 def create_bounds(K, M, N):

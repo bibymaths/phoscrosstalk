@@ -132,7 +132,7 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
                 g.fig.suptitle(f"Fold Change {name} upon Knockout")
                 plt.savefig(os.path.join(ko_dir, f"clustermap_{name}_fc.png"), dpi=300)
                 plt.close()
-            except Exception as e:
+            except (ValueError, np.linalg.LinAlgError, RuntimeError) as e:
                 logger.warning(f"Clustermap {name} failed: {e}")
 
     process_and_save(res_S, proteins, "S_sim")
@@ -190,5 +190,5 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
         g.ax_heatmap.set_ylabel("Perturbation (KO)")
         plt.savefig(os.path.join(ko_dir, "knockout_clustermap_fc.png"), dpi=300)
         plt.close()
-    except Exception as e:
+    except (ValueError, np.linalg.LinAlgError, RuntimeError) as e:
         logger.critical(f"[!] Clustermap generation failed: {e}")

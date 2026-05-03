@@ -124,7 +124,7 @@ class DataCurator:
                     else:
                         # File might not exist for this specific dataset, which is fine
                         pass
-                except Exception as e:
+                except (requests.RequestException, OSError, IOError) as e:
                     logger.warning(f"  ! Failed to download {url}: {e}")
 
     # =========================================================================
@@ -374,7 +374,7 @@ class DataCurator:
                         header=None,
                         names=["kinase", "substrate_site", "pmid", "source"],
                     )
-        except Exception as e:
+        except (zipfile.BadZipFile, KeyError, OSError, pd.errors.ParserError) as e:
             logger.error(f"Failed to read KS zip: {e}")
             return
 
