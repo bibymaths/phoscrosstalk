@@ -175,7 +175,7 @@ def main():
     parser.add_argument(
         "--pop-size",
         type=int,
-        default=20,
+        default=5,
         help="Number of multi-start restarts (maps to n_starts for Optimistix).",
     )
     parser.add_argument(
