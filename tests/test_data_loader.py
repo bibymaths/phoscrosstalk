@@ -226,3 +226,130 @@ def test_row_normalize_basic():
     np.testing.assert_allclose(Cn[0], [0.5, 0.5])
     # Zero row should not produce NaN (divided by 1.0)
     assert np.all(np.isfinite(Cn))
+
+
+# ---------------------------------------------------------------------------
+# load_rna_data tests
+# ---------------------------------------------------------------------------
+
+def test_load_rna_data_valid(tmp_path):
+    from phoscrosstalk.data_loader import load_rna_data
+
+    df = pd.DataFrame(
+        {
+            "gene": ["EGFR", "MAPK1", "AKT1"],
+            "0": [1.0, 0.8, 1.2],
+            "10": [1.5, 0.9, 1.1],
+            "30": [2.0, 1.0, 1.0],
+        }
+    )
+    p = tmp_path / "rna.csv"
+    df.to_csv(p, index=False)
+
+    gene_ids, t_rna, matrix = load_rna_data(str(p))
+    assert gene_ids == ["EGFR", "MAPK1", "AKT1"]
+    assert len(t_rna) == 3
+    assert matrix.shape == (3, 3)
+    assert not np.any(np.isnan(matrix))
+
+
+def test_load_rna_data_missing_file():
+    from phoscrosstalk.data_loader import load_rna_data
+
+    with pytest.raises(FileNotFoundError):
+        load_rna_data("/nonexistent/path/rna.csv")
+
+
+def test_load_rna_data_too_few_time_cols(tmp_path):
+    from phoscrosstalk.data_loader import load_rna_data
+
+    df = pd.DataFrame({"gene": ["EGFR"], "0": [1.0]})
+    p = tmp_path / "rna_bad.csv"
+    df.to_csv(p, index=False)
+
+    with pytest.raises(ValueError, match="at least 2"):
+        load_rna_data(str(p))
+
+
+def test_load_rna_data_nan_values(tmp_path):
+    from phoscrosstalk.data_loader import load_rna_data
+
+    df = pd.DataFrame({"gene": ["EGFR"], "0": [float("nan")], "10": [1.0]})
+    p = tmp_path / "rna_nan.csv"
+    df.to_csv(p, index=False)
+
+    with pytest.raises(ValueError, match="NaN"):
+        load_rna_data(str(p))
+
+
+# ---------------------------------------------------------------------------
+# load_tf_network tests
+# ---------------------------------------------------------------------------
+
+def test_load_tf_network_valid(tmp_path):
+    from phoscrosstalk.data_loader import load_tf_network
+
+    df = pd.DataFrame(
+        {"source": ["EGFR", "AKT1"], "target": ["MAPK1", "MAPK1"], "weight": [0.5, 1.0]}
+    )
+    p = tmp_path / "tf.csv"
+    df.to_csv(p, index=False)
+
+    result = load_tf_network(str(p))
+    assert list(result.columns) == ["source", "target", "weight"]
+    assert len(result) == 2
+
+
+def test_load_tf_network_default_weight(tmp_path):
+    from phoscrosstalk.data_loader import load_tf_network
+
+    df = pd.DataFrame({"source": ["EGFR"], "target": ["MAPK1"]})
+    p = tmp_path / "tf_no_weight.csv"
+    df.to_csv(p, index=False)
+
+    result = load_tf_network(str(p))
+    assert result["weight"].iloc[0] == 1.0
+
+
+def test_load_tf_network_missing_column(tmp_path):
+    from phoscrosstalk.data_loader import load_tf_network
+
+    df = pd.DataFrame({"src": ["EGFR"], "tgt": ["MAPK1"]})
+    p = tmp_path / "tf_bad.csv"
+    df.to_csv(p, index=False)
+
+    with pytest.raises(ValueError, match="'source'"):
+        load_tf_network(str(p))
+
+
+def test_load_tf_network_warns_on_unknown_tf(tmp_path, recwarn):
+    from phoscrosstalk.data_loader import load_tf_network
+
+    df = pd.DataFrame({"source": ["UNKNOWN_GENE"], "target": ["MAPK1"]})
+    p = tmp_path / "tf_warn.csv"
+    df.to_csv(p, index=False)
+
+    # Should not raise – just warn
+    result = load_tf_network(str(p), gene_ids=["EGFR", "MAPK1"])
+    assert len(result) == 1
+
+
+# ---------------------------------------------------------------------------
+# build_tf_prot_weights tests
+# ---------------------------------------------------------------------------
+
+def test_build_tf_prot_weights_shape():
+    from phoscrosstalk.data_loader import build_tf_prot_weights
+
+    tf_net_df = pd.DataFrame(
+        {"source": ["EGFR", "EGFR"], "target": ["MAPK1", "AKT1"], "weight": [1.0, 0.5]}
+    )
+    gene_ids = ["EGFR", "MAPK1", "AKT1"]
+    proteins = ["MAPK1", "AKT1", "PTEN"]
+
+    W = build_tf_prot_weights(tf_net_df, gene_ids, proteins)
+    assert W.shape == (3, 3)
+    # EGFR (gene 0) → MAPK1 (prot 0) with weight 1.0
+    assert W[0, 0] == pytest.approx(1.0)
+    # EGFR (gene 0) → AKT1 (prot 1) with weight 0.5
+    assert W[1, 0] == pytest.approx(0.5)

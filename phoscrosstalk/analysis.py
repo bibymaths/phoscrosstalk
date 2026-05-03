@@ -130,14 +130,12 @@ def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
     K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
     params_decoded = decode_theta(theta_opt, K, M, N)
 
-    # Protein-specific parameters
+    # Protein-specific parameters (k_act and s_prod are now derived, not fitted)
     df_prot = pd.DataFrame(
         {
             "Protein": proteins,
-            "k_act (Activation)": params_decoded[0],
-            "k_deact (Deactivation)": params_decoded[1],
-            "s_prod (Synthesis)": params_decoded[2],
-            "d_deg (Degradation)": params_decoded[3],
+            "k_deact (Deactivation)": params_decoded[0],
+            "d_deg (Degradation)": params_decoded[1],
         }
     )
     df_prot.to_csv(
@@ -148,9 +146,9 @@ def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
     df_kin = pd.DataFrame(
         {
             "Kinase": kinases,
-            "Alpha (Global Str)": params_decoded[6],
-            "kK_act (Kinase Act)": params_decoded[7],
-            "kK_deact (Kinase Deact)": params_decoded[8],
+            "Alpha (Global Str)": params_decoded[4],
+            "kK_act (Kinase Act)": params_decoded[5],
+            "kK_deact (Kinase Deact)": params_decoded[6],
         }
     )
     df_kin.to_csv(
@@ -159,7 +157,7 @@ def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
 
     # Site-specific parameters
     df_site = pd.DataFrame(
-        {"Site": sites, "k_off (Phosphatase Rate)": params_decoded[9]}
+        {"Site": sites, "k_off (Phosphatase Rate)": params_decoded[7]}
     )
     df_site.to_csv(
         os.path.join(outdir, "parameter_summary_sites.tsv"), sep="\t", index=False
@@ -168,9 +166,10 @@ def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
     # Global parameters
     with open(os.path.join(outdir, "parameter_summary_global.txt"), "w") as f:
         f.write("=== Global Coupling Parameters ===\n")
-        f.write(f"beta_g (Global Coupling): {params_decoded[4]:.5f}\n")
-        f.write(f"beta_l (Local Coupling):  {params_decoded[5]:.5f}\n")
+        f.write(f"beta_g (Global Coupling): {params_decoded[2]:.5f}\n")
+        f.write(f"beta_l (Local Coupling):  {params_decoded[3]:.5f}\n")
         f.write("-" * 40 + "\n")
+        f.write("Note: k_act and s_prod are derived from TF/kinase signals, not fitted.\n")
 
     # Print the summary to console as well
     logger.info("=== Parameter Summary ===")
@@ -181,8 +180,8 @@ def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
     logger.header("\n--- Site-specific Parameters ---")
     logger.info(df_site.to_string(index=False))
     logger.header("\n--- Global Coupling Parameters ---")
-    logger.info(f"beta_g (Global Coupling): {params_decoded[4]:.5f}")
-    logger.info(f"beta_l (Local Coupling):  {params_decoded[5]:.5f}")
+    logger.info(f"beta_g (Global Coupling): {params_decoded[2]:.5f}")
+    logger.info(f"beta_l (Local Coupling):  {params_decoded[3]:.5f}")
     logger.info("-" * 40 + "\n")
 
 
@@ -248,12 +247,10 @@ def save_fitted_simulation(
     """
     K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
 
-    # Save Params (unchanged)
+    # Save Params – k_act and s_prod are derived quantities, not fitted
     params_decoded = decode_theta(theta_opt, K, M, N)
     param_names = [
-        "k_act",
         "k_deact",
-        "s_prod",
         "d_deg",
         "beta_g",
         "beta_l",
@@ -1090,3 +1087,137 @@ def _save_preopt_snapshot_txt_csv(
 
     _save_vector_tsv(os.path.join(snap_dir, "xl.tsv"), xl)
     _save_vector_tsv(os.path.join(snap_dir, "xu.tsv"), xu)
+
+
+def save_mrna_outputs(outdir, gene_ids, t_rna, rna_data_obs, rna_data_fitted=None):
+    """
+    Save mRNA fit time-series and per-gene diagnostics.
+
+    Args:
+        outdir (str): Output directory.
+        gene_ids (list[str]): Gene identifiers.
+        t_rna (np.ndarray): mRNA time points (T_rna,).
+        rna_data_obs (np.ndarray): Observed mRNA fold-change matrix (n_genes, T_rna).
+        rna_data_fitted (np.ndarray | None): Model-fitted mRNA values; if None,
+            the observed data is used as a placeholder.
+
+    Returns:
+        None: Writes ``mrna_fit_timeseries.tsv`` and ``mrna_diagnostics.tsv``
+        to *outdir*.
+    """
+    os.makedirs(outdir, exist_ok=True)
+
+    n_genes, T = rna_data_obs.shape
+    if rna_data_fitted is None:
+        rna_data_fitted = rna_data_obs.copy()
+
+    records = []
+    diag_records = []
+
+    for i, gene in enumerate(gene_ids):
+        obs = rna_data_obs[i]
+        fit = rna_data_fitted[i]
+        for t_idx, t_val in enumerate(t_rna):
+            records.append(
+                {
+                    "gene": gene,
+                    "time": float(t_val),
+                    "observed": float(obs[t_idx]),
+                    "fitted": float(fit[t_idx]),
+                }
+            )
+
+        # Per-gene diagnostics
+        resid = obs - fit
+        rmse = float(np.sqrt(np.mean(resid ** 2)))
+        ss_res = float(np.sum(resid ** 2))
+        ss_tot = float(np.sum((obs - np.mean(obs)) ** 2))
+        r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 1e-12 else float("nan")
+        diag_records.append(
+            {
+                "gene": gene,
+                "rmse": rmse,
+                "r2": r2,
+                "mean_residual": float(np.mean(resid)),
+                "std_residual": float(np.std(resid)),
+                "max_abs_residual": float(np.max(np.abs(resid))),
+            }
+        )
+
+    pd.DataFrame(records).to_csv(
+        os.path.join(outdir, "mrna_fit_timeseries.tsv"), sep="\t", index=False
+    )
+    pd.DataFrame(diag_records).to_csv(
+        os.path.join(outdir, "mrna_diagnostics.tsv"), sep="\t", index=False
+    )
+    logger.info(
+        f"[*] mRNA outputs written to {outdir}: "
+        "mrna_fit_timeseries.tsv, mrna_diagnostics.tsv"
+    )
+
+
+def plot_mrna_fit(outdir, gene_ids=None, max_genes=12):
+    """
+    Plot observed vs fitted mRNA trajectories (dots vs line per gene).
+
+    Reads ``mrna_fit_timeseries.tsv`` from *outdir*.
+
+    Args:
+        outdir (str): Directory containing ``mrna_fit_timeseries.tsv``.
+        gene_ids (list[str] | None): Subset of genes to plot; ``None`` plots
+            up to *max_genes* with the largest dynamic range.
+        max_genes (int): Maximum number of genes to include in one figure.
+
+    Returns:
+        None: Saves ``mrna_fit_panel.png`` to *outdir*.
+    """
+    tsv_path = os.path.join(outdir, "mrna_fit_timeseries.tsv")
+    if not os.path.exists(tsv_path):
+        logger.warning(f"[!] mrna_fit_timeseries.tsv not found in {outdir}; skipping plot.")
+        return
+
+    df = pd.read_csv(tsv_path, sep="\t")
+    all_genes = df["gene"].unique().tolist()
+
+    if gene_ids is not None:
+        plot_genes = [g for g in gene_ids if g in all_genes]
+    else:
+        # Pick top-N by dynamic range of observed values
+        ranges = (
+            df.groupby("gene")["observed"]
+            .apply(lambda v: float(v.max() - v.min()))
+            .sort_values(ascending=False)
+        )
+        plot_genes = ranges.head(max_genes).index.tolist()
+
+    n = len(plot_genes)
+    if n == 0:
+        logger.warning("[!] No genes to plot for mRNA fit panel.")
+        return
+
+    ncols = min(4, n)
+    nrows = (n + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows), squeeze=False)
+    axes_flat = axes.flatten()
+
+    for ax_idx, gene in enumerate(plot_genes):
+        ax = axes_flat[ax_idx]
+        sub = df[df["gene"] == gene].sort_values("time")
+        ax.plot(sub["time"], sub["fitted"], "-", lw=2, label="fitted")
+        ax.scatter(sub["time"], sub["observed"], s=40, zorder=5, label="observed")
+        ax.set_title(gene, fontsize=10, fontweight="bold")
+        ax.set_xlabel("Time")
+        ax.set_ylabel("mRNA FC")
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.25)
+
+    # Hide unused axes
+    for ax in axes_flat[n:]:
+        ax.set_visible(False)
+
+    fig.suptitle("mRNA Fit: Observed vs Fitted", fontsize=13, fontweight="bold")
+    plt.tight_layout()
+    plt.savefig(os.path.join(outdir, "mrna_fit_panel.png"), dpi=300)
+    plt.close(fig)
+    logger.info(f"[*] mRNA fit panel saved to {outdir}/mrna_fit_panel.png")
+

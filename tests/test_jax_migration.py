@@ -51,7 +51,8 @@ def _make_tiny_model(K=2, M=3, N=4, T=6, seed=42):
     ModelDims.set_dims(K, M, N)
     rng = np.random.default_rng(seed)
 
-    dim = 4 * K + 2 + 3 * M + N + 4
+    # New dim: 2*K + 2 + 3*M + N + 4  (k_act and s_prod removed from theta)
+    dim = 2 * K + 2 + 3 * M + N + 4
     t = np.array([0.0, 1.0, 5.0, 10.0, 30.0, 60.0])
     P_data = rng.uniform(0.1, 0.9, (N, T))
     A_data = rng.uniform(0.5, 1.5, (K, T))
@@ -477,8 +478,8 @@ class TestCLIRegression:
             main()
         assert exc.value.code == 0
 
-    def test_old_flags_accepted(self, monkeypatch):
-        """Legacy flags --gen, --pop-size, --algorithm must parse without error."""
+    def test_old_flags_removed(self, monkeypatch):
+        """Legacy flags --gen, --pop-size, --algorithm must be rejected (removed)."""
         monkeypatch.setattr(
             sys,
             "argv",
@@ -500,17 +501,15 @@ class TestCLIRegression:
         )
         from phoscrosstalk.main import main
 
-        # The flags should be accepted by argparse; execution will fail on missing files
-        # but NOT with a SystemExit(2) "unrecognized arguments" error.
-        with pytest.raises((SystemExit, Exception)) as exc_info:
+        with pytest.raises(SystemExit) as exc_info:
             main()
-        # argparse SystemExit(2) would mean unrecognized argument; that must NOT happen
-        exc = exc_info.value
-        if isinstance(exc, SystemExit):
-            assert exc.code != 2, "--algorithm or other flag was rejected by argparse"
+        # argparse SystemExit(2) means unrecognized argument – that IS expected now
+        assert exc_info.value.code == 2, (
+            "stale pymoo flags should be rejected by argparse with exit code 2"
+        )
 
     def test_new_flags_accepted(self, monkeypatch):
-        """New flags --optimizer, --max-steps, --rtol, --atol, loss weights."""
+        """New flags --config, --rna-data, --tf-net must parse without error."""
         monkeypatch.setattr(
             sys,
             "argv",
@@ -522,20 +521,16 @@ class TestCLIRegression:
                 "fake.db",
                 "--ptm-inter",
                 "fake.db",
-                "--optimizer",
-                "bfgs",
+                "--config",
+                "nonexistent_config.toml",
+                "--rna-data",
+                "fake_rna.csv",
+                "--tf-net",
+                "fake_tf.csv",
+                "--n-starts",
+                "2",
                 "--max-steps",
                 "50",
-                "--rtol",
-                "1e-5",
-                "--atol",
-                "1e-8",
-                "--loss-weight-phospho",
-                "2.0",
-                "--loss-weight-abundance",
-                "1.0",
-                "--loss-weight-reg",
-                "0.5",
             ],
         )
         from phoscrosstalk.main import main
@@ -558,14 +553,13 @@ class TestJaxMechanisms:
         from phoscrosstalk.jax_mechanisms import decode_theta_jax
 
         K, M, N = 3, 5, 7
-        dim = 4 * K + 2 + 3 * M + N + 4
+        # New dim: 2*K + 2 + 3*M + N + 4  (k_act and s_prod removed)
+        dim = 2 * K + 2 + 3 * M + N + 4
         theta = jnp.zeros(dim)
         decoded = decode_theta_jax(theta, K, M, N)
-        assert len(decoded) == 14
-        k_act, k_deact, s_prod, d_deg = decoded[:4]
-        assert k_act.shape == (K,)
+        assert len(decoded) == 12
+        k_deact, d_deg = decoded[:2]
         assert k_deact.shape == (K,)
-        assert s_prod.shape == (K,)
         assert d_deg.shape == (K,)
 
     def test_compute_prev_site_idx(self):
@@ -584,7 +578,8 @@ class TestJaxMechanisms:
         K, M, N = 2, 3, 4
         rhs = make_rhs(K, M, N, "dist")
 
-        dim = 4 * K + 2 + 3 * M + N + 4
+        # New dim: 2*K + 2 + 3*M + N + 4
+        dim = 2 * K + 2 + 3 * M + N + 4
         theta = jnp.zeros(dim)
         Cg = jnp.eye(N)
         Cl = jnp.eye(N)

@@ -41,19 +41,23 @@ def simulate_ode(
     atol=1e-9,
     max_steps=16384,
     dt0=0.01,
+    k_act_fn=None,
+    s_prod_fn=None,
+    t_extra=None,
 ):
     """
     Simulate the phosphoproteomic network dynamics using Diffrax (JAX backend).
 
     Builds the initial state vector x = [S, A, K_dyn, p], integrates the
-    ODE system over t_arr with the Tsit5 adaptive solver, clips bounded
-    states, and returns the result as NumPy arrays.
+    ODE system over a unified time grid (``t_arr ∪ t_extra`` if provided),
+    clips bounded states, and returns the result as NumPy arrays sampled at
+    ``t_arr``.
 
     Args:
-        t_arr (np.ndarray): Time points for the simulation.
+        t_arr (np.ndarray): Primary time points for the simulation output.
         P_data0 (np.ndarray): Initial phosphosite data (used for t=0 state).
         A_data0 (np.ndarray): Initial protein abundance data (used for t=0 state).
-        theta (np.ndarray): Flattened parameter vector.
+        theta (np.ndarray): Flattened parameter vector (length 2*K+2+3*M+N+4).
         Cg, Cl (np.ndarray): Global and Local coupling matrices.
         site_prot_idx (np.ndarray): Mapping indices for sites to proteins.
         K_site_kin (np.ndarray): Kinase-site interaction matrix.
@@ -66,6 +70,10 @@ def simulate_ode(
         rtol, atol (float): Solver tolerances.
         max_steps (int): Maximum solver steps.
         dt0 (float): Initial step size.
+        k_act_fn (callable | None): JAX closure for derived k_act(t) -> (K,).
+        s_prod_fn (callable | None): JAX closure for derived s_prod(t) -> (K,).
+        t_extra (np.ndarray | None): Additional time points (e.g. mRNA times)
+            to include in the unified solver grid.
 
     Returns:
         tuple:
@@ -82,6 +90,15 @@ def simulate_ode(
 
     T = len(t_arr)
     N_sites = P_data0.shape[0]
+
+    # Build unified time grid
+    if t_extra is not None and len(t_extra) > 0:
+        solver_times = np.sort(np.unique(np.concatenate([t_arr, t_extra])))
+    else:
+        solver_times = np.sort(np.unique(t_arr))
+
+    # Index map: where in solver_times does each t_arr entry fall?
+    prot_time_idx = np.searchsorted(solver_times, t_arr)
 
     # Build initial conditions
     x0 = np.zeros(2 * K + M + N, dtype=np.float64)
@@ -120,9 +137,9 @@ def simulate_ode(
         jnp.asarray(prev_site_idx, dtype=jnp.int32),
     )
 
-    rhs_fn = make_rhs(K, M, N, mechanism)
+    rhs_fn = make_rhs(K, M, N, mechanism, k_act_fn=k_act_fn, s_prod_fn=s_prod_fn)
     term = diffrax.ODETerm(rhs_fn)
-    t_eval = jnp.asarray(t_arr, dtype=jnp.float32)
+    t_eval = jnp.asarray(solver_times, dtype=jnp.float32)
     y0_jax = jnp.asarray(x0, dtype=jnp.float32)
     saveat = diffrax.SaveAt(ts=t_eval)
     stepsize_ctrl = diffrax.PIDController(rtol=rtol, atol=atol)
@@ -132,8 +149,8 @@ def simulate_ode(
         sol = diffrax.diffeqsolve(
             term,
             solver,
-            t0=float(t_arr[0]),
-            t1=float(t_arr[-1]),
+            t0=float(solver_times[0]),
+            t1=float(solver_times[-1]),
             dt0=dt0,
             y0=y0_jax,
             args=args,
@@ -145,15 +162,18 @@ def simulate_ode(
     except Exception as exc:
         raise RuntimeError(
             f"Diffrax solver failed. mechanism={mechanism!r}, "
-            f"theta.shape={theta.shape}, t0={t_arr[0]}, t1={t_arr[-1]}. "
+            f"theta.shape={theta.shape}, t0={solver_times[0]}, t1={solver_times[-1]}. "
             f"Original error: {exc}"
         ) from exc
 
-    # sol.ys shape: (T, state_dim)
-    xs = np.asarray(sol.ys, dtype=np.float64)
+    # sol.ys shape: (T_unified, state_dim)
+    xs_all = np.asarray(sol.ys, dtype=np.float64)
 
-    if not np.all(np.isfinite(xs)):
+    if not np.all(np.isfinite(xs_all)):
         return nan_result
+
+    # Sample at protein time indices
+    xs = xs_all[prot_time_idx, :]
 
     # Slice and clip bounded states
     S_sim = xs[:, :K]
