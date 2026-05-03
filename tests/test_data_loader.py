@@ -31,6 +31,7 @@ from phoscrosstalk.data_loader import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_valid_csv(path, n_sites=3, n_timepoints=None):
     """Write a minimal valid phosphosite CSV with the expected column structure."""
     if n_timepoints is None:
@@ -49,6 +50,7 @@ def _make_valid_csv(path, n_sites=3, n_timepoints=None):
 # ---------------------------------------------------------------------------
 # load_site_data
 # ---------------------------------------------------------------------------
+
 
 def test_load_site_data_missing_file():
     with pytest.raises(FileNotFoundError, match="not found"):
@@ -107,7 +109,9 @@ def test_load_site_data_valid(tmp_path):
     csv_path = str(tmp_path / "data.csv")
     n_sites = 4
     _make_valid_csv(csv_path, n_sites=n_sites)
-    sites, proteins, site_prot_idx, positions, t, Y, A_data, A_proteins = load_site_data(csv_path)
+    sites, proteins, site_prot_idx, positions, t, Y, A_data, A_proteins = (
+        load_site_data(csv_path)
+    )
     assert len(sites) == n_sites
     assert Y.shape == (n_sites, len(DEFAULT_TIMEPOINTS))
     assert len(t) == len(DEFAULT_TIMEPOINTS)
@@ -120,6 +124,7 @@ def test_load_site_data_valid(tmp_path):
 # load_kinase_site_matrix
 # ---------------------------------------------------------------------------
 
+
 def test_load_kinase_site_matrix_missing_file():
     with pytest.raises(FileNotFoundError, match="not found"):
         load_kinase_site_matrix("/nonexistent/kinase.tsv", ["PROT1_S1"])
@@ -129,6 +134,7 @@ def test_load_kinase_site_matrix_missing_file():
 # build_kinase_site_from_kea
 # ---------------------------------------------------------------------------
 
+
 def test_build_kinase_site_from_kea_missing_file():
     with pytest.raises(FileNotFoundError, match="not found"):
         build_kinase_site_from_kea("/nonexistent/kea.tsv", ["PROT1_S1"])
@@ -137,6 +143,7 @@ def test_build_kinase_site_from_kea_missing_file():
 # ---------------------------------------------------------------------------
 # build_C_matrices_from_db
 # ---------------------------------------------------------------------------
+
 
 def test_build_c_matrices_missing_intra():
     with pytest.raises(FileNotFoundError, match="Intra-protein"):
@@ -154,6 +161,7 @@ def test_build_c_matrices_missing_inter(tmp_path):
     # Create an empty intra DB so only inter is missing
     intra_path = str(tmp_path / "intra.db")
     import sqlite3
+
     conn = sqlite3.connect(intra_path)
     conn.execute(
         "CREATE TABLE intra_pairs "
@@ -177,6 +185,7 @@ def test_build_c_matrices_missing_inter(tmp_path):
 # build_alpha_laplacian_from_unified_graph
 # ---------------------------------------------------------------------------
 
+
 def test_build_alpha_laplacian_missing_pkl():
     with pytest.raises(FileNotFoundError, match="not found"):
         build_alpha_laplacian_from_unified_graph("/nonexistent/graph.pkl", ["K1"])
@@ -185,6 +194,7 @@ def test_build_alpha_laplacian_missing_pkl():
 # ---------------------------------------------------------------------------
 # apply_scaling
 # ---------------------------------------------------------------------------
+
 
 def test_apply_scaling_unknown_mode():
     Y = np.ones((3, 5))
@@ -208,6 +218,7 @@ def test_apply_scaling_minmax_range():
 # ---------------------------------------------------------------------------
 # row_normalize
 # ---------------------------------------------------------------------------
+
 
 def test_row_normalize_basic():
     C = np.array([[2.0, 2.0], [0.0, 0.0]])

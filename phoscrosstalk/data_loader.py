@@ -226,9 +226,13 @@ def build_C_matrices_from_db(
         tuple: (Cg, Cl) - The global and local adjacency matrices.
     """
     if not os.path.exists(ptm_intra_path):
-        raise FileNotFoundError(f"Intra-protein PTM database not found: {ptm_intra_path}")
+        raise FileNotFoundError(
+            f"Intra-protein PTM database not found: {ptm_intra_path}"
+        )
     if not os.path.exists(ptm_inter_path):
-        raise FileNotFoundError(f"Inter-protein PTM database not found: {ptm_inter_path}")
+        raise FileNotFoundError(
+            f"Inter-protein PTM database not found: {ptm_inter_path}"
+        )
     N = len(sites)
     idx = {s: i for i, s in enumerate(sites)}
     Cg = np.zeros((N, N), dtype=float)
@@ -325,7 +329,9 @@ def build_kinase_site_from_kea(ks_psite_table_path, sites):
             - kinases (list): Sorted list of kinase names.
     """
     if not os.path.exists(ks_psite_table_path):
-        raise FileNotFoundError(f"KEA kinase-substrate table not found: {ks_psite_table_path}")
+        raise FileNotFoundError(
+            f"KEA kinase-substrate table not found: {ks_psite_table_path}"
+        )
     df = pd.read_csv(ks_psite_table_path, sep="\t")
     df["substrate_site"] = df["substrate_site"].astype(str).str.upper()
     df["kinase"] = df["kinase"].astype(str).str.upper()
