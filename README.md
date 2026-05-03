@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white" alt="Python 3.11">
   <img src="https://img.shields.io/badge/license-BSD--3--Clause-green" alt="BSD 3-Clause license">
 </p>
 
@@ -99,20 +99,30 @@ The Streamlit dashboard supports:
 phoscrosstalk/
 ├── __init__.py
 ├── main.py
+├── config.py
+├── logger.py
+├── data_loader.py
 ├── data_curator.py
+├── weighting.py
 ├── core_mechanisms.py
 ├── optimization.py
+├── hyperparam.py
+├── multistarts.py
+├── fretchet.py
 ├── simulation.py
+├── steadystate.py
 ├── analysis.py
+├── post_processing.py
+├── equations.py
 ├── sensitivity.py
 ├── knockouts.py
-├── app.py
-└── README.md
-````
+├── debug_main.py
+└── app.py
+```
 
 ## Installation
 
-PhosCrosstalk requires Python 3.10 or newer.
+PhosCrosstalk requires Python 3.11 (Python ≥ 3.11, < 3.12).
 
 ```bash
 git clone https://github.com/<yourname>/phoscrosstalk.git
@@ -121,7 +131,13 @@ cd phoscrosstalk
 python -m venv venv
 source venv/bin/activate
 
-pip install -r requirements.txt
+pip install .
+```
+
+Alternatively, with `uv`:
+
+```bash
+uv sync
 ```
 
 Main dependencies:

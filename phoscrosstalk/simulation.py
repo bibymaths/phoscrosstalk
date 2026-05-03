@@ -65,6 +65,11 @@ def simulate_p_scipy(
             Returns arrays of NaNs if integration fails.
     """
     K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+    if K is None or M is None or N is None:
+        raise RuntimeError(
+            "ModelDims have not been set. Call ModelDims.set_dims(K, M, N) before "
+            "running a simulation."
+        )
     state_dim = 2 * K + M + N
 
     x0 = np.zeros((state_dim,))
