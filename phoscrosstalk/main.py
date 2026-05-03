@@ -270,61 +270,6 @@ def main():
     results_dir = os.path.join(args.outdir)
     logger.header(f"[*] Output directory: {args.outdir}")
 
-    # ------------------------------------------------------------------
-    # Backwards-compatibility mapping for deprecated optimisation flags
-    #
-    # Prefer the new --n-starts and --max-steps flags when provided.  If
-    # unspecified, fall back to the deprecated counterparts to avoid
-    # breaking older scripts.  Warn users when both old and new flags are
-    # supplied so they are aware of the precedence.
-
-    # Determine n_starts
-    if args.n_starts is None:
-        if args.pop_size is not None:
-            args.n_starts = args.pop_size
-        else:
-            args.n_starts = 5
-    else:
-        if args.pop_size is not None:
-            logger.warning(
-                "[!] Both --n-starts and --pop-size were provided; "
-                "using --n-starts and ignoring the deprecated --pop-size flag."
-            )
-
-    # Determine max_steps
-    if args.max_steps is None:
-        if args.gen is not None:
-            args.max_steps = args.gen
-        else:
-            args.max_steps = 200
-    else:
-        if args.gen is not None:
-            logger.warning(
-                "[!] Both --max-steps and --gen were provided; "
-                "using --max-steps and ignoring the deprecated --gen flag."
-            )
-
-    # Normalise types and ensure positive values
-    args.n_starts = max(1, int(args.n_starts))
-    args.max_steps = max(1, int(args.max_steps))
-
-    # Warn that --cores, --algorithm and --optimizer are ignored
-    if args.cores is not None:
-        logger.warning(
-            "[!] The --cores flag no longer controls parallelism.  "
-            "Set JAX threading via environment variables (e.g., "
-            "XLA_FLAGS=--xla_cpu_multi_thread_eigen=true intra_op_parallelism_threads=<N>) "
-            "prior to running this script."
-        )
-    if args.algorithm:
-        logger.warning(
-            f"[!] --algorithm {args.algorithm!r} is ignored by the Optimistix backend."
-        )
-    if args.optimizer:
-        logger.warning(
-            f"[!] --optimizer {args.optimizer!r} is ignored.  Only BFGS is currently supported."
-        )
-
     # 1. Load Data
     (sites, proteins, site_prot_idx, positions, t, Y, A_data, A_proteins) = (
         data_loader.load_site_data(args.data)
