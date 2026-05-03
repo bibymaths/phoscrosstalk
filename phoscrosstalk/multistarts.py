@@ -1,12 +1,12 @@
 """
 multistarts.py
-Multi-start parameter fitting using Optimistix (single-objective framework).
+Multi-start parameter fitting using slsqp-jax / Optimistix (single-objective framework).
 
 Strategy
 --------
 1. Generate ``n_starts`` random starting points uniformly in [xl, xu] using
    fixed random seeds for reproducibility.
-2. Run ``run_single_optimisation`` (Optimistix BFGS) from each starting point
+2. Run ``run_single_optimisation`` (slsqp-jax SLSQP) from each starting point
    using the same configured loss weights for all runs.
 3. Select the best solution by minimum **total loss** (the scalar objective
    that was minimised).
@@ -30,7 +30,9 @@ Old pymoo-specific flags (--gen, --pop-size, --algorithm) are mapped:
   --algorithm  → ignored with a warning (non-fatal)
 """
 
+import os
 import numpy as np
+import pandas as pd
 
 from phoscrosstalk.optimization import make_loss_fn, run_single_optimisation
 from phoscrosstalk.fretchet import frechet_distance
@@ -50,7 +52,7 @@ class OptimizationResult:
 
 def run_multi_start_optimization(problem, args, P_scaled):
     """
-    Execute multi-start optimisation using Optimistix and select the best solution.
+    Execute multi-start optimisation using slsqp-jax and select the best solution.
 
     Parameters
     ----------
@@ -79,6 +81,10 @@ def run_multi_start_optimization(problem, args, P_scaled):
     n_starts = max(1, n_starts)
     max_steps = max(64, max_steps)
 
+    # Tolerance for the SLSQP solver
+    rtol = float(getattr(args, "rtol", 1e-6))
+    atol = float(getattr(args, "atol", 1e-6))
+
     # Warn if deprecated fields were used instead of the preferred ones
     if (
         hasattr(args, "pop_size")
@@ -105,7 +111,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
     algo = getattr(args, "algorithm", None)
     if algo is not None:
         logger.warning(
-            f"[!] --algorithm {algo!r} is not used by the Optimistix backend; "
+            f"[!] --algorithm {algo!r} is not used by the slsqp-jax backend; "
             "ignored for compatibility."
         )
 
@@ -139,7 +145,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
 
     starts = _generate_starts(n_starts, xl, xu)
 
-    logger.header("[*] Starting Multi-Start Optimistix Optimisation")
+    logger.header("[*] Starting Multi-Start SLSQP Optimisation")
     logger.info(
         f"    {len(starts)} starting points, max_steps={max_steps} each"
     )
@@ -147,23 +153,46 @@ def run_multi_start_optimization(problem, args, P_scaled):
         f"    weights: phospho={w_phospho}, abundance={w_abundance}, reg={w_reg}"
     )
 
-    all_X, all_F, all_total = [], [], []
+    all_X, all_F, all_total, all_diag_rows = [], [], [], []
 
     for i, theta0 in enumerate(starts):
         logger.info(f"--- Run {i + 1}/{len(starts)} ---")
 
         try:
-            theta_opt, total_loss, f1, f2, f3 = run_single_optimisation(
-                loss_fn, theta0, max_steps=max_steps
+            theta_opt, total_loss, f1, f2, f3, result_status, diag = run_single_optimisation(
+                loss_fn, theta0, xl, xu, max_steps=max_steps, rtol=rtol, atol=atol
             )
+            finite_sol = bool(np.isfinite(theta_opt).all() and np.isfinite(total_loss))
             all_X.append(theta_opt)
             all_F.append([f1, f2, f3])
             all_total.append(total_loss)
+            all_diag_rows.append({
+                "start_id": i,
+                "result_status": result_status,
+                "total_loss": total_loss,
+                "phosphosite_loss": f1,
+                "abundance_loss": f2,
+                "regularization_loss": f3,
+                "finite_solution": finite_sol,
+                "selected_best": False,
+                **diag,
+            })
             logger.info(
                 f"    -> total={total_loss:.4f}  f1={f1:.4f}  f2={f2:.4f}  f3={f3:.4f}"
+                f"  status={result_status}"
             )
         except Exception as e:
             logger.warning(f"    -> Run {i + 1} failed: {e}")
+            all_diag_rows.append({
+                "start_id": i,
+                "result_status": f"EXCEPTION: {e}",
+                "total_loss": float("inf"),
+                "phosphosite_loss": float("nan"),
+                "abundance_loss": float("nan"),
+                "regularization_loss": float("nan"),
+                "finite_solution": False,
+                "selected_best": False,
+            })
 
     if not all_X:
         raise RuntimeError(
@@ -184,6 +213,11 @@ def run_multi_start_optimization(problem, args, P_scaled):
         f"[*] Best Solution: total_loss = {best_loss:.6f} (idx={best_idx})"
     )
 
+    # Mark the selected best in diagnostics
+    for row in all_diag_rows:
+        if row["start_id"] == best_idx:
+            row["selected_best"] = True
+
     # Compute Fréchet Distance as a diagnostic metric (not used for selection)
     logger.info("[*] Computing Fréchet Distances (diagnostic only)...")
     frechet_scores = np.full(len(X_combined), np.inf)
@@ -199,8 +233,44 @@ def run_multi_start_optimization(problem, args, P_scaled):
         f"    -> Fréchet at best (idx={best_idx}): {frechet_scores[best_idx]:.6f}"
     )
 
+    # Add frechet scores to diagnostics rows (only for successful runs)
+    freq_iter = iter(frechet_scores)
+    for row in all_diag_rows:
+        if row["finite_solution"]:
+            try:
+                row["frechet_distance"] = next(freq_iter)
+            except StopIteration:
+                row["frechet_distance"] = float("inf")
+        else:
+            row["frechet_distance"] = float("inf")
+
+    # Save diagnostics to disk if outdir is available
+    outdir = getattr(args, "outdir", None)
+    if outdir is not None:
+        _save_optimization_diagnostics(outdir, all_diag_rows, best_idx, X_combined, F_combined)
+
     merged_res = OptimizationResult(X=X_combined, F=F_combined, J=total_losses)
     return merged_res, best_idx, total_losses
+
+
+def _save_optimization_diagnostics(outdir, diag_rows, best_idx, X_combined, F_combined):
+    """Save optimization_diagnostics.tsv and loss_components.tsv to outdir."""
+    os.makedirs(outdir, exist_ok=True)
+
+    df_diag = pd.DataFrame(diag_rows)
+    diag_path = os.path.join(outdir, "optimization_diagnostics.tsv")
+    df_diag.to_csv(diag_path, sep="\t", index=False)
+    logger.info(f"[*] Saved {diag_path}")
+
+    # loss_components.tsv: one row per start
+    n_runs = len(X_combined)
+    obj_names = ["phosphosite_loss", "abundance_loss", "regularization_loss"]
+    df_loss = pd.DataFrame(F_combined, columns=obj_names)
+    df_loss.insert(0, "start_id", range(n_runs))
+    df_loss["selected_best"] = [i == best_idx for i in range(n_runs)]
+    loss_path = os.path.join(outdir, "loss_components.tsv")
+    df_loss.to_csv(loss_path, sep="\t", index=False)
+    logger.info(f"[*] Saved {loss_path}")
 
 
 def _generate_starts(n_starts, xl, xu):

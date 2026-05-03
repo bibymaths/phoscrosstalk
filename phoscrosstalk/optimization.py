@@ -1,10 +1,10 @@
 """
 optimization.py
-Optimistix-based objective functions and parameter fitting for the phospho-network.
+SLSQP-jax-based objective functions and parameter fitting for the phospho-network.
 
-Replaces the previous pymoo / ElementwiseProblem backend with:
+Uses:
   - A JAX-differentiable scalarized loss (w1*f1 + w2*f2 + w3*f3)
-  - Optimistix BFGS minimiser for gradient-based parameter fitting
+  - slsqp-jax SLSQP minimiser (via optimistix.minimise) for bound-constrained fitting
   - A thin NetworkProblem wrapper that preserves the .simulate() interface
     used by steadystate, knockouts, sensitivity, and app modules.
 """
@@ -14,6 +14,7 @@ from numba import njit
 import jax.numpy as jnp
 import optimistix as optx
 import diffrax
+from slsqp_jax import SLSQP, get_diagnostics
 
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.simulation import simulate_ode, build_full_A0
@@ -291,28 +292,45 @@ def make_loss_fn(
 def run_single_optimisation(
     loss_fn,
     theta0,
+    xl,
+    xu,
     max_steps=256,
+    rtol=1e-6,
+    atol=1e-6,
 ):
     """
-    Run a single Optimistix BFGS minimisation from starting point theta0.
+    Run a single SLSQP minimisation from starting point theta0.
 
     Parameters
     ----------
     loss_fn  : callable (theta, args) -> (scalar, aux)
     theta0   : np.ndarray
+    xl       : np.ndarray – lower bounds (same length as theta0)
+    xu       : np.ndarray – upper bounds (same length as theta0)
     max_steps: int
+    rtol     : float
+    atol     : float
 
     Returns
     -------
     theta_opt : np.ndarray
     total_loss: float
     f1, f2, f3: float
+    result_status: str
+    diagnostics: dict
     """
-    solver = optx.BFGS(rtol=1e-5, atol=1e-7)
+    bounds = jnp.stack([jnp.asarray(xl, dtype=jnp.float32),
+                        jnp.asarray(xu, dtype=jnp.float32)], axis=1)
+
+    # Project theta0 strictly inside bounds to avoid boundary initialisation issues
+    theta0_clipped = np.clip(theta0, xl, xu)
+    theta0_j = jnp.asarray(theta0_clipped, dtype=jnp.float32)
+
+    solver = SLSQP(bounds=bounds, rtol=rtol, atol=atol)
     sol = optx.minimise(
         loss_fn,
         solver,
-        jnp.asarray(theta0, dtype=jnp.float32),
+        theta0_j,
         args=None,
         has_aux=True,
         max_steps=max_steps,
@@ -320,7 +338,23 @@ def run_single_optimisation(
     )
     theta_opt = np.asarray(sol.value, dtype=np.float64)
     total_loss, (f1, f2, f3) = loss_fn(sol.value, None)
-    return theta_opt, float(total_loss), float(f1), float(f2), float(f3)
+
+    # Collect diagnostics from the SLSQP state
+    diag = get_diagnostics(sol.state)
+    result_status = str(sol.result)
+    diagnostics = {
+        "result_status": result_status,
+        "n_ls_failures": int(diag.n_ls_failures),
+        "n_qp_inner_failures": int(diag.n_qp_inner_failures),
+        "tail_ls_failures": int(diag.tail_ls_failures),
+        "max_bound_fixed": int(diag.max_bound_fixed),
+        "max_active_ineq": int(diag.max_active_ineq),
+        "divergence_triggered": bool(diag.divergence_triggered),
+        "ls_alpha_min": float(diag.ls_alpha_min),
+        "n_lbfgs_skips": int(diag.n_lbfgs_skips),
+    }
+
+    return theta_opt, float(total_loss), float(f1), float(f2), float(f3), result_status, diagnostics
 
 
 # ---------------------------------------------------------------------------

@@ -45,7 +45,7 @@ def main():
         prog="phoscrosstalk",
         description=(
             "Fit a global phospho-network ODE model using JAX/Diffrax ODE solving "
-            "and Optimistix gradient-based optimisation. Supports multiple "
+            "and slsqp-jax bound-constrained optimisation. Supports multiple "
             "phosphorylation mechanisms, flexible weighting schemes, kinase–substrate "
             "network priors, and optional PTM crosstalk filtering."
         ),
@@ -229,6 +229,46 @@ def main():
     )
 
     # ------------------------------------------------------------------
+    # OPTIMIZER SELECTION
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--optimizer",
+        default=None,
+        help="Optimizer backend to use. Currently only 'slsqp' is supported.",
+    )
+
+    # ------------------------------------------------------------------
+    # DEPRECATED FLAGS (kept for one-release backward compatibility)
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--pop-size",
+        type=int,
+        default=None,
+        dest="pop_size",
+        help="[DEPRECATED] Use --n-starts instead.",
+    )
+    parser.add_argument(
+        "--gen",
+        type=int,
+        default=None,
+        help="[DEPRECATED] Use --max-steps instead.",
+    )
+    parser.add_argument(
+        "--algorithm",
+        default=None,
+        help="[DEPRECATED] Ignored. The optimizer is always slsqp-jax.",
+    )
+    parser.add_argument(
+        "--cores",
+        type=int,
+        default=None,
+        help=(
+            "[DEPRECATED] Ignored. Control JAX CPU threading via environment "
+            "variables (e.g. XLA_FLAGS)."
+        ),
+    )
+
+    # ------------------------------------------------------------------
     # MODES
     # ------------------------------------------------------------------
     parser.add_argument(
@@ -318,11 +358,11 @@ def main():
         )
     if args.algorithm:
         logger.warning(
-            f"[!] --algorithm {args.algorithm!r} is ignored by the Optimistix backend."
+            f"[!] --algorithm {args.algorithm!r} is ignored by the slsqp-jax backend."
         )
-    if args.optimizer:
+    if args.optimizer and args.optimizer.lower() not in ("slsqp",):
         logger.warning(
-            f"[!] --optimizer {args.optimizer!r} is ignored.  Only BFGS is currently supported."
+            f"[!] --optimizer {args.optimizer!r} is not recognised; using slsqp-jax."
         )
 
     # 1. Load Data
@@ -538,7 +578,7 @@ def main():
     # 7. Optimisation
 
     logger.info(
-        f"[*] Initialising Optimistix problem ({args.n_starts} starts, max_steps={args.max_steps})..."
+        f"[*] Initialising SLSQP optimisation ({args.n_starts} starts, max_steps={args.max_steps})..."
     )
 
     problem = NetworkOptimizationProblem(

@@ -320,8 +320,8 @@ class TestOptimistixOptimisation:
         theta0 = xl + rng.random(len(xl)) * (xu - xl)
         loss0, _ = loss_fn(jnp.asarray(theta0, dtype=jnp.float32), None)
 
-        theta_opt, total_loss, f1, f2, f3 = run_single_optimisation(
-            loss_fn, theta0, max_steps=30
+        theta_opt, total_loss, f1, f2, f3, result_status, diagnostics = run_single_optimisation(
+            loss_fn, theta0, xl, xu, max_steps=30
         )
 
         assert total_loss < float(loss0), (
@@ -362,7 +362,7 @@ class TestOptimistixOptimisation:
 
         rng = np.random.default_rng(7)
         theta0 = xl + rng.random(dim) * (xu - xl)
-        theta_opt, *_ = run_single_optimisation(loss_fn, theta0, max_steps=10)
+        theta_opt, *_ = run_single_optimisation(loss_fn, theta0, xl, xu, max_steps=10)
 
         assert theta_opt.shape == (dim,), (
             f"Expected shape ({dim},), got {theta_opt.shape}"
@@ -604,3 +604,222 @@ class TestJaxMechanisms:
 
         dy = rhs(0.0, y, args)
         assert dy.shape == (2 * K + M + N,), f"dy shape: {dy.shape}"
+
+
+# ---------------------------------------------------------------------------
+# 6. SLSQP-jax integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestSLSQPIntegration:
+    def test_slsqp_importable(self):
+        """slsqp-jax must be importable and expose SLSQP and get_diagnostics."""
+        from slsqp_jax import SLSQP, get_diagnostics
+
+        assert callable(SLSQP)
+        assert callable(get_diagnostics)
+
+    def test_bounds_shape(self):
+        """Bounds array passed to SLSQP must have shape (n_params, 2)."""
+        import jax.numpy as jnp
+        from phoscrosstalk.optimization import create_bounds
+
+        m = _make_tiny_model()
+        K, M, N = m["K"], m["M"], m["N"]
+        xl, xu, dim = create_bounds(K, M, N)
+
+        assert len(xl) == dim
+        assert len(xu) == dim
+
+        bounds = jnp.stack([jnp.asarray(xl, dtype=jnp.float32),
+                            jnp.asarray(xu, dtype=jnp.float32)], axis=1)
+        assert bounds.shape == (dim, 2), f"bounds shape mismatch: {bounds.shape}"
+        assert jnp.all(bounds[:, 0] <= bounds[:, 1]), "xl > xu somewhere"
+
+    def test_objective_returns_scalar_and_aux(self):
+        """Objective function must return (scalar, aux_tuple)."""
+        import jax.numpy as jnp
+        from phoscrosstalk.optimization import make_loss_fn, create_bounds
+
+        m = _make_tiny_model()
+        K, M, N = m["K"], m["M"], m["N"]
+        xl, xu, _ = create_bounds(K, M, N)
+
+        loss_fn = make_loss_fn(
+            t=m["t"],
+            P_data=m["P_data"],
+            A_scaled=np.zeros((0, m["T"])),
+            prot_idx_for_A=np.array([], dtype=int),
+            W_data=np.ones((N, m["T"])),
+            W_data_prot=np.zeros((0, m["T"])),
+            Cg=m["Cg"],
+            Cl=m["Cl"],
+            site_prot_idx=m["site_prot_idx"],
+            K_site_kin=m["K_site_kin"],
+            R=m["R"],
+            L_alpha=m["L_alpha"],
+            kin_to_prot_idx=m["kin_to_prot_idx"],
+            receptor_mask_prot=m["receptor_mask_prot"],
+            receptor_mask_kin=m["receptor_mask_kin"],
+            mechanism="dist",
+            lambda_net=1e-4,
+            reg_lambda=1e-4,
+        )
+
+        theta0 = jnp.asarray(0.5 * (xl + xu), dtype=jnp.float32)
+        result = loss_fn(theta0, None)
+        assert len(result) == 2, "objective must return (scalar, aux)"
+        total_loss, aux = result
+        assert total_loss.ndim == 0, "total_loss must be a scalar"
+        assert len(aux) == 3, "aux must be a 3-tuple (f1, f2, f3)"
+
+    def test_slsqp_reduces_loss(self):
+        """SLSQP must reduce the objective on a small synthetic model."""
+        import jax.numpy as jnp
+        from phoscrosstalk.optimization import (
+            make_loss_fn,
+            run_single_optimisation,
+            create_bounds,
+        )
+
+        m = _make_tiny_model()
+        K, M, N = m["K"], m["M"], m["N"]
+        xl, xu, _ = create_bounds(K, M, N)
+
+        loss_fn = make_loss_fn(
+            t=m["t"],
+            P_data=m["P_data"],
+            A_scaled=np.zeros((0, m["T"])),
+            prot_idx_for_A=np.array([], dtype=int),
+            W_data=np.ones((N, m["T"])),
+            W_data_prot=np.zeros((0, m["T"])),
+            Cg=m["Cg"],
+            Cl=m["Cl"],
+            site_prot_idx=m["site_prot_idx"],
+            K_site_kin=m["K_site_kin"],
+            R=m["R"],
+            L_alpha=m["L_alpha"],
+            kin_to_prot_idx=m["kin_to_prot_idx"],
+            receptor_mask_prot=m["receptor_mask_prot"],
+            receptor_mask_kin=m["receptor_mask_kin"],
+            mechanism="dist",
+            lambda_net=1e-4,
+            reg_lambda=1e-4,
+        )
+
+        rng = np.random.default_rng(42)
+        theta0 = xl + rng.random(len(xl)) * (xu - xl)
+        loss0, _ = loss_fn(jnp.asarray(theta0, dtype=jnp.float32), None)
+
+        theta_opt, total_loss, f1, f2, f3, result_status, diagnostics = run_single_optimisation(
+            loss_fn, theta0, xl, xu, max_steps=30
+        )
+
+        assert np.isfinite(total_loss), "optimised loss is not finite"
+        assert total_loss < float(loss0), (
+            f"SLSQP did not reduce loss: {total_loss} >= {float(loss0)}"
+        )
+
+    def test_slsqp_result_has_diagnostics(self):
+        """run_single_optimisation must return diagnostics dict."""
+        from phoscrosstalk.optimization import (
+            make_loss_fn,
+            run_single_optimisation,
+            create_bounds,
+        )
+
+        m = _make_tiny_model()
+        K, M, N = m["K"], m["M"], m["N"]
+        xl, xu, _ = create_bounds(K, M, N)
+
+        loss_fn = make_loss_fn(
+            t=m["t"],
+            P_data=m["P_data"],
+            A_scaled=np.zeros((0, m["T"])),
+            prot_idx_for_A=np.array([], dtype=int),
+            W_data=np.ones((N, m["T"])),
+            W_data_prot=np.zeros((0, m["T"])),
+            Cg=m["Cg"],
+            Cl=m["Cl"],
+            site_prot_idx=m["site_prot_idx"],
+            K_site_kin=m["K_site_kin"],
+            R=m["R"],
+            L_alpha=m["L_alpha"],
+            kin_to_prot_idx=m["kin_to_prot_idx"],
+            receptor_mask_prot=m["receptor_mask_prot"],
+            receptor_mask_kin=m["receptor_mask_kin"],
+            mechanism="dist",
+            lambda_net=1e-4,
+            reg_lambda=1e-4,
+        )
+
+        theta0 = 0.5 * (xl + xu)
+        theta_opt, total_loss, f1, f2, f3, result_status, diagnostics = run_single_optimisation(
+            loss_fn, theta0, xl, xu, max_steps=10
+        )
+
+        assert isinstance(result_status, str), "result_status must be a string"
+        assert isinstance(diagnostics, dict), "diagnostics must be a dict"
+        for key in ("n_ls_failures", "divergence_triggered", "tail_ls_failures"):
+            assert key in diagnostics, f"diagnostics missing key: {key}"
+
+    def test_theta_inside_bounds_after_optimisation(self):
+        """Optimised theta must lie within [xl, xu]."""
+        from phoscrosstalk.optimization import (
+            make_loss_fn,
+            run_single_optimisation,
+            create_bounds,
+        )
+
+        m = _make_tiny_model()
+        K, M, N = m["K"], m["M"], m["N"]
+        xl, xu, _ = create_bounds(K, M, N)
+
+        loss_fn = make_loss_fn(
+            t=m["t"],
+            P_data=m["P_data"],
+            A_scaled=np.zeros((0, m["T"])),
+            prot_idx_for_A=np.array([], dtype=int),
+            W_data=np.ones((N, m["T"])),
+            W_data_prot=np.zeros((0, m["T"])),
+            Cg=m["Cg"],
+            Cl=m["Cl"],
+            site_prot_idx=m["site_prot_idx"],
+            K_site_kin=m["K_site_kin"],
+            R=m["R"],
+            L_alpha=m["L_alpha"],
+            kin_to_prot_idx=m["kin_to_prot_idx"],
+            receptor_mask_prot=m["receptor_mask_prot"],
+            receptor_mask_kin=m["receptor_mask_kin"],
+            mechanism="dist",
+            lambda_net=1e-4,
+            reg_lambda=1e-4,
+        )
+
+        rng = np.random.default_rng(99)
+        theta0 = xl + rng.random(len(xl)) * (xu - xl)
+        theta_opt, *_ = run_single_optimisation(loss_fn, theta0, xl, xu, max_steps=20)
+
+        tol = 1e-4
+        assert np.all(theta_opt >= xl - tol), "theta_opt violates lower bounds"
+        assert np.all(theta_opt <= xu + tol), "theta_opt violates upper bounds"
+
+    def test_no_bfgs_in_optimization_module(self):
+        """optimization.py must not use optx.BFGS as the primary solver."""
+        import importlib.util
+        import phoscrosstalk.optimization as opt_mod
+
+        src = importlib.util.find_spec(opt_mod.__name__)
+        with open(src.origin) as f:
+            content = f.read()
+        # SLSQP must be present
+        assert "SLSQP" in content, "SLSQP not found in optimization.py"
+        # BFGS must not be used as primary solver
+        assert "optx.BFGS" not in content, "optx.BFGS still used in optimization.py"
+
+    def test_slsqp_importable_from_optimization(self):
+        """SLSQP must be importable from optimization module context."""
+        from slsqp_jax import SLSQP
+        import optimistix as optx
+
+        assert hasattr(optx, "minimise"), "optimistix.minimise not available"
