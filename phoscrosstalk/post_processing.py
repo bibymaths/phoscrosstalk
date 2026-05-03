@@ -2,13 +2,13 @@
 post_processing.py
 Advanced diagnostics, network topology export, and provenance tracking.
 """
+
 import os
 import json
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-import networkx as nx
 
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.core_mechanisms import decode_theta
@@ -31,7 +31,7 @@ def save_run_metadata(outdir, args, execution_time=None):
     config_dict["ModelDims"] = {
         "K (Proteins)": ModelDims.K,
         "M (Kinases)": ModelDims.M,
-        "N (Sites)": ModelDims.N
+        "N (Sites)": ModelDims.N,
     }
 
     if execution_time:
@@ -43,8 +43,9 @@ def save_run_metadata(outdir, args, execution_time=None):
     logger.info(f"[*] Saved run metadata to {meta_path}")
 
 
-def export_network_for_cytoscape(outdir, theta_opt, proteins, kinases, sites,
-                                 K_site_kin, site_prot_idx):
+def export_network_for_cytoscape(
+    outdir, theta_opt, proteins, kinases, sites, K_site_kin, site_prot_idx
+):
     """
     Exports the fitted network topology as a Cytoscape-compatible Edge List (SIF/CSV).
 
@@ -57,7 +58,9 @@ def export_network_for_cytoscape(outdir, theta_opt, proteins, kinases, sites,
     # Decode parameters to get alpha (Kinase strength)
     # theta structure: [Prot params]...[Beta]...[Alpha]...
     K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
-    (_, _, _, _, _, _, alpha, kK_act, _, _, _, _, _, _) = decode_theta(theta_opt, K, M, N)
+    (_, _, _, _, _, _, alpha, kK_act, _, _, _, _, _, _) = decode_theta(
+        theta_opt, K, M, N
+    )
 
     edges = []
 
@@ -70,27 +73,31 @@ def export_network_for_cytoscape(outdir, theta_opt, proteins, kinases, sites,
                 # Effective strength = Connectivity * Kinase_Global_Alpha * Kinase_Activity_Rate
                 eff_weight = weight_base * alpha[j] * kK_act[j]
 
-                edges.append({
-                    "Source": kinases[j],
-                    "Target": sites[i],
-                    "Interaction": "phosphorylates",
-                    "Weight_Fitted": eff_weight,
-                    "Weight_Prior": weight_base,
-                    "Type": "Kinase-Site"
-                })
+                edges.append(
+                    {
+                        "Source": kinases[j],
+                        "Target": sites[i],
+                        "Interaction": "phosphorylates",
+                        "Weight_Fitted": eff_weight,
+                        "Weight_Prior": weight_base,
+                        "Type": "Kinase-Site",
+                    }
+                )
 
     # 2. Site -> Protein Edges (Structural mapping)
     for i, s in enumerate(sites):
         p_idx = site_prot_idx[i]
         p_name = proteins[p_idx]
-        edges.append({
-            "Source": s,
-            "Target": p_name,
-            "Interaction": "part_of",
-            "Weight_Fitted": 1.0,
-            "Weight_Prior": 1.0,
-            "Type": "Site-Protein"
-        })
+        edges.append(
+            {
+                "Source": s,
+                "Target": p_name,
+                "Interaction": "part_of",
+                "Weight_Fitted": 1.0,
+                "Weight_Prior": 1.0,
+                "Type": "Site-Protein",
+            }
+        )
 
     df_edges = pd.DataFrame(edges)
     df_edges.to_csv(os.path.join(outdir, "network_cytoscape_edges.csv"), index=False)
@@ -118,11 +125,17 @@ def plot_residual_heatmap(outdir, P_obs, P_sim, sites, t):
 
     plt.figure(figsize=(12, 10))
     # Diverging colormap: Red = Model Underestimates, Blue = Model Overestimates
-    sns.heatmap(residuals_sorted, center=0, cmap="vlag",
-                xticklabels=[f"{x:.1f}" for x in t],
-                yticklabels=sites_sorted)
+    sns.heatmap(
+        residuals_sorted,
+        center=0,
+        cmap="vlag",
+        xticklabels=[f"{x:.1f}" for x in t],
+        yticklabels=sites_sorted,
+    )
 
-    plt.title("Residuals (Observed - Simulated)\nRed = Model Underestimates | Blue = Model Overestimates")
+    plt.title(
+        "Residuals (Observed - Simulated)\nRed = Model Underestimates | Blue = Model Overestimates"
+    )
     plt.xlabel("Time (min)")
     plt.ylabel("Phosphosites (Sorted by Error)")
     plt.tight_layout()
@@ -155,10 +168,15 @@ def plot_parameter_clustermap(outdir, X_population, param_labels, top_n=50):
 
     # Plot
     plt.figure(figsize=(14, 14))
-    g = sns.clustermap(corr, center=0, cmap="coolwarm",
-                       vmin=-1, vmax=1,
-                       linewidths=0.5,
-                       figsize=(12, 12))
+    g = sns.clustermap(
+        corr,
+        center=0,
+        cmap="coolwarm",
+        vmin=-1,
+        vmax=1,
+        linewidths=0.5,
+        figsize=(12, 12),
+    )
 
     g.fig.suptitle("Parameter Correlations (Top Solutions)", y=1.02)
     plt.savefig(os.path.join(outdir, "parameter_correlation_clustermap.png"), dpi=300)

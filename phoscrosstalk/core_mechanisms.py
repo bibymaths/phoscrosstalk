@@ -40,6 +40,7 @@ from phoscrosstalk.config import ModelDims
 # small utilities
 # -------------------------
 
+
 @njit(cache=True, fastmath=True)
 def clip_scalar(x, lo, hi):
     """
@@ -79,30 +80,30 @@ def decode_theta(theta, K, M, N):
                 kK_act, kK_deact, k_off, gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net)
     """
     idx0 = 0
-    log_k_act = theta[idx0:idx0 + K];
+    log_k_act = theta[idx0 : idx0 + K]
     idx0 += K
-    log_k_deact = theta[idx0:idx0 + K];
+    log_k_deact = theta[idx0 : idx0 + K]
     idx0 += K
-    log_s_prod = theta[idx0:idx0 + K];
+    log_s_prod = theta[idx0 : idx0 + K]
     idx0 += K
-    log_d_deg = theta[idx0:idx0 + K];
+    log_d_deg = theta[idx0 : idx0 + K]
     idx0 += K
 
-    log_beta_g = theta[idx0];
+    log_beta_g = theta[idx0]
     idx0 += 1
-    log_beta_l = theta[idx0];
+    log_beta_l = theta[idx0]
     idx0 += 1
 
-    log_alpha = theta[idx0:idx0 + M];
+    log_alpha = theta[idx0 : idx0 + M]
     idx0 += M
-    log_kK_act = theta[idx0:idx0 + M];
+    log_kK_act = theta[idx0 : idx0 + M]
     idx0 += M
-    log_kK_deact = theta[idx0:idx0 + M];
+    log_kK_deact = theta[idx0 : idx0 + M]
     idx0 += M
 
-    log_k_off = theta[idx0:idx0 + N];
+    log_k_off = theta[idx0 : idx0 + N]
     idx0 += N
-    raw_gamma = theta[idx0:idx0 + 4]
+    raw_gamma = theta[idx0 : idx0 + 4]
 
     # clip then exp
     k_act = np.exp(np.clip(log_k_act, -20.0, 10.0))
@@ -122,13 +123,28 @@ def decode_theta(theta, K, M, N):
     gamma_A_p = 2.0 * math.tanh(raw_gamma[2])
     gamma_K_net = 2.0 * math.tanh(raw_gamma[3])
 
-    return (k_act, k_deact, s_prod, d_deg, beta_g, beta_l, alpha,
-            kK_act, kK_deact, k_off, gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net)
+    return (
+        k_act,
+        k_deact,
+        s_prod,
+        d_deg,
+        beta_g,
+        beta_l,
+        alpha,
+        kK_act,
+        kK_deact,
+        k_off,
+        gamma_S_p,
+        gamma_A_S,
+        gamma_A_p,
+        gamma_K_net,
+    )
 
 
 # -------------------------
 # Dense matvec kernels
 # -------------------------
+
 
 @njit(cache=True, fastmath=True)
 def dense_mv(A, x, out):
@@ -269,21 +285,53 @@ def csr_mv_inplace_add(A, x, out, scale):
 # Core RHS: DENSE
 # -------------------------
 
+
 @njit(cache=True, fastmath=True)
-def _rhs_common_dense(x, t,
-                      # decoded params
-                      k_act, k_deact, s_prod, d_deg,
-                      beta_g, beta_l, alpha,
-                      kK_act, kK_deact, k_off,
-                      gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net,
-                      # model structures
-                      Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
-                      kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
-                      K, M, N,
-                      mech_code,
-                      # reusable buffers
-                      p_buf, coup_buf, num_p, num_c, den, u_sub, u_net, k_on_eff, last_occ, has_prev,
-                      dx_out):
+def _rhs_common_dense(
+    x,
+    t,
+    # decoded params
+    k_act,
+    k_deact,
+    s_prod,
+    d_deg,
+    beta_g,
+    beta_l,
+    alpha,
+    kK_act,
+    kK_deact,
+    k_off,
+    gamma_S_p,
+    gamma_A_S,
+    gamma_A_p,
+    gamma_K_net,
+    # model structures
+    Cg,
+    Cl,
+    site_prot_idx,
+    K_site_kin,
+    R,
+    L_alpha,
+    kin_to_prot_idx,
+    receptor_mask_prot,
+    receptor_mask_kin,
+    K,
+    M,
+    N,
+    mech_code,
+    # reusable buffers
+    p_buf,
+    coup_buf,
+    num_p,
+    num_c,
+    den,
+    u_sub,
+    u_net,
+    k_on_eff,
+    last_occ,
+    has_prev,
+    dx_out,
+):
     """
     Core implementation of the ODE Right-Hand Side (RHS) for dense matrices.
 
@@ -307,24 +355,28 @@ def _rhs_common_dense(x, t,
     """
 
     S = x[0:K]
-    A = x[K:2 * K]
-    Kdyn0 = x[2 * K:2 * K + M]
-    p0 = x[2 * K + M:2 * K + M + N]
+    A = x[K : 2 * K]
+    Kdyn0 = x[2 * K : 2 * K + M]
+    p0 = x[2 * K + M : 2 * K + M + N]
 
     # Local copies for safe clipping if desired (do NOT mutate x)
     # (kept because you had p.copy(), Kdyn.copy())
     for m in range(M):
         v = Kdyn0[m]
-        if v < 0.0: v = 0.0
-        if v > 1.0: v = 1.0
+        if v < 0.0:
+            v = 0.0
+        if v > 1.0:
+            v = 1.0
         u_net[m] = v  # temporarily store clipped Kdyn in u_net buffer
     Kdyn = u_net  # alias
 
     # clip p0 into p_buf
     for i in range(N):
         v = p0[i]
-        if v < 0.0: v = 0.0
-        if v > 1.0: v = 1.0
+        if v < 0.0:
+            v = 0.0
+        if v > 1.0:
+            v = 1.0
         p_buf[i] = v
     p = p_buf
 
@@ -398,7 +450,9 @@ def _rhs_common_dense(x, t,
             U += u
 
         act_term = math.tanh(U)
-        dx_out[2 * K + m] = kK_act[m] * act_term * (1.0 - Kdyn[m]) - kK_deact[m] * Kdyn[m]
+        dx_out[2 * K + m] = (
+            kK_act[m] * act_term * (1.0 - Kdyn[m]) - kK_deact[m] * Kdyn[m]
+        )
 
     # 4) p dynamics
     # k_on_eff = K_site_kin @ (alpha*Kdyn)
@@ -502,9 +556,9 @@ def _rhs_common_dense(x, t,
                 mean_p = num_p[prot] / den[prot]
             else:
                 mean_p = 0.0
-            
+
             vacant_fraction = 1.0 - mean_p
-            
+
             # Added 1e-9 epsilon to prevent ZeroDivisionError
             competition = 1.0 / (0.5 + 0.5 * vacant_fraction + 1e-9)
 
@@ -524,12 +578,24 @@ def _rhs_common_dense(x, t,
 
 
 @njit(cache=True, fastmath=True)
-def rhs_dense_onecall(x, t, theta,
-                      Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
-                      kin_to_prot_idx,
-                      receptor_mask_prot, receptor_mask_kin,
-                      K, M, N,
-                      mech_code):
+def rhs_dense_onecall(
+    x,
+    t,
+    theta,
+    Cg,
+    Cl,
+    site_prot_idx,
+    K_site_kin,
+    R,
+    L_alpha,
+    kin_to_prot_idx,
+    receptor_mask_prot,
+    receptor_mask_kin,
+    K,
+    M,
+    N,
+    mech_code,
+):
     """
     Stand-alone dense RHS wrapper that allocates memory per call.
 
@@ -539,10 +605,22 @@ def rhs_dense_onecall(x, t, theta,
     Returns:
         np.ndarray: Derivative vector `dx`.
     """
-    (k_act, k_deact, s_prod, d_deg,
-     beta_g, beta_l, alpha,
-     kK_act, kK_deact, k_off,
-     gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net) = decode_theta(theta, K, M, N)
+    (
+        k_act,
+        k_deact,
+        s_prod,
+        d_deg,
+        beta_g,
+        beta_l,
+        alpha,
+        kK_act,
+        kK_deact,
+        k_off,
+        gamma_S_p,
+        gamma_A_S,
+        gamma_A_p,
+        gamma_K_net,
+    ) = decode_theta(theta, K, M, N)
 
     p_buf = np.empty(N)
     coup_buf = np.empty(N)
@@ -556,34 +634,98 @@ def rhs_dense_onecall(x, t, theta,
     has_prev = np.empty(K)
     dx = np.empty(2 * K + M + N)
 
-    return _rhs_common_dense(x, t,
-                             k_act, k_deact, s_prod, d_deg,
-                             beta_g, beta_l, alpha,
-                             kK_act, kK_deact, k_off,
-                             gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net,
-                             Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
-                             kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
-                             K, M, N, mech_code,
-                             p_buf, coup_buf, num_p, num_c, den, u_sub, u_net, k_on_eff, last_occ, has_prev,
-                             dx)
+    return _rhs_common_dense(
+        x,
+        t,
+        k_act,
+        k_deact,
+        s_prod,
+        d_deg,
+        beta_g,
+        beta_l,
+        alpha,
+        kK_act,
+        kK_deact,
+        k_off,
+        gamma_S_p,
+        gamma_A_S,
+        gamma_A_p,
+        gamma_K_net,
+        Cg,
+        Cl,
+        site_prot_idx,
+        K_site_kin,
+        R,
+        L_alpha,
+        kin_to_prot_idx,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        K,
+        M,
+        N,
+        mech_code,
+        p_buf,
+        coup_buf,
+        num_p,
+        num_c,
+        den,
+        u_sub,
+        u_net,
+        k_on_eff,
+        last_occ,
+        has_prev,
+        dx,
+    )
 
 
 # -------------------------
 # Core RHS: CSR sparse
 # -------------------------
 
+
 @njit(cache=True, fastmath=True)
-def _rhs_common_csr(x, t,
-                    k_act, k_deact, s_prod, d_deg,
-                    beta_g, beta_l, alpha,
-                    kK_act, kK_deact, k_off,
-                    gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net,
-                    Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
-                    kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
-                    K, M, N,
-                    mech_code,
-                    p_buf, coup_buf, num_p, num_c, den, u_sub, u_net, k_on_eff, last_occ, has_prev,
-                    dx_out):
+def _rhs_common_csr(
+    x,
+    t,
+    k_act,
+    k_deact,
+    s_prod,
+    d_deg,
+    beta_g,
+    beta_l,
+    alpha,
+    kK_act,
+    kK_deact,
+    k_off,
+    gamma_S_p,
+    gamma_A_S,
+    gamma_A_p,
+    gamma_K_net,
+    Cg,
+    Cl,
+    site_prot_idx,
+    K_site_kin,
+    R,
+    L_alpha,
+    kin_to_prot_idx,
+    receptor_mask_prot,
+    receptor_mask_kin,
+    K,
+    M,
+    N,
+    mech_code,
+    p_buf,
+    coup_buf,
+    num_p,
+    num_c,
+    den,
+    u_sub,
+    u_net,
+    k_on_eff,
+    last_occ,
+    has_prev,
+    dx_out,
+):
     """
     Core implementation of the ODE Right-Hand Side (RHS) for sparse matrices.
 
@@ -594,22 +736,26 @@ def _rhs_common_csr(x, t,
         np.ndarray: The `dx_out` array containing derivatives.
     """
     S = x[0:K]
-    A = x[K:2 * K]
-    Kdyn0 = x[2 * K:2 * K + M]
-    p0 = x[2 * K + M:2 * K + M + N]
+    A = x[K : 2 * K]
+    Kdyn0 = x[2 * K : 2 * K + M]
+    p0 = x[2 * K + M : 2 * K + M + N]
 
     # clip local copies into buffers
     for m in range(M):
         v = Kdyn0[m]
-        if v < 0.0: v = 0.0
-        if v > 1.0: v = 1.0
+        if v < 0.0:
+            v = 0.0
+        if v > 1.0:
+            v = 1.0
         u_net[m] = v
     Kdyn = u_net
 
     for i in range(N):
         v = p0[i]
-        if v < 0.0: v = 0.0
-        if v > 1.0: v = 1.0
+        if v < 0.0:
+            v = 0.0
+        if v > 1.0:
+            v = 1.0
         p_buf[i] = v
     p = p_buf
 
@@ -676,7 +822,9 @@ def _rhs_common_csr(x, t,
             U += u
 
         act_term = math.tanh(U)
-        dx_out[2 * K + m] = kK_act[m] * act_term * (1.0 - Kdyn[m]) - kK_deact[m] * Kdyn[m]
+        dx_out[2 * K + m] = (
+            kK_act[m] * act_term * (1.0 - Kdyn[m]) - kK_deact[m] * Kdyn[m]
+        )
 
     for m in range(M):
         u_sub[m] = alpha[m] * Kdyn[m]
@@ -789,12 +937,24 @@ def _rhs_common_csr(x, t,
 
 
 @njit(cache=True, fastmath=True)
-def rhs_csr_onecall(x, t, theta,
-                    Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
-                    kin_to_prot_idx,
-                    receptor_mask_prot, receptor_mask_kin,
-                    K, M, N,
-                    mech_code):
+def rhs_csr_onecall(
+    x,
+    t,
+    theta,
+    Cg,
+    Cl,
+    site_prot_idx,
+    K_site_kin,
+    R,
+    L_alpha,
+    kin_to_prot_idx,
+    receptor_mask_prot,
+    receptor_mask_kin,
+    K,
+    M,
+    N,
+    mech_code,
+):
     """
     Stand-alone sparse RHS wrapper that allocates memory per call.
 
@@ -804,10 +964,22 @@ def rhs_csr_onecall(x, t, theta,
     Returns:
         np.ndarray: Derivative vector `dx`.
     """
-    (k_act, k_deact, s_prod, d_deg,
-     beta_g, beta_l, alpha,
-     kK_act, kK_deact, k_off,
-     gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net) = decode_theta(theta, K, M, N)
+    (
+        k_act,
+        k_deact,
+        s_prod,
+        d_deg,
+        beta_g,
+        beta_l,
+        alpha,
+        kK_act,
+        kK_deact,
+        k_off,
+        gamma_S_p,
+        gamma_A_S,
+        gamma_A_p,
+        gamma_K_net,
+    ) = decode_theta(theta, K, M, N)
 
     p_buf = np.empty(N)
     coup_buf = np.empty(N)
@@ -821,16 +993,48 @@ def rhs_csr_onecall(x, t, theta,
     has_prev = np.empty(K)
     dx = np.empty(2 * K + M + N)
 
-    return _rhs_common_csr(x, t,
-                           k_act, k_deact, s_prod, d_deg,
-                           beta_g, beta_l, alpha,
-                           kK_act, kK_deact, k_off,
-                           gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net,
-                           Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
-                           kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
-                           K, M, N, mech_code,
-                           p_buf, coup_buf, num_p, num_c, den, u_sub, u_net, k_on_eff, last_occ, has_prev,
-                           dx)
+    return _rhs_common_csr(
+        x,
+        t,
+        k_act,
+        k_deact,
+        s_prod,
+        d_deg,
+        beta_g,
+        beta_l,
+        alpha,
+        kK_act,
+        kK_deact,
+        k_off,
+        gamma_S_p,
+        gamma_A_S,
+        gamma_A_p,
+        gamma_K_net,
+        Cg,
+        Cl,
+        site_prot_idx,
+        K_site_kin,
+        R,
+        L_alpha,
+        kin_to_prot_idx,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        K,
+        M,
+        N,
+        mech_code,
+        p_buf,
+        coup_buf,
+        num_p,
+        num_c,
+        den,
+        u_sub,
+        u_net,
+        k_on_eff,
+        last_occ,
+        has_prev,
+        dx,
+    )
 
 
 # -------------------------
@@ -838,15 +1042,34 @@ def rhs_csr_onecall(x, t, theta,
 # -------------------------
 
 dense_ws_spec = [
-    ("K", int64), ("M", int64), ("N", int64),
-    ("k_act", float64[:]), ("k_deact", float64[:]), ("s_prod", float64[:]), ("d_deg", float64[:]),
-    ("alpha", float64[:]), ("kK_act", float64[:]), ("kK_deact", float64[:]), ("k_off", float64[:]),
-    ("beta_g", float64), ("beta_l", float64),
-    ("gamma_S_p", float64), ("gamma_A_S", float64), ("gamma_A_p", float64), ("gamma_K_net", float64),
+    ("K", int64),
+    ("M", int64),
+    ("N", int64),
+    ("k_act", float64[:]),
+    ("k_deact", float64[:]),
+    ("s_prod", float64[:]),
+    ("d_deg", float64[:]),
+    ("alpha", float64[:]),
+    ("kK_act", float64[:]),
+    ("kK_deact", float64[:]),
+    ("k_off", float64[:]),
+    ("beta_g", float64),
+    ("beta_l", float64),
+    ("gamma_S_p", float64),
+    ("gamma_A_S", float64),
+    ("gamma_A_p", float64),
+    ("gamma_K_net", float64),
     # buffers
-    ("p_buf", float64[:]), ("coup_buf", float64[:]), ("num_p", float64[:]), ("num_c", float64[:]), ("den", float64[:]),
-    ("u_sub", float64[:]), ("u_net", float64[:]), ("k_on_eff", float64[:]),
-    ("last_occ", float64[:]), ("has_prev", float64[:]),
+    ("p_buf", float64[:]),
+    ("coup_buf", float64[:]),
+    ("num_p", float64[:]),
+    ("num_c", float64[:]),
+    ("den", float64[:]),
+    ("u_sub", float64[:]),
+    ("u_net", float64[:]),
+    ("k_on_eff", float64[:]),
+    ("last_occ", float64[:]),
+    ("has_prev", float64[:]),
     ("dx", float64[:]),
 ]
 
@@ -898,10 +1121,22 @@ class DenseWorkspace:
         """
         Decodes and stores parameters from the flat vector `theta` into internal arrays.
         """
-        (k_act, k_deact, s_prod, d_deg,
-         beta_g, beta_l, alpha,
-         kK_act, kK_deact, k_off,
-         gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net) = decode_theta(theta, self.K, self.M, self.N)
+        (
+            k_act,
+            k_deact,
+            s_prod,
+            d_deg,
+            beta_g,
+            beta_l,
+            alpha,
+            kK_act,
+            kK_deact,
+            k_off,
+            gamma_S_p,
+            gamma_A_S,
+            gamma_A_p,
+            gamma_K_net,
+        ) = decode_theta(theta, self.K, self.M, self.N)
 
         self.k_act[:] = k_act
         self.k_deact[:] = k_deact
@@ -921,11 +1156,22 @@ class DenseWorkspace:
         self.gamma_A_p = gamma_A_p
         self.gamma_K_net = gamma_K_net
 
-    def rhs(self, x, t,
-            Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
-            kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
-            mech_code,
-            return_copy):
+    def rhs(
+        self,
+        x,
+        t,
+        Cg,
+        Cl,
+        site_prot_idx,
+        K_site_kin,
+        R,
+        L_alpha,
+        kin_to_prot_idx,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        mech_code,
+        return_copy,
+    ):
         """
         Calculates ODE derivatives using stored buffers.
 
@@ -934,31 +1180,81 @@ class DenseWorkspace:
             mech_code (int): Mechanism code (0: one-step, 1: last-occurrence).
             return_copy (int): If 1, returns a copy of dx. If 0, returns the internal buffer (unsafe if solver mutates it).
         """
-        out = _rhs_common_dense(x, t,
-                                self.k_act, self.k_deact, self.s_prod, self.d_deg,
-                                self.beta_g, self.beta_l, self.alpha,
-                                self.kK_act, self.kK_deact, self.k_off,
-                                self.gamma_S_p, self.gamma_A_S, self.gamma_A_p, self.gamma_K_net,
-                                Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
-                                kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
-                                self.K, self.M, self.N, mech_code,
-                                self.p_buf, self.coup_buf, self.num_p, self.num_c, self.den,
-                                self.u_sub, self.u_net, self.k_on_eff, self.last_occ, self.has_prev,
-                                self.dx)
+        out = _rhs_common_dense(
+            x,
+            t,
+            self.k_act,
+            self.k_deact,
+            self.s_prod,
+            self.d_deg,
+            self.beta_g,
+            self.beta_l,
+            self.alpha,
+            self.kK_act,
+            self.kK_deact,
+            self.k_off,
+            self.gamma_S_p,
+            self.gamma_A_S,
+            self.gamma_A_p,
+            self.gamma_K_net,
+            Cg,
+            Cl,
+            site_prot_idx,
+            K_site_kin,
+            R,
+            L_alpha,
+            kin_to_prot_idx,
+            receptor_mask_prot,
+            receptor_mask_kin,
+            self.K,
+            self.M,
+            self.N,
+            mech_code,
+            self.p_buf,
+            self.coup_buf,
+            self.num_p,
+            self.num_c,
+            self.den,
+            self.u_sub,
+            self.u_net,
+            self.k_on_eff,
+            self.last_occ,
+            self.has_prev,
+            self.dx,
+        )
         if return_copy == 1:
             return out.copy()
         return out
 
 
 csr_ws_spec = [
-    ("K", int64), ("M", int64), ("N", int64),
-    ("k_act", float64[:]), ("k_deact", float64[:]), ("s_prod", float64[:]), ("d_deg", float64[:]),
-    ("alpha", float64[:]), ("kK_act", float64[:]), ("kK_deact", float64[:]), ("k_off", float64[:]),
-    ("beta_g", float64), ("beta_l", float64),
-    ("gamma_S_p", float64), ("gamma_A_S", float64), ("gamma_A_p", float64), ("gamma_K_net", float64),
-    ("p_buf", float64[:]), ("coup_buf", float64[:]), ("num_p", float64[:]), ("num_c", float64[:]), ("den", float64[:]),
-    ("u_sub", float64[:]), ("u_net", float64[:]), ("k_on_eff", float64[:]),
-    ("last_occ", float64[:]), ("has_prev", float64[:]),
+    ("K", int64),
+    ("M", int64),
+    ("N", int64),
+    ("k_act", float64[:]),
+    ("k_deact", float64[:]),
+    ("s_prod", float64[:]),
+    ("d_deg", float64[:]),
+    ("alpha", float64[:]),
+    ("kK_act", float64[:]),
+    ("kK_deact", float64[:]),
+    ("k_off", float64[:]),
+    ("beta_g", float64),
+    ("beta_l", float64),
+    ("gamma_S_p", float64),
+    ("gamma_A_S", float64),
+    ("gamma_A_p", float64),
+    ("gamma_K_net", float64),
+    ("p_buf", float64[:]),
+    ("coup_buf", float64[:]),
+    ("num_p", float64[:]),
+    ("num_c", float64[:]),
+    ("den", float64[:]),
+    ("u_sub", float64[:]),
+    ("u_net", float64[:]),
+    ("k_on_eff", float64[:]),
+    ("last_occ", float64[:]),
+    ("has_prev", float64[:]),
     ("dx", float64[:]),
 ]
 
@@ -1009,10 +1305,22 @@ class CSRWorkspace:
         """
         Decodes and stores parameters from the flat vector `theta` into internal arrays.
         """
-        (k_act, k_deact, s_prod, d_deg,
-         beta_g, beta_l, alpha,
-         kK_act, kK_deact, k_off,
-         gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net) = decode_theta(theta, self.K, self.M, self.N)
+        (
+            k_act,
+            k_deact,
+            s_prod,
+            d_deg,
+            beta_g,
+            beta_l,
+            alpha,
+            kK_act,
+            kK_deact,
+            k_off,
+            gamma_S_p,
+            gamma_A_S,
+            gamma_A_p,
+            gamma_K_net,
+        ) = decode_theta(theta, self.K, self.M, self.N)
 
         self.k_act[:] = k_act
         self.k_deact[:] = k_deact
@@ -1031,25 +1339,67 @@ class CSRWorkspace:
         self.gamma_A_p = gamma_A_p
         self.gamma_K_net = gamma_K_net
 
-    def rhs(self, x, t,
-            Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
-            kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
-            mech_code,
-            return_copy):
+    def rhs(
+        self,
+        x,
+        t,
+        Cg,
+        Cl,
+        site_prot_idx,
+        K_site_kin,
+        R,
+        L_alpha,
+        kin_to_prot_idx,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        mech_code,
+        return_copy,
+    ):
         """
         Calculates ODE derivatives using stored buffers and sparse logic.
         """
-        out = _rhs_common_csr(x, t,
-                              self.k_act, self.k_deact, self.s_prod, self.d_deg,
-                              self.beta_g, self.beta_l, self.alpha,
-                              self.kK_act, self.kK_deact, self.k_off,
-                              self.gamma_S_p, self.gamma_A_S, self.gamma_A_p, self.gamma_K_net,
-                              Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
-                              kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
-                              self.K, self.M, self.N, mech_code,
-                              self.p_buf, self.coup_buf, self.num_p, self.num_c, self.den,
-                              self.u_sub, self.u_net, self.k_on_eff, self.last_occ, self.has_prev,
-                              self.dx)
+        out = _rhs_common_csr(
+            x,
+            t,
+            self.k_act,
+            self.k_deact,
+            self.s_prod,
+            self.d_deg,
+            self.beta_g,
+            self.beta_l,
+            self.alpha,
+            self.kK_act,
+            self.kK_deact,
+            self.k_off,
+            self.gamma_S_p,
+            self.gamma_A_S,
+            self.gamma_A_p,
+            self.gamma_K_net,
+            Cg,
+            Cl,
+            site_prot_idx,
+            K_site_kin,
+            R,
+            L_alpha,
+            kin_to_prot_idx,
+            receptor_mask_prot,
+            receptor_mask_kin,
+            self.K,
+            self.M,
+            self.N,
+            mech_code,
+            self.p_buf,
+            self.coup_buf,
+            self.num_p,
+            self.num_c,
+            self.den,
+            self.u_sub,
+            self.u_net,
+            self.k_on_eff,
+            self.last_occ,
+            self.has_prev,
+            self.dx,
+        )
         if return_copy == 1:
             return out.copy()
         return out
@@ -1059,12 +1409,26 @@ class CSRWorkspace:
 # Backward Compatibility layer for sparse simulations
 # -------------------------
 
-def network_rhs(x, t, theta,
-                Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha, kin_to_prot_idx,
-                receptor_mask_prot, receptor_mask_kin,
-                mech="dist",
-                sparse=False,
-                K=None, M=None, N=None):
+
+def network_rhs(
+    x,
+    t,
+    theta,
+    Cg,
+    Cl,
+    site_prot_idx,
+    K_site_kin,
+    R,
+    L_alpha,
+    kin_to_prot_idx,
+    receptor_mask_prot,
+    receptor_mask_kin,
+    mech="dist",
+    sparse=False,
+    K=None,
+    M=None,
+    N=None,
+):
     """
     Main Python-level entry point for ODE integration.
 
@@ -1083,9 +1447,12 @@ def network_rhs(x, t, theta,
     Returns:
         np.ndarray: Derivative vector `dx`.
     """
-    if K is None: K = ModelDims.K
-    if M is None: M = ModelDims.M
-    if N is None: N = ModelDims.N
+    if K is None:
+        K = ModelDims.K
+    if M is None:
+        M = ModelDims.M
+    if N is None:
+        N = ModelDims.N
 
     if mech == "dist":
         mech_code = 0
@@ -1097,60 +1464,124 @@ def network_rhs(x, t, theta,
         raise ValueError(f"Unknown mechanism: {mech}")
 
     if not sparse:
-        return rhs_dense_onecall(x, t, theta,
-                                 Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
-                                 kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
-                                 K, M, N,
-                                 mech_code)
+        return rhs_dense_onecall(
+            x,
+            t,
+            theta,
+            Cg,
+            Cl,
+            site_prot_idx,
+            K_site_kin,
+            R,
+            L_alpha,
+            kin_to_prot_idx,
+            receptor_mask_prot,
+            receptor_mask_kin,
+            K,
+            M,
+            N,
+            mech_code,
+        )
     else:
-        return rhs_csr_onecall(x, t, theta,
-                               Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
-                               kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
-                               K, M, N,
-                               mech_code)
+        return rhs_csr_onecall(
+            x,
+            t,
+            theta,
+            Cg,
+            Cl,
+            site_prot_idx,
+            K_site_kin,
+            R,
+            L_alpha,
+            kin_to_prot_idx,
+            receptor_mask_prot,
+            receptor_mask_kin,
+            K,
+            M,
+            N,
+            mech_code,
+        )
 
 
 @njit(cache=True, fastmath=True)
 def rhs_nb_dispatch_dense(
-        x, t, theta,
-        Cg, Cl,
-        site_prot_idx,
-        K_site_kin, R,
-        L_alpha,
-        kin_to_prot_idx,
-        receptor_mask_prot,
-        receptor_mask_kin,
-        K, M, N,
-        mech_code  # 0: dist, 1: seq, 2: rand
+    x,
+    t,
+    theta,
+    Cg,
+    Cl,
+    site_prot_idx,
+    K_site_kin,
+    R,
+    L_alpha,
+    kin_to_prot_idx,
+    receptor_mask_prot,
+    receptor_mask_kin,
+    K,
+    M,
+    N,
+    mech_code,  # 0: dist, 1: seq, 2: rand
 ):
     """
     Numba-compiled dispatcher for dense `onecall` execution.
     """
-    return rhs_dense_onecall(x, t, theta,
-                             Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
-                             kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
-                             K, M, N,
-                             mech_code)
-
-
-@njit(cache=True, fastmath=True)
-def rhs_nb_dispatch_csr(
-        x, t, theta,
-        Cg, Cl,
+    return rhs_dense_onecall(
+        x,
+        t,
+        theta,
+        Cg,
+        Cl,
         site_prot_idx,
-        K_site_kin, R,
+        K_site_kin,
+        R,
         L_alpha,
         kin_to_prot_idx,
         receptor_mask_prot,
         receptor_mask_kin,
-        K, M, N,
-        mech_code  # 0: dist, 1: seq, 2: rand
+        K,
+        M,
+        N,
+        mech_code,
+    )
+
+
+@njit(cache=True, fastmath=True)
+def rhs_nb_dispatch_csr(
+    x,
+    t,
+    theta,
+    Cg,
+    Cl,
+    site_prot_idx,
+    K_site_kin,
+    R,
+    L_alpha,
+    kin_to_prot_idx,
+    receptor_mask_prot,
+    receptor_mask_kin,
+    K,
+    M,
+    N,
+    mech_code,  # 0: dist, 1: seq, 2: rand
 ):
     """
     Numba-compiled dispatcher for sparse `onecall` execution.
     """
-    return rhs_csr_onecall(x, t, theta,
-                           Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha,
-                           kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin,
-                           K, M, N,
-                           mech_code)
+    return rhs_csr_onecall(
+        x,
+        t,
+        theta,
+        Cg,
+        Cl,
+        site_prot_idx,
+        K_site_kin,
+        R,
+        L_alpha,
+        kin_to_prot_idx,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        K,
+        M,
+        N,
+        mech_code,
+    )

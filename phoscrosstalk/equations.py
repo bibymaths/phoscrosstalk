@@ -52,7 +52,7 @@ def _latex_preamble(
     # - breqn helps line-breaking in displayed equations (can be imperfect, but useful here).
     # - longtable for multi-page tables.
     # - geometry for paper/margins/orientation.
-    return (rf"""
+    return rf"""
 {docclass}
 \usepackage{{amsmath}}
 \usepackage{{geometry}}
@@ -68,7 +68,7 @@ def _latex_preamble(
 \date{{\today}}
 \begin{{document}}
 \maketitle
-""".lstrip())
+""".lstrip()
 
 
 def _table_spec(eq_col: str) -> str:
@@ -215,7 +215,6 @@ def _generate_latex_source(
     # --- PROTEINS ---
     lines.append(r"\section{Protein Dynamics}")
     g_Sp = get_p("gamma_S_p", 0, r"\gamma_{Sp}")
-    g_AS = get_p("gamma_A_S", 0, r"\gamma_{AS}")
 
     lines.append(r"\begin{longtable}{" + _table_spec(eq_col) + r"}")
     for k, prot in enumerate(proteins):
@@ -279,10 +278,13 @@ def _generate_latex_source(
     lines.append(r"\section{Phosphosite Dynamics}")
 
     if mechanism == "seq":
-        lines.append(r"\textcolor{blue}{\textbf{Sequential Model:}} Rate depends on predecessor $p_{i-1}$. \\")
+        lines.append(
+            r"\textcolor{blue}{\textbf{Sequential Model:}} Rate depends on predecessor $p_{i-1}$. \\"
+        )
     elif mechanism == "rand":
         lines.append(
-            r"\textcolor{blue}{\textbf{Cooperative Model:}} Rate depends on mean protein occupancy $\bar{p}$. \\")
+            r"\textcolor{blue}{\textbf{Cooperative Model:}} Rate depends on mean protein occupancy $\bar{p}$. \\"
+        )
 
     prev_prot_idx = -1
     prev_site_tex = ""
@@ -312,12 +314,16 @@ def _generate_latex_source(
         mech_term = ""
         if mechanism == "seq":
             if prot_idx == prev_prot_idx:
-                mech_term = rf"\cdot \underbrace{{p_{{{prev_site_tex}}}}}_{{\text{{gate}}}}"
+                mech_term = (
+                    rf"\cdot \underbrace{{p_{{{prev_site_tex}}}}}_{{\text{{gate}}}}"
+                )
         elif mechanism == "rand":
             prot_name = _clean_tex(proteins[prot_idx])
             mech_term = rf"\cdot (1 + \langle p \rangle_{{{prot_name}}})"
 
-        v_raw = rf"{c_term}\,\left[{k_on_str}\right]\,{mech_term}\,(1 - p_{{{clean_site}}})"
+        v_raw = (
+            rf"{c_term}\,\left[{k_on_str}\right]\,{mech_term}\,(1 - p_{{{clean_site}}})"
+        )
 
         # Print each equation as a real display equation (breqn can break lines here)
         lines.append(rf"\subsection*{{{clean_site}}}")
@@ -349,7 +355,13 @@ def _compile_pdf(tex_path: str, outdir: str) -> None:
         )
         logger.info(f"    -> Compiling {os.path.basename(tex_path)}...")
         subprocess.run(
-            ["pdflatex", "-interaction=nonstopmode", "-output-directory", outdir, tex_path],
+            [
+                "pdflatex",
+                "-interaction=nonstopmode",
+                "-output-directory",
+                outdir,
+                tex_path,
+            ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,

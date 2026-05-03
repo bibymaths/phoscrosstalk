@@ -2,6 +2,7 @@
 data_loader.py
 Handles data ingestion, scaling, database connectivity, and matrix construction.
 """
+
 import re
 import sqlite3
 import pickle
@@ -41,7 +42,9 @@ def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
 
     value_cols = [c for c in df.columns if c.startswith("v") or c.startswith("x")]
     if len(value_cols) != len(timepoints):
-        raise ValueError(f"Expected {len(timepoints)} value columns, found {len(value_cols)}")
+        raise ValueError(
+            f"Expected {len(timepoints)} value columns, found {len(value_cols)}"
+        )
 
     if "Protein" in df.columns:
         prot_col = "Protein"
@@ -191,8 +194,15 @@ def row_normalize(C):
     return C / row_sums
 
 
-def build_C_matrices_from_db(ptm_intra_path, ptm_inter_path, sites, site_prot_idx, positions, proteins,
-                             length_scale=50.0):
+def build_C_matrices_from_db(
+    ptm_intra_path,
+    ptm_inter_path,
+    sites,
+    site_prot_idx,
+    positions,
+    proteins,
+    length_scale=50.0,
+):
     """
     Constructs global (Cg) and local (Cl) crosstalk connectivity matrices using SQLite databases.
 
@@ -220,7 +230,8 @@ def build_C_matrices_from_db(ptm_intra_path, ptm_inter_path, sites, site_prot_id
     conn_i = sqlite3.connect(ptm_intra_path)
     cur_i = conn_i.cursor()
     for protein, res1, r1, res2, r2 in cur_i.execute(
-            "SELECT protein, residue1, score1, residue2, score2 FROM intra_pairs"):
+        "SELECT protein, residue1, score1, residue2, score2 FROM intra_pairs"
+    ):
         s1 = f"{protein}_{res1}"
         s2 = f"{protein}_{res2}"
         if s1 in idx and s2 in idx:
@@ -234,7 +245,8 @@ def build_C_matrices_from_db(ptm_intra_path, ptm_inter_path, sites, site_prot_id
     conn_e = sqlite3.connect(ptm_inter_path)
     cur_e = conn_e.cursor()
     for p1, res1, r1, p2, res2, r2 in cur_e.execute(
-            "SELECT protein1, residue1, score1, protein2, residue2, score2 FROM inter_pairs"):
+        "SELECT protein1, residue1, score1, protein2, residue2, score2 FROM inter_pairs"
+    ):
         s1 = f"{p1}_{res1}"
         s2 = f"{p2}_{res2}"
         if s1 in idx and s2 in idx:
@@ -249,8 +261,10 @@ def build_C_matrices_from_db(ptm_intra_path, ptm_inter_path, sites, site_prot_id
     L = float(length_scale)
     for i in range(N):
         for j in range(N):
-            if i == j: continue
-            if site_prot_idx[i] != site_prot_idx[j]: continue
+            if i == j:
+                continue
+            if site_prot_idx[i] != site_prot_idx[j]:
+                continue
             if np.isfinite(positions[i]) and np.isfinite(positions[j]):
                 d = abs(positions[i] - positions[j])
                 Cl[i, j] = np.exp(-d / L)
@@ -272,7 +286,8 @@ def load_kinase_site_matrix(path, sites):
             - kinases (list): Sorted list of kinase names found in the file.
     """
     df = pd.read_csv(path, sep="\t")
-    if "weight" not in df.columns: df["weight"] = 0.0
+    if "weight" not in df.columns:
+        df["weight"] = 0.0
     site_to_idx = {s: i for i, s in enumerate(sites)}
     kinases = sorted(df["Kinase"].astype(str).unique())
     kin_index = {k: j for j, k in enumerate(kinases)}
@@ -308,7 +323,11 @@ def build_kinase_site_from_kea(ks_psite_table_path, sites):
     df = df[df["substrate_site"].isin(site_to_idx.keys())].copy()
     if df.empty:
         raise ValueError("No overlap between ks_psite_table and model sites.")
-    grouped = df.groupby(["substrate_site", "kinase"]).agg(weight=("pmid", "nunique")).reset_index()
+    grouped = (
+        df.groupby(["substrate_site", "kinase"])
+        .agg(weight=("pmid", "nunique"))
+        .reset_index()
+    )
     kinases = sorted(grouped["kinase"].unique())
     kin_index = {k: j for j, k in enumerate(kinases)}
     N, M = len(sites), len(kinases)
@@ -323,7 +342,9 @@ def build_kinase_site_from_kea(ks_psite_table_path, sites):
     return K_site_kin / row_sums, kinases
 
 
-def build_alpha_laplacian_from_unified_graph(pkl_path, kinases, weight_attr="weight_mean"):
+def build_alpha_laplacian_from_unified_graph(
+    pkl_path, kinases, weight_attr="weight_mean"
+):
     """
     Constructs a Laplacian matrix representing the kinase-kinase interaction network from a NetworkX graph.
 

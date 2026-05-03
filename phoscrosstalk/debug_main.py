@@ -14,33 +14,39 @@ You can copy these helpers into main.py and call them at the marked points.
 """
 
 import numpy as np
-import pandas as pd
 
 
 # -------------------------
 # low-level helpers
 # -------------------------
 
+
 def _fmt_stats(x, name="", axis=None):
     x = np.asarray(x)
     if axis is None:
-        return (f"{name} shape={x.shape} dtype={x.dtype} "
-                f"min={np.nanmin(x):.3g} max={np.nanmax(x):.3g} "
-                f"mean={np.nanmean(x):.3g} std={np.nanstd(x):.3g} "
-                f"nan={np.isnan(x).sum()} inf={np.isinf(x).sum()}")
+        return (
+            f"{name} shape={x.shape} dtype={x.dtype} "
+            f"min={np.nanmin(x):.3g} max={np.nanmax(x):.3g} "
+            f"mean={np.nanmean(x):.3g} std={np.nanstd(x):.3g} "
+            f"nan={np.isnan(x).sum()} inf={np.isinf(x).sum()}"
+        )
     else:
         s = np.sum(x, axis=axis)
-        return (f"{name} sum(axis={axis}) min={np.nanmin(s):.3g} "
-                f"max={np.nanmax(s):.3g} mean={np.nanmean(s):.3g} "
-                f"nan={np.isnan(s).sum()} inf={np.isinf(s).sum()}")
+        return (
+            f"{name} sum(axis={axis}) min={np.nanmin(s):.3g} "
+            f"max={np.nanmax(s):.3g} mean={np.nanmean(s):.3g} "
+            f"nan={np.isnan(s).sum()} inf={np.isinf(s).sum()}"
+        )
 
 
 def _assert_finite(mat, name, hard=True):
     mat = np.asarray(mat)
     ok = np.isfinite(mat).all()
     if not ok:
-        msg = (f"[FAIL] {name} contains non-finite values: "
-               f"nan={np.isnan(mat).sum()} inf={np.isinf(mat).sum()}")
+        msg = (
+            f"[FAIL] {name} contains non-finite values: "
+            f"nan={np.isnan(mat).sum()} inf={np.isinf(mat).sum()}"
+        )
         if hard:
             raise ValueError(msg)
         print(msg)
@@ -49,7 +55,9 @@ def _assert_finite(mat, name, hard=True):
 
 def _assert_shape(mat, shape, name):
     if tuple(mat.shape) != tuple(shape):
-        raise ValueError(f"[FAIL] {name} shape mismatch: got {mat.shape}, expected {shape}")
+        raise ValueError(
+            f"[FAIL] {name} shape mismatch: got {mat.shape}, expected {shape}"
+        )
 
 
 def _nnz(mat):
@@ -82,13 +90,19 @@ def _coverage_report_K_site_kin(K_site_kin, sites, kinases, tag="K_site_kin"):
 
     print(f"\n=== {tag} coverage ===")
     print(_fmt_stats(K_site_kin, f"{tag}"))
-    print(f"{tag} nnz={_nnz(K_site_kin)}  density={_nnz(K_site_kin) / (N * M + 1e-12):.6g}")
+    print(
+        f"{tag} nnz={_nnz(K_site_kin)}  density={_nnz(K_site_kin) / (N * M + 1e-12):.6g}"
+    )
 
     deg_sites = (K_site_kin != 0).sum(axis=1)  # per-site #kinases
     deg_kin = (K_site_kin != 0).sum(axis=0)  # per-kinase #sites
 
-    print(f"{tag} per-site degree:  min={deg_sites.min()}  median={np.median(deg_sites)}  max={deg_sites.max()}")
-    print(f"{tag} per-kin degree:   min={deg_kin.min()}  median={np.median(deg_kin)}  max={deg_kin.max()}")
+    print(
+        f"{tag} per-site degree:  min={deg_sites.min()}  median={np.median(deg_sites)}  max={deg_sites.max()}"
+    )
+    print(
+        f"{tag} per-kin degree:   min={deg_kin.min()}  median={np.median(deg_kin)}  max={deg_kin.max()}"
+    )
 
     zero_sites = np.where(deg_sites == 0)[0]
     zero_kin = np.where(deg_kin == 0)[0]
@@ -121,17 +135,23 @@ def _sanity_report_R(R, N, M, tag="R"):
     _assert_finite(R, tag, hard=True)
 
     rs = R.sum(axis=1)
-    print(f"{tag} row-sum stats: min={rs.min():.6g} median={np.median(rs):.6g} max={rs.max():.6g}")
+    print(
+        f"{tag} row-sum stats: min={rs.min():.6g} median={np.median(rs):.6g} max={rs.max():.6g}"
+    )
     zeros = np.where(rs == 0)[0]
     if len(zeros) > 0:
-        print(f"{tag} rows with sum==0: {len(zeros)}/{M} (kinases with no mapped sites)")
+        print(
+            f"{tag} rows with sum==0: {len(zeros)}/{M} (kinases with no mapped sites)"
+        )
     # Not always fatal, but if most rows are zero => Kdyn gets no substrate input -> flat dynamics.
     if (rs == 0).mean() > 0.5:
-        print(f"[WARN] >50% of {tag} rows are all-zero. Expect many dead kinases / flat Kdyn drive.")
+        print(
+            f"[WARN] >50% of {tag} rows are all-zero. Expect many dead kinases / flat Kdyn drive."
+        )
 
 
 def _sanity_report_C(Cg, Cl, N, tag="C"):
-    Cg = np.asarray(Cg);
+    Cg = np.asarray(Cg)
     Cl = np.asarray(Cl)
     print(f"\n=== {tag} sanity ===")
     _assert_shape(Cg, (N, N), "Cg")
@@ -155,10 +175,14 @@ def _sanity_report_data(P_scaled, Y, t, tag="data"):
     print(_fmt_stats(P_scaled, "P_scaled"))
     # flat input data after scaling is a real possibility
     dyn = np.nanmax(P_scaled, axis=1) - np.nanmin(P_scaled, axis=1)
-    print(f"P_scaled per-site dynamic range: min={dyn.min():.3g} median={np.median(dyn):.3g} max={dyn.max():.3g}")
+    print(
+        f"P_scaled per-site dynamic range: min={dyn.min():.3g} median={np.median(dyn):.3g} max={dyn.max():.3g}"
+    )
     if np.median(dyn) < 1e-6:
-        print("[WARN] P_scaled is almost flat for most sites after scaling. "
-              "You may be scaling away signal (or Y is flat).")
+        print(
+            "[WARN] P_scaled is almost flat for most sites after scaling. "
+            "You may be scaling away signal (or Y is flat)."
+        )
 
 
 def _sanity_report_weights(W_data, W_data_prot, tag="weights"):
@@ -168,7 +192,9 @@ def _sanity_report_weights(W_data, W_data_prot, tag="weights"):
     print(_fmt_stats(W_data, "W_data"))
     print(_fmt_stats(W_data_prot, "W_data_prot"))
     if np.any(W_data < 0) or np.any(W_data_prot < 0):
-        raise ValueError("[FAIL] Negative weights found. That will break objectives or bias optimization.")
+        raise ValueError(
+            "[FAIL] Negative weights found. That will break objectives or bias optimization."
+        )
 
 
 def _one_shot_sim_check(problem, xl, xu, P_scaled, label="preopt simulation"):
@@ -186,23 +212,33 @@ def _one_shot_sim_check(problem, xl, xu, P_scaled, label="preopt simulation"):
     print(_fmt_stats(P_pred, "P_pred"))
 
     if P_pred.shape != P_scaled.shape:
-        raise ValueError(f"[FAIL] simulate() shape mismatch: got {P_pred.shape}, expected {P_scaled.shape}")
+        raise ValueError(
+            f"[FAIL] simulate() shape mismatch: got {P_pred.shape}, expected {P_scaled.shape}"
+        )
 
     _assert_finite(P_pred, "P_pred", hard=True)
 
     # dynamic range
     dyn = np.max(P_pred, axis=1) - np.min(P_pred, axis=1)
-    print(f"P_pred per-site dynamic range: min={dyn.min():.3g} median={np.median(dyn):.3g} max={dyn.max():.3g}")
+    print(
+        f"P_pred per-site dynamic range: min={dyn.min():.3g} median={np.median(dyn):.3g} max={dyn.max():.3g}"
+    )
     if np.median(dyn) < 1e-8:
-        print("[WARN] P_pred is essentially flat for most sites at x0. "
-              "This is a MODEL-LEVEL issue (matrix drive, gating, or saturation), not a pymoo issue.")
+        print(
+            "[WARN] P_pred is essentially flat for most sites at x0. "
+            "This is a MODEL-LEVEL issue (matrix drive, gating, or saturation), not a pymoo issue."
+        )
 
     # compare quickly to data scale
     d_dyn = np.max(P_scaled, axis=1) - np.min(P_scaled, axis=1)
-    print(f"Compare median dynamic range: pred={np.median(dyn):.3g} data={np.median(d_dyn):.3g}")
+    print(
+        f"Compare median dynamic range: pred={np.median(dyn):.3g} data={np.median(d_dyn):.3g}"
+    )
 
 
-def _filter_dead_kinases(K_site_kin, kinases, kin_to_prot_idx, receptor_mask_kin, L_alpha=None):
+def _filter_dead_kinases(
+    K_site_kin, kinases, kin_to_prot_idx, receptor_mask_kin, L_alpha=None
+):
     """
     Optional but highly effective:
     remove kinase columns with zero-degree (no mapped sites).
@@ -217,7 +253,8 @@ def _filter_dead_kinases(K_site_kin, kinases, kin_to_prot_idx, receptor_mask_kin
     kept_idx = np.where(keep)[0]
     dropped_idx = np.where(~keep)[0]
     print(
-        f"[INFO] Filtering dead kinases: keeping {keep.sum()}/{len(kinases)}, dropping {len(dropped_idx)} zero-degree kinases.")
+        f"[INFO] Filtering dead kinases: keeping {keep.sum()}/{len(kinases)}, dropping {len(dropped_idx)} zero-degree kinases."
+    )
     print("[INFO] Example dropped kinases:", [kinases[i] for i in dropped_idx[:10]])
 
     K2 = K_site_kin[:, keep]
@@ -233,9 +270,13 @@ def _filter_dead_kinases(K_site_kin, kinases, kin_to_prot_idx, receptor_mask_kin
 
 def sim_summary(problem, tag, x):
     P = problem.simulate(x)
-    dr = (P.max(axis=1) - P.min(axis=1))
-    print(f"[{tag}] P range stats: min={dr.min():.4g} med={np.median(dr):.4g} max={dr.max():.4g}")
-    print(f"[{tag}] P abs stats: min={P.min():.4g} mean={P.mean():.4g} max={P.max():.4g}")
+    dr = P.max(axis=1) - P.min(axis=1)
+    print(
+        f"[{tag}] P range stats: min={dr.min():.4g} med={np.median(dr):.4g} max={dr.max():.4g}"
+    )
+    print(
+        f"[{tag}] P abs stats: min={P.min():.4g} mean={P.mean():.4g} max={P.max():.4g}"
+    )
     return P
 
 

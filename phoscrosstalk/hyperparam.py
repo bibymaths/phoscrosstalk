@@ -2,6 +2,7 @@
 hyperparam.py
 Centralizes parameter bounds and handles hyperparameter tuning scans.
 """
+
 import itertools
 import numpy as np
 import pandas as pd
@@ -32,7 +33,7 @@ BOUNDS_CONFIG = {
     "kK_act": (1e-5, 3.0),  # Kinase activation
     "kK_deact": (1e-5, 3.0),  # Kinase deactivation
     "k_off": (1e-5, 5.0),  # Phosphosite phosphatase rate
-    "gamma": (-3.0, 3.0)  # Tanh shape params (linear scale)
+    "gamma": (-3.0, 3.0),  # Tanh shape params (linear scale)
 }
 
 
@@ -55,9 +56,12 @@ def create_bounds(K=None, M=None, N=None):
             - dim (int): Total number of decision variables.
     """
 
-    if K is None: K = ModelDims.K
-    if M is None: M = ModelDims.M
-    if N is None: N = ModelDims.N
+    if K is None:
+        K = ModelDims.K
+    if M is None:
+        M = ModelDims.M
+    if N is None:
+        N = ModelDims.N
 
     dim = 4 * K + 2 + 3 * M + N + 4
     xl = np.zeros(dim)
@@ -67,42 +71,42 @@ def create_bounds(K=None, M=None, N=None):
     # Protein Kinetics
     for key in ["k_act", "k_deact", "s_prod"]:
         low, high = np.log(BOUNDS_CONFIG[key])
-        xl[idx:idx + K] = low;
-        xu[idx:idx + K] = high;
+        xl[idx : idx + K] = low
+        xu[idx : idx + K] = high
         idx += K
 
     # Degradation
     low, high = np.log(BOUNDS_CONFIG["d_deg"])
-    xl[idx:idx + K] = low;
-    xu[idx:idx + K] = high;
+    xl[idx : idx + K] = low
+    xu[idx : idx + K] = high
     idx += K
 
     # Coupling
     low, high = np.log(BOUNDS_CONFIG["beta"])
-    xl[idx] = low;
-    xu[idx] = high;
+    xl[idx] = low
+    xu[idx] = high
     idx += 1  # beta_g
-    xl[idx] = low;
-    xu[idx] = high;
+    xl[idx] = low
+    xu[idx] = high
     idx += 1  # beta_l
 
     # Kinase Params
     for key in ["alpha", "kK_act", "kK_deact"]:
         low, high = np.log(BOUNDS_CONFIG[key])
-        xl[idx:idx + M] = low;
-        xu[idx:idx + M] = high;
+        xl[idx : idx + M] = low
+        xu[idx : idx + M] = high
         idx += M
 
     # Phosphosite Params
     low, high = np.log(BOUNDS_CONFIG["k_off"])
-    xl[idx:idx + N] = low;
-    xu[idx:idx + N] = high;
+    xl[idx : idx + N] = low
+    xu[idx : idx + N] = high
     idx += N
 
     # Gammas
     low, high = BOUNDS_CONFIG["gamma"]
-    xl[idx:idx + 4] = low;
-    xu[idx:idx + 4] = high;
+    xl[idx : idx + 4] = low
+    xu[idx : idx + 4] = high
     idx += 4
 
     return xl, xu, dim
@@ -110,17 +114,33 @@ def create_bounds(K=None, M=None, N=None):
 
 # --- Hyperparameter Scanning ---
 
+
 def run_hyperparameter_scan(
-        outdir,
-        # Data Context
-        t, P_scaled, sites, site_prot_idx, positions, proteins,
-        ptm_intra_path, ptm_inter_path,
-        # Static Matrices (invariant to hyperparameters)
-        Cg, K_site_kin, R, L_alpha, kin_to_prot_idx,
-        A_scaled, prot_idx_for_A, W_data, W_data_prot,
-        receptor_mask_prot, receptor_mask_kin,
-        # Config
-        mechanism, cores
+    outdir,
+    # Data Context
+    t,
+    P_scaled,
+    sites,
+    site_prot_idx,
+    positions,
+    proteins,
+    ptm_intra_path,
+    ptm_inter_path,
+    # Static Matrices (invariant to hyperparameters)
+    Cg,
+    K_site_kin,
+    R,
+    L_alpha,
+    kin_to_prot_idx,
+    A_scaled,
+    prot_idx_for_A,
+    W_data,
+    W_data_prot,
+    receptor_mask_prot,
+    receptor_mask_kin,
+    # Config
+    mechanism,
+    cores,
 ):
     """
     Executes a grid search to tune structural hyperparameters using short optimization runs.
@@ -159,7 +179,7 @@ def run_hyperparameter_scan(
     grid = {
         "length_scale": [25.0, 50.0, 100.0],
         "lambda_net": [0.0, 1e-4, 1e-2],
-        "reg_lambda": [1e-4, 1e-2]
+        "reg_lambda": [1e-4, 1e-2],
     }
 
     keys, values = zip(*grid.items())
@@ -185,7 +205,9 @@ def run_hyperparameter_scan(
         ln = combo["lambda_net"]
         rl = combo["reg_lambda"]
 
-        logger.info(f"\n--- Combo {i + 1}/{len(combinations)}: LS={ls}, LambdaNet={ln}, Reg={rl} ---")
+        logger.info(
+            f"\n--- Combo {i + 1}/{len(combinations)}: LS={ls}, LambdaNet={ln}, Reg={rl} ---"
+        )
 
         # A. Rebuild Cl (Dependent on length_scale)
         # Note: We assume Cg is static and passed in. Cl needs rebuilding.
@@ -198,8 +220,10 @@ def run_hyperparameter_scan(
         Cl_new = np.zeros((N_sites, N_sites), dtype=float)
         for r in range(N_sites):
             for c in range(N_sites):
-                if r == c: continue
-                if site_prot_idx[r] != site_prot_idx[c]: continue
+                if r == c:
+                    continue
+                if site_prot_idx[r] != site_prot_idx[c]:
+                    continue
                 if np.isfinite(positions[r]) and np.isfinite(positions[c]):
                     d = abs(positions[r] - positions[c])
                     Cl_new[r, c] = np.exp(-d / ls)
@@ -209,18 +233,38 @@ def run_hyperparameter_scan(
         xl, xu, _ = create_bounds(ModelDims.K, ModelDims.M, ModelDims.N)
 
         problem = NetworkOptimizationProblem(
-            t, P_scaled, Cg, Cl_new, site_prot_idx, K_site_kin, R,
-            A_scaled, prot_idx_for_A, W_data, W_data_prot, L_alpha, kin_to_prot_idx,
-            ln, rl, receptor_mask_prot, receptor_mask_kin,
-            mechanism, xl, xu, elementwise_runner=runner
+            t,
+            P_scaled,
+            Cg,
+            Cl_new,
+            site_prot_idx,
+            K_site_kin,
+            R,
+            A_scaled,
+            prot_idx_for_A,
+            W_data,
+            W_data_prot,
+            L_alpha,
+            kin_to_prot_idx,
+            ln,
+            rl,
+            receptor_mask_prot,
+            receptor_mask_kin,
+            mechanism,
+            xl,
+            xu,
+            elementwise_runner=runner,
         )
 
         # C. Run Short Optimization
         algorithm = UNSGA3(pop_size=100, ref_dirs=ref_dirs)
         termination = DefaultMultiObjectiveTermination(
-            xtol=1e-4, cvtol=1e-4, ftol=0.01, period=10,
+            xtol=1e-4,
+            cvtol=1e-4,
+            ftol=0.01,
+            period=10,
             n_max_gen=40,  # Short run
-            n_max_evals=10000
+            n_max_evals=10000,
         )
 
         res = minimize(problem, algorithm, termination, seed=1, verbose=False)
@@ -252,7 +296,7 @@ def run_hyperparameter_scan(
         if score < best_score:
             best_score = score
             best_params = combo
-            logger.success(f"    [!] New Best Found!")
+            logger.success("    [!] New Best Found!")
 
     pool.close()
     pool.join()

@@ -2,6 +2,7 @@
 config.py
 Global configuration and state management for the Phospho-Network Model.
 """
+
 import numpy as np
 
 
@@ -13,6 +14,7 @@ class ModelDims:
     Acts as a static state holder to avoid passing dimensions recursively
     through every function in the simulation pipeline.
     """
+
     K: int = None  # Number of Proteins
     M: int = None  # Number of Kinases
     N: int = None  # Number of Phosphosites
@@ -36,8 +38,7 @@ class ModelDims:
 
 
 DEFAULT_TIMEPOINTS = np.array(
-    [0.0, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0, 16.0,
-     30.0, 60.0, 120.0, 240.0, 480.0, 960.0]
+    [0.0, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0]
 )
 
 EPS = 1e-8
