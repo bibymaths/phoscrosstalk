@@ -322,9 +322,9 @@ def run_single_optimisation(
     bounds = jnp.stack([jnp.asarray(xl, dtype=jnp.float32),
                         jnp.asarray(xu, dtype=jnp.float32)], axis=1)
 
-    # Project theta0 strictly inside bounds to avoid boundary initialisation issues
-    theta0_clipped = np.clip(theta0, xl, xu)
-    theta0_j = jnp.asarray(theta0_clipped, dtype=jnp.float32)
+    # Project theta0 to bounds to avoid boundary initialisation issues
+    theta0_bounded = np.clip(theta0, xl, xu)
+    theta0_j = jnp.asarray(theta0_bounded, dtype=jnp.float32)
 
     solver = SLSQP(bounds=bounds, rtol=rtol, atol=atol)
     sol = optx.minimise(

@@ -234,11 +234,11 @@ def run_multi_start_optimization(problem, args, P_scaled):
     )
 
     # Add frechet scores to diagnostics rows (only for successful runs)
-    freq_iter = iter(frechet_scores)
+    frechet_iter = iter(frechet_scores)
     for row in all_diag_rows:
         if row["finite_solution"]:
             try:
-                row["frechet_distance"] = next(freq_iter)
+                row["frechet_distance"] = next(frechet_iter)
             except StopIteration:
                 row["frechet_distance"] = float("inf")
         else:
