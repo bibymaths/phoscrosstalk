@@ -1,26 +1,28 @@
 """
 simulation.py
-Wrapper for scipy.integrate.odeint to simulate the network.
+Diffrax-based ODE solver wrapper for the phospho-network model.
+
+Public interface (unchanged from the SciPy version):
+    simulate_ode(...)   – primary function
+    simulate_p_scipy    – backward-compatible alias for simulate_ode
+    build_full_A0(...)  – helper to build the full protein abundance matrix
+
+The SciPy / Numba backend has been replaced by a Diffrax + JAX pipeline:
+    - RHS is provided by jax_mechanisms.make_rhs
+    - Integration uses diffrax.Tsit5 with PIDController adaptive stepping
+    - Results are converted back to NumPy arrays at the module boundary
 """
 
-import math
-import warnings
-from typing import cast
-
 import numpy as np
-from numba import njit
-from scipy.integrate import odeint, ODEintWarning
+import jax
+import jax.numpy as jnp
+import diffrax
 
-from phoscrosstalk.core_mechanisms import network_rhs, rhs_nb_dispatch_dense
 from phoscrosstalk.config import ModelDims
-
-warnings.filterwarnings("ignore", category=ODEintWarning)
-warnings.filterwarnings("ignore", message="Excess work done on this call")
-warnings.filterwarnings("ignore", category=RuntimeWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
+from phoscrosstalk.jax_mechanisms import make_rhs, compute_prev_site_idx
 
 
-def simulate_p_scipy(
+def simulate_ode(
     t_arr,
     P_data0,
     A_data0,
@@ -34,20 +36,24 @@ def simulate_p_scipy(
     kin_to_prot_idx,
     receptor_mask_prot,
     receptor_mask_kin,
-    mechanism: str,
-    full_output: bool = False,
+    mechanism,
+    full_output=False,
+    rtol=1e-6,
+    atol=1e-9,
+    max_steps=16384,
+    dt0=0.01,
 ):
     """
-    Simulate the phosphoproteomic network dynamics using SciPy's ODE solver.
+    Simulate the phosphoproteomic network dynamics using Diffrax (JAX backend).
 
-    Sets up the state vector $x = [S, A, K_{dyn}, P]$ and integrates the system of differential
-    equations over the provided time points. Handles initial condition setup from data,
-    numerical integration via `odeint`, and post-simulation clipping of bounded variables.
+    Builds the initial state vector x = [S, A, K_dyn, p], integrates the
+    ODE system over t_arr with the Tsit5 adaptive solver, clips bounded
+    states, and returns the result as NumPy arrays.
 
     Args:
         t_arr (np.ndarray): Time points for the simulation.
-        P_data0 (np.ndarray): Initial phosphosite data (used for $t=0$ state).
-        A_data0 (np.ndarray): Initial protein abundance data (used for $t=0$ state).
+        P_data0 (np.ndarray): Initial phosphosite data (used for t=0 state).
+        A_data0 (np.ndarray): Initial protein abundance data (used for t=0 state).
         theta (np.ndarray): Flattened parameter vector.
         Cg, Cl (np.ndarray): Global and Local coupling matrices.
         site_prot_idx (np.ndarray): Mapping indices for sites to proteins.
@@ -57,6 +63,10 @@ def simulate_p_scipy(
         kin_to_prot_idx (np.ndarray): Mapping indices for kinases to proteins.
         receptor_mask_prot, receptor_mask_kin (np.ndarray): Input masks.
         mechanism (str): Kinetic mechanism ('dist', 'seq', 'rand').
+        full_output (bool): If True, also return S_sim and Kdyn_sim.
+        rtol, atol (float): Solver tolerances.
+        max_steps (int): Maximum solver steps.
+        dt0 (float): Initial step size.
 
     Returns:
         tuple:
@@ -70,98 +80,88 @@ def simulate_p_scipy(
             "ModelDims have not been set. Call ModelDims.set_dims(K, M, N) before "
             "running a simulation."
         )
-    state_dim = 2 * K + M + N
 
-    x0 = np.zeros((state_dim,))
-    # Initial Conditions
-    # A = A_data0[:, 0] or default
-    a0 = A_data0[:, 0].astype(np.float64)
-    a0 = np.nan_to_num(a0, nan=1.0, posinf=5.0, neginf=0.0)
+    T       = len(t_arr)
+    N_sites = P_data0.shape[0]
+
+    # Build initial conditions
+    x0 = np.zeros(2 * K + M + N, dtype=np.float64)
+
+    a0 = np.nan_to_num(A_data0[:, 0].astype(np.float64), nan=1.0, posinf=5.0, neginf=0.0)
     a0 = np.clip(a0, 0.0, 5.0)
     x0[K : 2 * K] = a0
 
-    # P = P_data0[:, 0] or default
-    p0 = P_data0[:, 0].astype(np.float64)
-    p0 = np.nan_to_num(p0, nan=0.0, posinf=1.0, neginf=0.0)
+    p0 = np.nan_to_num(P_data0[:, 0].astype(np.float64), nan=0.0, posinf=1.0, neginf=0.0)
     p0 = np.clip(p0, 0.0, 1.0)
     x0[2 * K + M :] = p0
 
+    nan_result = _nan_result(N_sites, K, M, T, full_output)
     if not np.all(np.isfinite(x0)):
-        N_sites = P_data0.shape[0]
-        T = len(t_arr)
-        if full_output:
-            return (
-                np.full((N_sites, T), np.nan),
-                np.full((K, T), np.nan),
-                np.full((K, T), np.nan),
-                np.full((M, T), np.nan),
-            )
-        return np.full((N_sites, T), np.nan), np.full((K, T), np.nan)
+        return nan_result
 
-    # Simulation
-    xs = cast(
-        np.ndarray,
-        cast(
-            object,
-            odeint(
-                network_rhs,
-                x0,
-                t_arr,
-                args=(
-                    theta,
-                    Cg,
-                    Cl,
-                    site_prot_idx,
-                    K_site_kin,
-                    R,
-                    L_alpha,
-                    kin_to_prot_idx,
-                    receptor_mask_prot,
-                    receptor_mask_kin,
-                    mechanism,
-                ),
-                # Dfun=fd_jacobian,
-                col_deriv=False,
-                rtol=1e-6,
-                atol=1e-9,
-                mxstep=10000,
-                # Not to be confused with the full_output kwarg, this is the default behavior
-                # of scipy.integrate.odeint.
-                # full_output=True,
-            ),
-        ),
+    # Precompute static topology for sequential mechanism
+    prev_site_idx = compute_prev_site_idx(site_prot_idx.astype(np.int32), N)
+
+    # Convert all topology arrays to JAX float32
+    args = (
+        jnp.asarray(theta,               dtype=jnp.float32),
+        jnp.asarray(Cg,                  dtype=jnp.float32),
+        jnp.asarray(Cl,                  dtype=jnp.float32),
+        jnp.asarray(site_prot_idx,       dtype=jnp.int32),
+        jnp.asarray(K_site_kin,          dtype=jnp.float32),
+        jnp.asarray(R,                   dtype=jnp.float32),
+        jnp.asarray(L_alpha,             dtype=jnp.float32),
+        jnp.asarray(kin_to_prot_idx,     dtype=jnp.int32),
+        jnp.asarray(receptor_mask_prot,  dtype=jnp.float32),
+        jnp.asarray(receptor_mask_kin,   dtype=jnp.float32),
+        jnp.asarray(prev_site_idx,       dtype=jnp.int32),
     )
 
-    # if solver failed, return NaNs early
-    # if infodict.get("message", "").lower().find("successful") == -1:
-    #     N_sites = P_data0.shape[0]
-    #     T = len(t_arr)
-    #     return np.full((N_sites, T), np.nan), np.full((K, T), np.nan)
+    rhs_fn        = make_rhs(K, M, N, mechanism)
+    term          = diffrax.ODETerm(rhs_fn)
+    t_eval        = jnp.asarray(t_arr, dtype=jnp.float32)
+    y0_jax        = jnp.asarray(x0,   dtype=jnp.float32)
+    saveat        = diffrax.SaveAt(ts=t_eval)
+    stepsize_ctrl = diffrax.PIDController(rtol=rtol, atol=atol)
+    solver        = diffrax.Tsit5()
 
-    # Fail if any non-finite
+    try:
+        sol = diffrax.diffeqsolve(
+            term,
+            solver,
+            t0=float(t_arr[0]),
+            t1=float(t_arr[-1]),
+            dt0=dt0,
+            y0=y0_jax,
+            args=args,
+            saveat=saveat,
+            stepsize_controller=stepsize_ctrl,
+            max_steps=max_steps,
+            throw=False,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"Diffrax solver failed. mechanism={mechanism!r}, "
+            f"theta.shape={theta.shape}, t0={t_arr[0]}, t1={t_arr[-1]}. "
+            f"Original error: {exc}"
+        ) from exc
+
+    # sol.ys shape: (T, state_dim)
+    xs = np.asarray(sol.ys, dtype=np.float64)
+
     if not np.all(np.isfinite(xs)):
-        N_sites = P_data0.shape[0]
-        T = len(t_arr)
-        if full_output:
-            return (
-                np.full((N_sites, T), np.nan),
-                np.full((K, T), np.nan),
-                np.full((K, T), np.nan),
-                np.full((M, T), np.nan),
-            )
-        return np.full((N_sites, T), np.nan), np.full((K, T), np.nan)
+        return nan_result
 
-    # Slice
-    S_sim = xs[:, 0:K]
-    A_sim = xs[:, K : 2 * K]
+    # Slice and clip bounded states
+    S_sim    = xs[:, :K]
+    A_sim    = xs[:, K : 2 * K]
     Kdyn_sim = xs[:, 2 * K : 2 * K + M]
-    P_sim = xs[:, 2 * K + M : 2 * K + M + N]
+    P_sim    = xs[:, 2 * K + M : 2 * K + M + N]
 
-    # Clip bounded states
-    np.clip(S_sim, 0.0, 1.0, out=S_sim)
+    np.clip(S_sim,    0.0, 1.0, out=S_sim)
     np.clip(Kdyn_sim, 0.0, 1.0, out=Kdyn_sim)
-    np.clip(P_sim, 0.0, 1.0, out=P_sim)
-    np.clip(A_sim, 0.0, 5.0, out=A_sim)
+    np.clip(P_sim,    0.0, 1.0, out=P_sim)
+    np.clip(A_sim,    0.0, 5.0, out=A_sim)
 
     if full_output:
         return P_sim.T, A_sim.T, S_sim.T, Kdyn_sim.T
@@ -169,12 +169,28 @@ def simulate_p_scipy(
     return P_sim.T, A_sim.T
 
 
+def _nan_result(N_sites, K, M, T, full_output):
+    """Return NaN sentinel arrays matching expected output shape."""
+    if full_output:
+        return (
+            np.full((N_sites, T), np.nan),
+            np.full((K,       T), np.nan),
+            np.full((K,       T), np.nan),
+            np.full((M,       T), np.nan),
+        )
+    return np.full((N_sites, T), np.nan), np.full((K, T), np.nan)
+
+
+# Backward-compatible alias used throughout analysis, app, sensitivity, etc.
+simulate_p_scipy = simulate_ode
+
+
 def build_full_A0(K, T, A_scaled, prot_idx_for_A):
     """
     Constructs the full-dimension protein abundance matrix from partial observations.
 
     Maps the observed protein data (which may only cover a subset of proteins) into the
-    full model state space $K \times T$. Unobserved proteins are initialized to zero.
+    full model state space K x T. Unobserved proteins are initialized to zero.
 
     Args:
         K (int): Total number of proteins in the model.
@@ -185,183 +201,8 @@ def build_full_A0(K, T, A_scaled, prot_idx_for_A):
     Returns:
         np.ndarray: Full abundance matrix (K x T).
     """
-
     A0_full = np.zeros((K, T), dtype=float)
-
     if A_scaled.size > 0:
         for k, p_idx in enumerate(prot_idx_for_A):
-            # copy the whole time-course simulate_p_scipy only uses [:, 0]
             A0_full[p_idx, :] = A_scaled[k, :]
-
     return A0_full
-
-
-def fd_jacobian(
-    x,
-    t,
-    theta,
-    Cg,
-    Cl,
-    site_prot_idx,
-    K_site_kin,
-    R,
-    L_alpha,
-    kin_to_prot_idx,
-    receptor_mask_prot,
-    receptor_mask_kin,
-    mechanism: str,
-):
-    """
-    Computes the Jacobian matrix of the system using finite differences.
-
-    Acts as a Python wrapper that prepares inputs (ensuring contiguous arrays and
-    encoding mechanism strings) before calling the Numba-accelerated core function.
-
-    Args:
-        x (np.ndarray): State vector.
-        t (float): Current time.
-        theta (np.ndarray): Parameter vector.
-        [matrices]: System topology matrices (Cg, Cl, K_site_kin, etc.).
-        mechanism (str): Mechanism name ('dist', 'seq', 'rand').
-
-    Returns:
-        np.ndarray: Jacobian matrix $J$, where $J_{ij} = \frac{\partial f_i}{\partial x_j}$.
-    """
-    if mechanism == "dist":
-        mech_code = 0
-    elif mechanism == "seq":
-        mech_code = 1
-    elif mechanism == "rand":
-        mech_code = 2
-    else:
-        mech_code = 0
-
-    x_arr = np.ascontiguousarray(x, dtype=np.float64)
-    theta_arr = np.ascontiguousarray(theta, dtype=np.float64)
-
-    return fd_jacobian_nb_core(
-        x_arr,
-        t,
-        theta_arr,
-        np.ascontiguousarray(Cg, dtype=np.float64),
-        np.ascontiguousarray(Cl, dtype=np.float64),
-        np.ascontiguousarray(site_prot_idx, dtype=np.int64),
-        np.ascontiguousarray(K_site_kin, dtype=np.float64),
-        np.ascontiguousarray(R, dtype=np.float64),
-        np.ascontiguousarray(L_alpha, dtype=np.float64),
-        np.ascontiguousarray(kin_to_prot_idx, dtype=np.int64),
-        np.ascontiguousarray(receptor_mask_prot, dtype=np.int64),
-        np.ascontiguousarray(receptor_mask_kin, dtype=np.int64),
-        mech_code,
-        ModelDims.K,
-        ModelDims.M,
-        ModelDims.N,
-    )
-
-
-@njit(cache=True, fastmath=True)
-def fd_jacobian_nb_core(
-    x,
-    t,
-    theta,
-    Cg,
-    Cl,
-    site_prot_idx,
-    K_site_kin,
-    R,
-    L_alpha,
-    kin_to_prot_idx,
-    receptor_mask_prot,
-    receptor_mask_kin,
-    mech_code,
-    K,
-    M,
-    N,
-    eps=1e-6,  # larger than 1e-8 for stiff-ish, clipped systems
-    h_min=1e-8,
-):
-    """
-    Numba-accelerated core for Finite Difference Jacobian estimation.
-
-    Calculates the Jacobian via central differences:
-    $$ \frac{\partial f}{\partial x_i} \approx \frac{f(x + h) - f(x - h)}{2h} $$
-
-    Dynamically adjusts the step size $h$ based on the magnitude of $x_i$ to maintain
-    numerical stability (`eps * (1 + |x|)`).
-
-    Args:
-        x (np.ndarray): State vector.
-        t (float): Current time.
-        theta (np.ndarray): Parameter vector.
-        [matrices]: System topology matrices.
-        mech_code (int): Integer code for mechanism (0=dist, 1=seq, 2=rand).
-        K, M, N (int): System dimensions.
-        eps (float): Relative step size scaling factor.
-        h_min (float): Minimum absolute step size.
-
-    Returns:
-        np.ndarray: The Jacobian matrix (State_Dim x State_Dim).
-    """
-    n = x.size
-    J = np.empty((n, n), dtype=np.float64)
-
-    x_pert = x.copy()
-
-    for j in range(n):
-        xj0 = x[j]
-
-        # step size
-        h = eps * (1.0 + math.fabs(xj0))
-        if h < h_min:
-            h = h_min
-
-        # +h
-        x_pert[j] = xj0 + h
-        f_plus = rhs_nb_dispatch_dense(
-            x_pert,
-            t,
-            theta,
-            Cg,
-            Cl,
-            site_prot_idx,
-            K_site_kin,
-            R,
-            L_alpha,
-            kin_to_prot_idx,
-            receptor_mask_prot,
-            receptor_mask_kin,
-            K,
-            M,
-            N,
-            mech_code,
-        )
-
-        # -h
-        x_pert[j] = xj0 - h
-        f_minus = rhs_nb_dispatch_dense(
-            x_pert,
-            t,
-            theta,
-            Cg,
-            Cl,
-            site_prot_idx,
-            K_site_kin,
-            R,
-            L_alpha,
-            kin_to_prot_idx,
-            receptor_mask_prot,
-            receptor_mask_kin,
-            K,
-            M,
-            N,
-            mech_code,
-        )
-
-        # restore
-        x_pert[j] = xj0
-
-        inv2h = 0.5 / h
-        for i in range(n):
-            J[i, j] = (f_plus[i] - f_minus[i]) * inv2h
-
-    return J

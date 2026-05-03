@@ -1,21 +1,18 @@
 """
 hyperparam.py
-Centralizes parameter bounds and handles hyperparameter tuning scans.
+Hyperparameter tuning scan using Optimistix (replaces the pymoo UNSGA3 backend).
+
+Performs a grid search over (length_scale, lambda_net, reg_lambda) using a
+short Optimistix optimisation for each combination, evaluated by Fréchet distance.
 """
 
 import itertools
 import numpy as np
 import pandas as pd
-import multiprocessing
-from pymoo.algorithms.moo.unsga3 import UNSGA3
-from pymoo.optimize import minimize
-from pymoo.termination.default import DefaultMultiObjectiveTermination
-from pymoo.parallelization import StarmapParallelization
-from pymoo.util.ref_dirs import get_reference_directions
 
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk import data_loader
-from phoscrosstalk.optimization import NetworkOptimizationProblem
+from phoscrosstalk.optimization import NetworkProblem, create_bounds, make_loss_fn, run_single_optimisation
 from phoscrosstalk.fretchet import frechet_distance
 
 from phoscrosstalk.logger import get_logger
@@ -24,16 +21,16 @@ logger = get_logger()
 
 # --- Bounds Configuration ---
 BOUNDS_CONFIG = {
-    "k_act": (1e-5, 10.0),  # Protein activation
-    "k_deact": (1e-5, 10.0),  # Protein deactivation
-    "s_prod": (1e-5, 10.0),  # Protein synthesis
-    "d_deg": (1e-5, 0.5),  # Protein degradation (restricted)
-    "beta": (1e-5, 10.0),  # Global/Local coupling strengths
-    "alpha": (1e-5, 10.0),  # Kinase global strength
-    "kK_act": (1e-5, 3.0),  # Kinase activation
-    "kK_deact": (1e-5, 3.0),  # Kinase deactivation
-    "k_off": (1e-5, 5.0),  # Phosphosite phosphatase rate
-    "gamma": (-3.0, 3.0),  # Tanh shape params (linear scale)
+    "k_act":    (1e-5, 10.0),
+    "k_deact":  (1e-5, 10.0),
+    "s_prod":   (1e-5, 10.0),
+    "d_deg":    (1e-5, 0.5),
+    "beta":     (1e-5, 10.0),
+    "alpha":    (1e-5, 10.0),
+    "kK_act":   (1e-5, 3.0),
+    "kK_deact": (1e-5, 3.0),
+    "k_off":    (1e-5, 5.0),
+    "gamma":    (-3.0, 3.0),
 }
 
 
@@ -41,21 +38,12 @@ def create_bounds(K=None, M=None, N=None):
     """
     Constructs the lower and upper bound vectors for the optimization problem.
 
-    Generates flat arrays for all model parameters (proteins, kinases, sites, global/local coupling)
-    based on the logarithmic or linear ranges defined in `BOUNDS_CONFIG`.
-
     Args:
-        K (int, optional): Number of Proteins. Defaults to ModelDims.K.
-        M (int, optional): Number of Kinases. Defaults to ModelDims.M.
-        N (int, optional): Number of Phosphosites. Defaults to ModelDims.N.
+        K, M, N (int, optional): Dimensions. Defaults to ModelDims values.
 
     Returns:
-        tuple:
-            - xl (np.ndarray): Lower bounds vector (log-scale for most params).
-            - xu (np.ndarray): Upper bounds vector (log-scale for most params).
-            - dim (int): Total number of decision variables.
+        tuple: (xl, xu, dim)
     """
-
     if K is None:
         K = ModelDims.K
     if M is None:
@@ -68,42 +56,32 @@ def create_bounds(K=None, M=None, N=None):
     xu = np.zeros(dim)
     idx = 0
 
-    # Protein Kinetics
     for key in ["k_act", "k_deact", "s_prod"]:
         low, high = np.log(BOUNDS_CONFIG[key])
         xl[idx : idx + K] = low
         xu[idx : idx + K] = high
         idx += K
 
-    # Degradation
     low, high = np.log(BOUNDS_CONFIG["d_deg"])
     xl[idx : idx + K] = low
     xu[idx : idx + K] = high
     idx += K
 
-    # Coupling
     low, high = np.log(BOUNDS_CONFIG["beta"])
-    xl[idx] = low
-    xu[idx] = high
-    idx += 1  # beta_g
-    xl[idx] = low
-    xu[idx] = high
-    idx += 1  # beta_l
+    xl[idx] = low; xu[idx] = high; idx += 1
+    xl[idx] = low; xu[idx] = high; idx += 1
 
-    # Kinase Params
     for key in ["alpha", "kK_act", "kK_deact"]:
         low, high = np.log(BOUNDS_CONFIG[key])
         xl[idx : idx + M] = low
         xu[idx : idx + M] = high
         idx += M
 
-    # Phosphosite Params
     low, high = np.log(BOUNDS_CONFIG["k_off"])
     xl[idx : idx + N] = low
     xu[idx : idx + N] = high
     idx += N
 
-    # Gammas
     low, high = BOUNDS_CONFIG["gamma"]
     xl[idx : idx + 4] = low
     xu[idx : idx + 4] = high
@@ -112,12 +90,8 @@ def create_bounds(K=None, M=None, N=None):
     return xl, xu, dim
 
 
-# --- Hyperparameter Scanning ---
-
-
 def run_hyperparameter_scan(
     outdir,
-    # Data Context
     t,
     P_scaled,
     sites,
@@ -126,7 +100,6 @@ def run_hyperparameter_scan(
     proteins,
     ptm_intra_path,
     ptm_inter_path,
-    # Static Matrices (invariant to hyperparameters)
     Cg,
     K_site_kin,
     R,
@@ -138,172 +111,124 @@ def run_hyperparameter_scan(
     W_data_prot,
     receptor_mask_prot,
     receptor_mask_kin,
-    # Config
     mechanism,
     cores,
 ):
     """
-    Executes a grid search to tune structural hyperparameters using short optimization runs.
+    Grid search over (length_scale, lambda_net, reg_lambda) using short Optimistix runs.
 
-    Iterates over combinations of `length_scale` (for local coupling), `lambda_net` (network regularization),
-    and `reg_lambda` (complexity penalty). For each combination, it runs a brief multi-objective
-    optimization (UNSGA3) and evaluates the best result using the Discrete Fréchet Distance.
-
-    Args:
-        outdir (str): Directory to save scan results.
-        t (np.ndarray): Time points.
-        P_scaled (np.ndarray): Scaled phosphodata.
-        sites, proteins (list): ID lists.
-        site_prot_idx (np.ndarray): Site-to-protein mapping.
-        positions (np.ndarray): Site positions.
-        ptm_intra_path, ptm_inter_path (str): Paths to PTM databases.
-        Cg (np.ndarray): Global coupling matrix.
-        K_site_kin, R, L_alpha (np.ndarray): Interaction/Laplacian matrices.
-        kin_to_prot_idx (np.ndarray): Kinase-to-protein mapping.
-        A_scaled, prot_idx_for_A (np.ndarray): Protein abundance data and indices.
-        W_data, W_data_prot (np.ndarray): Data weights.
-        receptor_mask_prot, receptor_mask_kin (np.ndarray): Receptor masks.
-        mechanism (str): Kinetic mechanism ('dist', 'seq', 'rand').
-        cores (int): Number of CPU cores for parallelization.
+    Evaluates each combination with a Fréchet distance score and returns the best params.
 
     Returns:
-        dict: The hyperparameter combination yielding the lowest Fréchet distance score.
+        dict: Best hyperparameter combination (length_scale, lambda_net, reg_lambda, score).
     """
-
     logger.info("\n" + "=" * 60)
     logger.header("[*] STARTING HYPERPARAMETER TUNING SCAN")
     logger.info("=" * 60)
 
-    # 1. Define Search Grid
-    # Customize these ranges based on your domain knowledge
     grid = {
         "length_scale": [25.0, 50.0, 100.0],
-        "lambda_net": [0.0, 1e-4, 1e-2],
-        "reg_lambda": [1e-4, 1e-2],
+        "lambda_net":   [0.0,  1e-4,  1e-2],
+        "reg_lambda":   [1e-4, 1e-2],
     }
 
     keys, values = zip(*grid.items())
     combinations = [dict(zip(keys, v)) for v in itertools.product(*values)]
 
     logger.info(f"[*] Total combinations to test: {len(combinations)}")
-    logger.info("[*] Using 'Coarse' Optimization settings: Gen=40, Pop=100")
+    logger.info("[*] Using 'Coarse' settings: max_steps=40")
 
-    best_score = np.inf
+    best_score  = np.inf
     best_params = None
     results_log = []
 
-    # Prepare Multiprocessing Pool
-    pool = multiprocessing.Pool(cores)
-    runner = StarmapParallelization(pool.starmap)
+    xl, xu, _ = create_bounds(ModelDims.K, ModelDims.M, ModelDims.N)
+    dim = len(xl)
 
-    # Reference directions for NSGA3
-    ref_dirs = get_reference_directions("das-dennis", 3, n_partitions=8)
-
-    # 2. Iterate Grid
     for i, combo in enumerate(combinations):
         ls = combo["length_scale"]
         ln = combo["lambda_net"]
         rl = combo["reg_lambda"]
 
         logger.info(
-            f"\n--- Combo {i + 1}/{len(combinations)}: LS={ls}, LambdaNet={ln}, Reg={rl} ---"
+            f"\n--- Combo {i + 1}/{len(combinations)}: "
+            f"LS={ls}, LambdaNet={ln}, Reg={rl} ---"
         )
 
-        # A. Rebuild Cl (Dependent on length_scale)
-        # Note: We assume Cg is static and passed in. Cl needs rebuilding.
-        # We reuse the logic from data_loader but we need to do it here manually
-        # or call a helper. To avoid circular imports, we implement a lightweight builder here
-        # or rely on data_loader being imported.
-
-        # Rebuild Cl locally
+        # Rebuild Cl for this length scale
         N_sites = len(sites)
-        Cl_new = np.zeros((N_sites, N_sites), dtype=float)
+        Cl_new  = np.zeros((N_sites, N_sites), dtype=float)
         for r in range(N_sites):
             for c in range(N_sites):
-                if r == c:
-                    continue
-                if site_prot_idx[r] != site_prot_idx[c]:
+                if r == c or site_prot_idx[r] != site_prot_idx[c]:
                     continue
                 if np.isfinite(positions[r]) and np.isfinite(positions[c]):
                     d = abs(positions[r] - positions[c])
                     Cl_new[r, c] = np.exp(-d / ls)
         Cl_new = data_loader.row_normalize(Cl_new)
 
-        # B. Setup Problem
-        xl, xu, _ = create_bounds(ModelDims.K, ModelDims.M, ModelDims.N)
+        # Build loss function for this combo
+        try:
+            loss_fn = make_loss_fn(
+                t=t,
+                P_data=P_scaled,
+                A_scaled=A_scaled,
+                prot_idx_for_A=prot_idx_for_A,
+                W_data=W_data,
+                W_data_prot=W_data_prot,
+                Cg=Cg,
+                Cl=Cl_new,
+                site_prot_idx=site_prot_idx,
+                K_site_kin=K_site_kin,
+                R=R,
+                L_alpha=L_alpha,
+                kin_to_prot_idx=kin_to_prot_idx,
+                receptor_mask_prot=receptor_mask_prot,
+                receptor_mask_kin=receptor_mask_kin,
+                mechanism=mechanism,
+                lambda_net=ln,
+                reg_lambda=rl,
+            )
 
-        problem = NetworkOptimizationProblem(
-            t,
-            P_scaled,
-            Cg,
-            Cl_new,
-            site_prot_idx,
-            K_site_kin,
-            R,
-            A_scaled,
-            prot_idx_for_A,
-            W_data,
-            W_data_prot,
-            L_alpha,
-            kin_to_prot_idx,
-            ln,
-            rl,
-            receptor_mask_prot,
-            receptor_mask_kin,
-            mechanism,
-            xl,
-            xu,
-            elementwise_runner=runner,
-        )
+            rng    = np.random.default_rng(1)
+            theta0 = xl + rng.random(dim) * (xu - xl)
 
-        # C. Run Short Optimization
-        algorithm = UNSGA3(pop_size=100, ref_dirs=ref_dirs)
-        termination = DefaultMultiObjectiveTermination(
-            xtol=1e-4,
-            cvtol=1e-4,
-            ftol=0.01,
-            period=10,
-            n_max_gen=40,  # Short run
-            n_max_evals=10000,
-        )
+            theta_best, _, _, _, _ = run_single_optimisation(loss_fn, theta0, max_steps=40)
 
-        res = minimize(problem, algorithm, termination, seed=1, verbose=False)
+            # Evaluate Fréchet distance
+            problem_tmp = NetworkProblem(
+                t=t, P_data=P_scaled, Cg=Cg, Cl=Cl_new,
+                site_prot_idx=site_prot_idx, K_site_kin=K_site_kin,
+                R=R, A_scaled=A_scaled, prot_idx_for_A=prot_idx_for_A,
+                W_data=W_data, W_data_prot=W_data_prot,
+                L_alpha=L_alpha, kin_to_prot_idx=kin_to_prot_idx,
+                lambda_net=ln, reg_lambda=rl,
+                receptor_mask_prot=receptor_mask_prot,
+                receptor_mask_kin=receptor_mask_kin,
+                mechanism=mechanism,
+                xl=xl, xu=xu,
+            )
 
-        # D. Evaluate Best Solution (Fréchet Distance)
-        # We simulate the "best" individual (e.g., knee point or min sum of objs)
-        if len(res.F) > 0:
-            # Simple scalarization to pick one representative solution from Pareto front
-            # Normalize objectives roughly
-            ptp = np.ptp(res.F, axis=0)
-            F_norm = (res.F - res.F.min(axis=0)) / (ptp + 1e-9)
-            best_idx_run = np.argmin(np.sum(F_norm, axis=1))
-            theta_best = res.X[best_idx_run]
+            P_pred     = problem_tmp.simulate(theta_best)
+            true_c     = np.ascontiguousarray(P_scaled,  dtype=np.float64)
+            pred_c     = np.ascontiguousarray(P_pred,    dtype=np.float64)
+            score      = frechet_distance(true_c, pred_c)
 
-            P_pred = problem.simulate(theta_best)
-
-            # Compute Fréchet Distance
-            true_coords = np.ascontiguousarray(P_scaled, dtype=np.float64)
-            pred_coords = np.ascontiguousarray(P_pred, dtype=np.float64)
-            score = frechet_distance(true_coords, pred_coords)
-        else:
+        except Exception as e:
+            logger.warning(f"    -> Combo failed: {e}")
             score = np.inf
 
         logger.info(f"    -> Fréchet Score: {score:.4f}")
-
         combo["score"] = score
         results_log.append(combo)
 
         if score < best_score:
-            best_score = score
+            best_score  = score
             best_params = combo
             logger.success("    [!] New Best Found!")
 
-    pool.close()
-    pool.join()
-
-    # 3. Save Scan Results
-    df_scan = pd.DataFrame(results_log)
-    df_scan = df_scan.sort_values("score")
+    # Save scan results
+    df_scan = pd.DataFrame(results_log).sort_values("score")
     df_scan.to_csv(f"{outdir}/hyperparameter_scan_results.tsv", sep="\t", index=False)
 
     logger.info("\n" + "=" * 60)
