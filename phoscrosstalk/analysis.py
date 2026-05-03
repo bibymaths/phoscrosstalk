@@ -33,8 +33,9 @@ def save_run_results(outdir, F, X, f1, f2, f3, J, F_best):
         F_best (np.ndarray): The loss components corresponding to the selected best solution.
 
     Returns:
-        None: Files are written to `outdir` (pareto_stats.tsv, pareto_front_with_J.tsv, etc.).
-              Output filenames are preserved for backward compatibility.
+        None: Files are written to `outdir`.  Output filenames are preserved for
+              backward compatibility with external readers (pareto_stats.tsv,
+              pareto_front_with_J.tsv, pareto_points.tsv, pareto_front.npz).
     """
     obj_names = ["f1_P_sites", "f2_protein", "f3_complexity"]
 
