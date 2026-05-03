@@ -33,6 +33,8 @@ import jax.numpy as jnp
 # ---------------------------------------------------------------------------
 
 
+_INTERPOLATION_EPSILON = 1e-12
+
 def _piecewise_constant(t, times_j: jnp.ndarray, values_j: jnp.ndarray) -> jnp.ndarray:
     """
     Piecewise-constant (zero-order hold) interpolation.
@@ -70,7 +72,7 @@ def _linear_interp(t, times_j: jnp.ndarray, values_j: jnp.ndarray) -> jnp.ndarra
     t1 = times_j[idx + 1]
     v0 = values_j[:, idx]
     v1 = values_j[:, idx + 1]
-    alpha = jnp.clip((t - t0) / (t1 - t0 + 1e-12), 0.0, 1.0)
+    alpha = jnp.clip((t - t0) / (t1 - t0 + _INTERPOLATION_EPSILON), 0.0, 1.0)
     return v0 + alpha * (v1 - v0)
 
 

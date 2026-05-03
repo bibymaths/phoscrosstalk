@@ -359,6 +359,8 @@ def build_kinase_site_from_kea(ks_psite_table_path, sites):
     return K_site_kin / row_sums, kinases
 
 
+_MAX_WARNING_ITEMS = 10
+
 def load_rna_data(path):
     """
     Load mRNA time-series data from a CSV file.
@@ -479,8 +481,8 @@ def load_tf_network(path, gene_ids=None):
         if unknown:
             logger.warning(
                 f"[!] {len(unknown)} TF name(s) in '{path}' not found in mRNA data: "
-                + ", ".join(sorted(unknown)[:10])
-                + ("..." if len(unknown) > 10 else "")
+                + ", ".join(sorted(unknown)[:_MAX_WARNING_ITEMS])
+                + ("..." if len(unknown) > _MAX_WARNING_ITEMS else "")
             )
 
     return df[["source", "target", "weight"]].copy()

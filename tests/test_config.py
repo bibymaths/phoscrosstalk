@@ -2,6 +2,8 @@
 Tests for config.py ModelDims singleton.
 """
 
+import pytest
+
 from phoscrosstalk.config import ModelDims
 
 
@@ -88,4 +90,3 @@ phospho = 2.0
     assert cfg.solver.rtol == pytest.approx(1e-6)
 
 
-import pytest
