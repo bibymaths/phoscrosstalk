@@ -268,8 +268,16 @@ def make_rhs(K: int, M: int, N: int, mechanism: str):
 
         else:
             # rand / competitive crowding: gate proportional to 1/(vacant fraction)
+            # Biological rationale: kinase is a limited resource; all unphosphorylated
+            # sites compete for it. More vacant sites → lower per-site rate.
+            # Gate = 1 / (CROWDING_BASELINE + CROWDING_WEIGHT * vacant_fraction + CROWDING_EPSILON)
+            # The 0.5 + 0.5 decomposition ensures gate → 1 when all sites are occupied
+            # and gate → 2 when no sites are occupied (maximum competition).
+            CROWDING_BASELINE = 0.5   # minimum denominator contribution
+            CROWDING_WEIGHT   = 0.5   # scales the vacant-fraction contribution
+            CROWDING_EPSILON  = 1e-9  # numerical stability guard against zero division
             vacant_frac = 1.0 - mp[site_prot_idx]      # (N,)
-            gate = 1.0 / (0.5 + 0.5 * vacant_frac + 1e-9)
+            gate = 1.0 / (CROWDING_BASELINE + CROWDING_WEIGHT * vacant_frac + CROWDING_EPSILON)
 
         v_raw   = k_on_eff * (1.0 + coup_clamp) * gate * (1.0 - p)
         v_on    = v_raw / (1.0 + jnp.abs(v_raw))

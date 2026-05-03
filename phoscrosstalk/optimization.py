@@ -326,7 +326,7 @@ def make_loss_fn(
     t1_val = float(t[-1])
 
     # Large penalty for failed solves
-    PENALTY = jnp.float32(1e6)
+    FAILED_SOLVE_PENALTY = jnp.float32(1e6)
 
     def loss_fn(theta, _args):
         theta_j = jnp.asarray(theta, dtype=jnp.float32)
@@ -366,7 +366,7 @@ def make_loss_fn(
         total = jnp.float32(w_phospho) * f1 + jnp.float32(w_abundance) * f2 + jnp.float32(w_reg) * f3
 
         # Penalise non-finite results without crashing
-        total = jnp.where(jnp.isfinite(total), total, PENALTY)
+        total = jnp.where(jnp.isfinite(total), total, FAILED_SOLVE_PENALTY)
         return total, (f1, f2, f3)
 
     return loss_fn

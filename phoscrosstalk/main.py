@@ -182,7 +182,12 @@ def main():
         "--cores",
         type=int,
         default=os.cpu_count(),
-        help="Number of CPU cores (informational; JAX manages parallelism internally).",
+        help=(
+            "Number of CPU cores (accepted for backward compatibility). "
+            "The JAX/Optimistix backend manages its own parallelism; "
+            "this flag does not directly control worker count. "
+            "Pass it to avoid breaking existing scripts."
+        ),
     )
     parser.add_argument(
         "--algorithm",
