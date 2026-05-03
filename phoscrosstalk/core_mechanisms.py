@@ -24,8 +24,6 @@ import math
 import numpy as np
 from numba import njit
 
-from phoscrosstalk.config import ModelDims  # noqa: F401  kept for historical imports
-
 
 # -------------------------
 # small utilities
