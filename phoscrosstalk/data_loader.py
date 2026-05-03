@@ -4,6 +4,7 @@ Handles data ingestion, scaling, database connectivity, and matrix construction.
 """
 
 import re
+import os
 import sqlite3
 import pickle
 import numpy as np
@@ -37,6 +38,8 @@ def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
             - A_data (np.ndarray or None): Protein abundance matrix (N_proteins x T) if available.
             - A_proteins (np.ndarray or None): Names of proteins in A_data.
     """
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Data file not found: {path}")
 
     df = pd.read_csv(path, sep=None, engine="python")
 
@@ -222,6 +225,10 @@ def build_C_matrices_from_db(
     Returns:
         tuple: (Cg, Cl) - The global and local adjacency matrices.
     """
+    if not os.path.exists(ptm_intra_path):
+        raise FileNotFoundError(f"Intra-protein PTM database not found: {ptm_intra_path}")
+    if not os.path.exists(ptm_inter_path):
+        raise FileNotFoundError(f"Inter-protein PTM database not found: {ptm_inter_path}")
     N = len(sites)
     idx = {s: i for i, s in enumerate(sites)}
     Cg = np.zeros((N, N), dtype=float)
@@ -285,6 +292,8 @@ def load_kinase_site_matrix(path, sites):
             - K_site_kin (np.ndarray): Matrix of weights (Sites x Kinases).
             - kinases (list): Sorted list of kinase names found in the file.
     """
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Kinase-site TSV not found: {path}")
     df = pd.read_csv(path, sep="\t")
     if "weight" not in df.columns:
         df["weight"] = 0.0
@@ -315,6 +324,8 @@ def build_kinase_site_from_kea(ks_psite_table_path, sites):
             - K_site_kin (np.ndarray): Row-normalized interaction matrix (Sites x Kinases).
             - kinases (list): Sorted list of kinase names.
     """
+    if not os.path.exists(ks_psite_table_path):
+        raise FileNotFoundError(f"KEA kinase-substrate table not found: {ks_psite_table_path}")
     df = pd.read_csv(ks_psite_table_path, sep="\t")
     df["substrate_site"] = df["substrate_site"].astype(str).str.upper()
     df["kinase"] = df["kinase"].astype(str).str.upper()
@@ -359,6 +370,8 @@ def build_alpha_laplacian_from_unified_graph(
     Returns:
         np.ndarray: The Laplacian matrix (M_kinases x M_kinases).
     """
+    if not os.path.exists(pkl_path):
+        raise FileNotFoundError(f"Unified kinase graph pickle not found: {pkl_path}")
     with open(pkl_path, "rb") as f:
         G_full = pickle.load(f)
     kin_to_idx = {k: i for i, k in enumerate(kinases)}

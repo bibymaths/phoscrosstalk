@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-core_mechanisms_fast.py
+core_mechanisms.py
 
 High-performance RHS kernels for phospho-network ODEs.
 

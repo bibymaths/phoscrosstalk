@@ -135,7 +135,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
         try:
             score = frechet_distance(true_coords, pred_coords)
             frechet_scores[i] = score
-        except Exception as e:
+        except (ValueError, RuntimeError) as e:
             logger.warning(f"    Error calculating score for idx {i}: {e}")
 
     # Find Best

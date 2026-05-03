@@ -371,7 +371,7 @@ def _compile_pdf(tex_path: str, outdir: str) -> None:
             logger.success(f"    -> Generated {pdf_name}")
         else:
             logger.warning(f"    -> pdflatex ran but {pdf_name} not found.")
-    except Exception:
+    except (OSError, subprocess.SubprocessError, FileNotFoundError):
         logger.warning("    -> 'pdflatex' not found or failed. PDF not generated.")
 
 

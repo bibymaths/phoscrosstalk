@@ -19,10 +19,9 @@ def run_steadystate_analysis(outdir, problem, theta_opt, sites, proteins, kinase
     """
     Simulates the network over a long time horizon to analyze convergence and steady-state behavior.
 
-
-
-    Extends the simulation to T=10,000 using a log-spaced time vector to capture both rapid initial
-    dynamics and long-term asymptotic behavior. Outputs include convergence metrics, raw data tables
+    Extends the simulation to T=10,000 using a piecewise linear time vector (100 points from
+    0–100 min, then 50 points from 101–10,000 min) to capture both rapid initial dynamics and
+    long-term asymptotic behaviour. Outputs include convergence metrics, raw data tables
     for sites and proteins, and visualizations of the trajectories.
 
     Args:
@@ -40,9 +39,9 @@ def run_steadystate_analysis(outdir, problem, theta_opt, sites, proteins, kinase
     ss_dir = os.path.join(outdir, "steadystate")
     os.makedirs(ss_dir, exist_ok=True)
 
-    # 1. Setup Long Time Vector (Log-spaced to capture early dynamics and long tail)
+    # 1. Setup Long Time Vector (piecewise linear: fine early grid + coarse late grid)
     T_end = 10000.0
-    # 100 points from 0 to 100, 50 points from 100 to 10000
+    # 100 points from 0 to 100, 50 points from 101 to 10000
     t1 = np.linspace(0, 100, 100)
     t2 = np.linspace(101, T_end, 50)
     t_long = np.concatenate([t1, t2])
