@@ -1,0 +1,12 @@
+* @bibymaths
+
+# Core package
+/phoscrosstalk/ @bibymaths
+
+# Documentation
+/README.md @bibymaths
+/docs/ @bibymaths
+
+# Packaging and CI
+/pyproject.toml @bibymaths
+/requirements.txt @bibymaths
