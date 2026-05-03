@@ -12,7 +12,8 @@ import pandas as pd
 from phoscrosstalk import analysis, steadystate, knockouts, hyperparam
 from phoscrosstalk import data_loader
 from phoscrosstalk.analysis import _save_preopt_snapshot_txt_csv
-from phoscrosstalk.config import ModelDims
+from phoscrosstalk.config import ModelDims, load_config
+from phoscrosstalk.derived_rates import make_k_act_fn, make_s_prod_fn
 from phoscrosstalk.equations import generate_equations_report
 from phoscrosstalk.multistarts import run_multi_start_optimization
 from phoscrosstalk.post_processing import (
@@ -23,7 +24,6 @@ from phoscrosstalk.post_processing import (
 )
 from phoscrosstalk.sensitivity import run_global_sensitivity, _generate_param_labels
 
-# from phoscrosstalk.debug_main import _sanity_report_data, _sanity_report_C, _coverage_report_K_site_kin, _sanity_report_R,  _sanity_report_weights, _one_shot_sim_check, sim_summary
 from phoscrosstalk.weighting import build_weight_matrices
 from phoscrosstalk.optimization import (
     NetworkProblem as NetworkOptimizationProblem,
@@ -53,6 +53,15 @@ def main():
     )
 
     # ------------------------------------------------------------------
+    # CONFIGURATION FILE
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--config",
+        default="./config.toml",
+        help="Path to config.toml file with tuneable parameters.",
+    )
+
+    # ------------------------------------------------------------------
     # INPUT DATA
     # ------------------------------------------------------------------
     parser.add_argument(
@@ -73,6 +82,18 @@ def main():
     parser.add_argument(
         "--crosstalk-tsv",
         help="Optional TSV listing PTM pairs to keep (crosstalk filtering).",
+    )
+    parser.add_argument(
+        "--rna-data",
+        default=None,
+        dest="rna_data",
+        help="CSV file with mRNA time-series (rows=genes, columns=time points).",
+    )
+    parser.add_argument(
+        "--tf-net",
+        default=None,
+        dest="tf_net",
+        help="CSV file with TF–mRNA network (columns: source, target, weight).",
     )
 
     # ------------------------------------------------------------------
@@ -97,135 +118,52 @@ def main():
     # ------------------------------------------------------------------
     parser.add_argument(
         "--receptors",
-        nargs="*",  # Accepts zero or more arguments
+        nargs="*",
         default=[],
         help="List of proteins that act as receptors (receive external u(t)).",
     )
-
     parser.add_argument(
         "--receptor-kinases",
         nargs="*",
         default=[],
         help="List of kinases that act as receptors.",
     )
+
     # ------------------------------------------------------------------
     # OUTPUT DIRECTORY
     # ------------------------------------------------------------------
     parser.add_argument(
         "--outdir",
-        default="network_fit",
-        help="Directory where results, logs, and output files are saved.",
+        default=None,
+        help="Directory where results, logs, and output files are saved. "
+        "Overrides config.toml [paths] output_dir.",
     )
 
     # ------------------------------------------------------------------
     # MODEL CONFIGURATION
     # ------------------------------------------------------------------
     parser.add_argument(
-        "--length-scale",
-        type=float,
-        default=50.0,
-        help="Length-scale for exponential local PTM decay on the protein domain.",
-    )
-    parser.add_argument(
-        "--scale-mode",
-        choices=["minmax", "none", "log-minmax"],
-        default="none",
-        help="Method used to normalize/scale the experimental FC values.",
-    )
-    parser.add_argument(
         "--mechanism",
         choices=["dist", "seq", "rand"],
-        default="dist",
-        help="Phosphorylation mechanism: distributive, sequential, or random/cooperative.",
-    )
-    parser.add_argument(
-        "--weight-scheme",
-        choices=[
-            "uniform",
-            "early_emphasis",
-            "early_emphasis_moderate",
-            "flat_no_noise",
-        ],
-        default="uniform",
-        help="Weighting strategy for time-series and site-level importance.",
+        default=None,
+        help="Phosphorylation mechanism: distributive, sequential, or random/cooperative. "
+        "Overrides config.toml [model] mechanism.",
     )
 
     # ------------------------------------------------------------------
-    # REGULARIZATION
+    # OPTIMIZATION SETTINGS (override TOML)
     # ------------------------------------------------------------------
-    parser.add_argument(
-        "--lambda-net",
-        type=float,
-        default=0.0001,
-        help="Laplacian regularization strength on kinase–kinase α parameters.",
-    )
-    parser.add_argument(
-        "--reg-lambda",
-        type=float,
-        default=0.0001,
-        help="L2 regularization strength for all model parameters.",
-    )
-
-    # ------------------------------------------------------------------
-    # OPTIMIZATION SETTINGS
-    # ------------------------------------------------------------------
-    # ------------------------------------------------------------------
-    # OPTIMISATION SETTINGS
-    #
-    # Note: The traditional pymoo flags (--gen, --pop-size, --algorithm) have
-    # been superseded by JAX/Optimistix-native options.  We retain the old
-    # names as deprecated aliases for one release cycle.  New scripts should
-    # use --n-starts and --max-steps to control the number of multi-start
-    # initialisations and the maximum optimiser iterations, respectively.
-
     parser.add_argument(
         "--n-starts",
         type=int,
         default=None,
-        help=(
-            "Number of multi-start initialisations"
-        ),
+        help="Number of multi-start initialisations. Overrides config.toml.",
     )
     parser.add_argument(
         "--max-steps",
         type=int,
         default=None,
-        help=(
-            "Maximum number of optimisation steps per run"
-        ),
-    )
-    parser.add_argument(
-        "--rtol",
-        type=float,
-        default=1e-6,
-        help="Relative tolerance for the Diffrax ODE solver.",
-    )
-    parser.add_argument(
-        "--atol",
-        type=float,
-        default=1e-9,
-        help="Absolute tolerance for the Diffrax ODE solver.",
-    )
-    parser.add_argument(
-        "--loss-weight-phospho",
-        type=float,
-        default=1.0,
-        dest="loss_weight_phospho",
-        help="Scalarisation weight for the phosphosite error objective.",
-    )
-    parser.add_argument(
-        "--loss-weight-abundance",
-        type=float,
-        default=1.0,
-        dest="loss_weight_abundance",
-        help="Scalarisation weight for the protein abundance error objective.",
-    )
-    parser.add_argument(
-        "--loss-weight-reg",
-        type=float,
-        default=1.0,
-        dest="loss_weight_reg",
-        help="Scalarisation weight for the regularisation objective.",
+        help="Maximum number of optimisation steps per run. Overrides config.toml.",
     )
 
     # ------------------------------------------------------------------
@@ -251,33 +189,91 @@ def main():
         action="store_true",
         help="Run global sensitivity analysis.",
     )
+
     # ------------------------------------------------------------------
     # META OPTIONS
     # ------------------------------------------------------------------
     parser.add_argument(
         "--version",
         action="version",
-        version="Phospho-Network Model Fitting 1.0",
+        version="Phospho-Network Model Fitting 2.0",
     )
-    # ------------------------------------------------------------------
-    # PARSE ARGUMENTS
-    # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # PARSE ARGUMENTS & LOAD CONFIG
+    # ------------------------------------------------------------------
     args = parser.parse_args()
 
-    os.makedirs(args.outdir, exist_ok=True)
+    cfg = load_config(args.config)
 
-    results_dir = os.path.join(args.outdir)
-    logger.header(f"[*] Output directory: {args.outdir}")
+    # Merge CLI overrides into config (CLI wins when explicitly provided)
+    outdir = args.outdir if args.outdir is not None else cfg.paths.output_dir
+    mechanism = args.mechanism if args.mechanism is not None else cfg.model.mechanism
+    n_starts = args.n_starts if args.n_starts is not None else cfg.optimisation.n_starts
+    max_steps = (
+        args.max_steps if args.max_steps is not None else cfg.optimisation.max_steps
+    )
 
-    # 1. Load Data
+    # Expose merged values back on args namespace for compatibility with
+    # run_multi_start_optimization which reads from args
+    args.outdir = outdir
+    args.mechanism = mechanism
+    args.n_starts = n_starts
+    args.max_steps = max_steps
+
+    # Pull numeric settings from config
+    args.length_scale = cfg.model.length_scale
+    args.scale_mode = cfg.model.scale_mode
+    args.weight_scheme = cfg.model.weight_scheme
+    args.lambda_net = cfg.optimisation.lambda_net
+    args.reg_lambda = cfg.optimisation.reg_lambda
+    args.loss_weight_phospho = cfg.loss_weights.phospho
+    args.loss_weight_abundance = cfg.loss_weights.abundance
+    args.loss_weight_reg = cfg.loss_weights.reg
+    args.rtol = cfg.solver.rtol
+    args.atol = cfg.solver.atol
+
+    interp_mode = cfg.time.interpolation
+    s_prod_fn_type = cfg.derived_rates.s_prod_fn
+
+    os.makedirs(outdir, exist_ok=True)
+
+    logger.header(f"[*] Output directory: {outdir}")
+
+    # 1. Load primary phospho data
     (sites, proteins, site_prot_idx, positions, t, Y, A_data, A_proteins) = (
         data_loader.load_site_data(args.data)
     )
-
     logger.success(f"[*] Loaded {len(sites)} sites, {len(proteins)} proteins.")
 
-    # Crosstalk filtering
+    # 2. Load optional mRNA data and TF network
+    gene_ids = None
+    t_rna = None
+    rna_matrix = None
+    tf_prot_weights = None
+
+    if args.rna_data:
+        gene_ids, t_rna, rna_matrix = data_loader.load_rna_data(args.rna_data)
+        logger.success(
+            f"[*] Loaded mRNA data: {len(gene_ids)} genes x {len(t_rna)} time points."
+        )
+
+    if args.tf_net:
+        tf_net_df = data_loader.load_tf_network(args.tf_net, gene_ids=gene_ids)
+        logger.success(
+            f"[*] Loaded TF network: {len(tf_net_df)} edges."
+        )
+        if gene_ids is not None:
+            tf_prot_weights = data_loader.build_tf_prot_weights(
+                tf_net_df, gene_ids, proteins
+            )
+    elif args.rna_data:
+        logger.warning(
+            "[!] --rna-data provided but --tf-net is absent; "
+            "k_act will default to constant 1.0."
+        )
+
+    # 3. Crosstalk filtering
     if args.crosstalk_tsv:
 
         def load_allowed(path):
@@ -303,8 +299,10 @@ def main():
         proteins = prots_used
         logger.info(f"[*] Filtered to {len(sites)} sites.")
 
-    # 2. Scaling
-    P_scaled, baselines, amplitudes = data_loader.apply_scaling(Y, mode=args.scale_mode)
+    # 4. Scaling
+    P_scaled, baselines, amplitudes = data_loader.apply_scaling(
+        Y, mode=args.scale_mode
+    )
     P_scaled = np.nan_to_num(P_scaled, nan=0.0, posinf=0.0, neginf=0.0)
 
     if A_data is not None and len(A_data) > 0:
@@ -322,16 +320,12 @@ def main():
         prot_idx_for_A = np.array([], dtype=int)
         A_bases, A_amps = np.array([]), np.array([])
 
-    # _sanity_report_data(P_scaled, Y, t)
-
-    # 3. Weights
+    # 5. Weights
     W_data, W_data_prot = build_weight_matrices(
         t=t, Y=Y, A_data=A_data, scheme=args.weight_scheme
     )
 
-    # _sanity_report_weights(W_data, W_data_prot)
-
-    # 4. Matrices & Graph
+    # 6. Matrices & Graph
     Cg, Cl = data_loader.build_C_matrices_from_db(
         args.ptm_intra,
         args.ptm_inter,
@@ -342,8 +336,6 @@ def main():
         args.length_scale,
     )
     Cg, Cl = data_loader.row_normalize(Cg), data_loader.row_normalize(Cl)
-
-    # _sanity_report_C(Cg, Cl, N=len(sites))
 
     if args.kinase_tsv:
         K_site_kin, kinases = data_loader.load_kinase_site_matrix(
@@ -357,18 +349,14 @@ def main():
         K_site_kin = np.eye(len(sites))
         kinases = [f"K_{i}" for i in range(len(sites))]
 
-    # _coverage_report_K_site_kin(K_site_kin, sites, kinases)
-
     # Set the dimensions globally for the model
     ModelDims.set_dims(len(proteins), len(kinases), len(sites))
 
-    # Transpose kinase - site matrix & normalize
+    # Transpose kinase-site matrix & normalize
     R = np.ascontiguousarray(K_site_kin.T)
     rs = R.sum(axis=1)
     nz = rs > 0
     R[nz] /= rs[nz, None]
-
-    # _sanity_report_R(R, N=len(sites), M=len(kinases))
 
     L_alpha = np.zeros((len(kinases), len(kinases)))
     if args.unified_graph_pkl and args.lambda_net > 0:
@@ -376,18 +364,13 @@ def main():
             args.unified_graph_pkl, kinases
         )
 
-    # 5. Mappings & Masks
+    # 7. Mappings & Masks
     prot_map_all = {p: i for i, p in enumerate(proteins)}
     kin_to_prot_idx = np.array([prot_map_all.get(k, -1) for k in kinases], dtype=int)
 
-    # receptor_names = {"EGFR", "ERBB2", "EPHA2", "MET"}
-    # receptor_kin_names = {"EGFR", "EPHA2", "ERBB4", "INSR", "RET"}
-
-    # Convert list args to sets for fast lookup
     receptor_names = set(args.receptors)
     receptor_kin_names = set(args.receptor_kinases)
 
-    # Build masks (will be all zeros if args.receptors is empty)
     receptor_mask_prot = np.array(
         [1 if p in receptor_names else 0 for p in proteins], dtype=int
     )
@@ -400,10 +383,34 @@ def main():
             "[!] No Receptors defined. External stimulus u(t) will be ignored."
         )
 
+    # 8. Build derived rate functions (k_act_fn, s_prod_fn)
+    K = len(proteins)
+    M = len(kinases)
+
+    k_act_fn = make_k_act_fn(
+        t_rna=t_rna,
+        rna_data=rna_matrix,
+        tf_prot_weights=tf_prot_weights,
+        K=K,
+        interp_mode=interp_mode,
+    )
+
+    s_prod_fn = make_s_prod_fn(
+        t_protein=t,
+        Y_data=P_scaled,
+        R_kin_site=R,
+        kin_to_prot_idx=kin_to_prot_idx,
+        K=K,
+        M=M,
+        s_prod_fn_type=s_prod_fn_type,
+        interp_mode=interp_mode,
+    )
+    logger.info("[*] Built derived rate closures k_act_fn and s_prod_fn.")
+
     # --- HYPERPARAMETER TUNING ---
     if args.tune:
         best_params = hyperparam.run_hyperparameter_scan(
-            args.outdir,
+            outdir,
             t,
             P_scaled,
             sites,
@@ -423,14 +430,14 @@ def main():
             W_data_prot,
             receptor_mask_prot,
             receptor_mask_kin,
-            args.mechanism,
+            mechanism,
         )
-        # Apply Best Params
         args.length_scale = best_params["length_scale"]
         args.lambda_net = best_params["lambda_net"]
         args.reg_lambda = best_params["reg_lambda"]
         logger.success(
-            f"[*] Applied Tuned Params: LS={args.length_scale}, LN={args.lambda_net}, Reg={args.reg_lambda}"
+            f"[*] Applied Tuned Params: LS={args.length_scale}, "
+            f"LN={args.lambda_net}, Reg={args.reg_lambda}"
         )
 
     logger.info(f"[*] Building final matrices with Length Scale {args.length_scale}...")
@@ -445,15 +452,12 @@ def main():
     )
     Cl = data_loader.row_normalize(Cl)
 
-    # _sanity_report_C(Cg, Cl, N=len(sites))
-
-    # 6. Global Setup & Bounds
+    # 9. Global Setup & Bounds
     logger.header(f"[*] K={ModelDims.K}, M={ModelDims.M}, N={ModelDims.N}")
-
     xl, xu, dim = create_bounds(ModelDims.K, ModelDims.M, ModelDims.N)
 
     _save_preopt_snapshot_txt_csv(
-        args.outdir,
+        outdir,
         t=t,
         sites=sites,
         proteins=proteins,
@@ -480,10 +484,10 @@ def main():
         args=args,
     )
 
-    # 7. Optimisation
-
+    # 10. Optimisation
     logger.info(
-        f"[*] Initialising Optimistix problem ({args.n_starts} starts, max_steps={args.max_steps})..."
+        f"[*] Initialising Optimistix problem ({n_starts} starts, "
+        f"max_steps={max_steps})..."
     )
 
     problem = NetworkOptimizationProblem(
@@ -504,23 +508,24 @@ def main():
         args.reg_lambda,
         receptor_mask_prot,
         receptor_mask_kin,
-        args.mechanism,
+        mechanism,
         xl,
         xu,
+        k_act_fn=k_act_fn,
+        s_prod_fn=s_prod_fn,
     )
 
     res, best_idx, total_losses = run_multi_start_optimization(problem, args, P_scaled)
 
-    # 8. Analysis & Saving
-    # Find best solution by minimum total loss (single-objective criterion)
+    # 11. Analysis & Saving
     F, X = res.F, res.X
     f1, f2, f3 = F[:, 0], F[:, 1], F[:, 2]
 
-    analysis.save_run_results(args.outdir, F, X, f1, f2, f3, total_losses, F[best_idx])
-    analysis.plot_run_diagnostics(args.outdir, F, F[best_idx], f1, f2, f3, X)
+    analysis.save_run_results(outdir, F, X, f1, f2, f3, total_losses, F[best_idx])
+    analysis.plot_run_diagnostics(outdir, F, F[best_idx], f1, f2, f3, X)
 
     analysis.save_fitted_simulation(
-        args.outdir,
+        outdir,
         X[best_idx],
         t,
         sites,
@@ -534,7 +539,7 @@ def main():
         A_data,
         A_bases,
         A_amps,
-        args.mechanism,
+        mechanism,
         Cg,
         Cl,
         site_prot_idx,
@@ -546,27 +551,31 @@ def main():
         receptor_mask_kin,
     )
 
-    analysis.plot_fitted_simulation(args.outdir)
-    analysis.print_parameter_summary(args.outdir, X[best_idx], proteins, kinases, sites)
-    analysis.print_biological_scores(args.outdir, X)
-    analysis.plot_biological_scores(args.outdir, X, F)
-    analysis.plot_goodness_of_fit(f"{results_dir}/fit_timeseries.tsv", args.outdir)
+    analysis.plot_fitted_simulation(outdir)
+    analysis.print_parameter_summary(outdir, X[best_idx], proteins, kinases, sites)
+    analysis.print_biological_scores(outdir, X)
+    analysis.plot_biological_scores(outdir, X, F)
+    analysis.plot_goodness_of_fit(f"{outdir}/fit_timeseries.tsv", outdir)
+
+    # mRNA outputs (only when RNA data was provided)
+    if rna_matrix is not None and gene_ids is not None:
+        analysis.save_mrna_outputs(outdir, gene_ids, t_rna, rna_matrix)
+        analysis.plot_mrna_fit(outdir)
 
     if args.run_steadystate:
         steadystate.run_steadystate_analysis(
-            args.outdir, problem, X[best_idx], sites, proteins, kinases
+            outdir, problem, X[best_idx], sites, proteins, kinases
         )
 
     if args.run_knockouts:
         knockouts.run_knockout_screen(
-            args.outdir, problem, X[best_idx], sites, proteins, kinases
+            outdir, problem, X[best_idx], sites, proteins, kinases
         )
 
     if args.run_sensitivity:
         bounds = (xl, xu)
-
         run_global_sensitivity(
-            args.outdir,
+            outdir,
             problem,
             bounds,
             proteins=proteins,
@@ -574,30 +583,22 @@ def main():
             sites=sites,
         )
 
-    # 1. Save Run Configuration (Provenance)
-    save_run_metadata(args.outdir, args)
-
-    # 2. Export Cytoscape Network
-    # Requires theta_opt (best solution)
+    # 12. Provenance & exports
+    save_run_metadata(outdir, args)
     export_network_for_cytoscape(
-        args.outdir, X[best_idx], proteins, kinases, sites, K_site_kin, site_prot_idx
+        outdir, X[best_idx], proteins, kinases, sites, K_site_kin, site_prot_idx
     )
 
-    # 3. Residual Heatmap
-    # Re-simulate best solution one last time to get P_sim
     P_best = problem.simulate(X[best_idx])
-    plot_residual_heatmap(args.outdir, P_scaled, P_best, sites, t)
+    plot_residual_heatmap(outdir, P_scaled, P_best, sites, t)
 
-    # 4. Parameter Correlations (using the X population from multi_start)
-    # We reuse the label generator from sensitivity if available, or generate generic ones
     p_labels = _generate_param_labels(
         ModelDims.K, ModelDims.M, ModelDims.N, proteins, kinases, sites
     )
-
-    plot_parameter_clustermap(args.outdir, X, p_labels, top_n=50)
+    plot_parameter_clustermap(outdir, X, p_labels, top_n=50)
 
     generate_equations_report(
-        args.outdir,
+        outdir,
         X[best_idx],
         proteins,
         kinases,
@@ -611,7 +612,7 @@ def main():
         kin_to_prot_idx,
         receptor_mask_prot,
         receptor_mask_kin,
-        args.mechanism,
+        mechanism,
     )
 
     logger.success("[*] Done.")
