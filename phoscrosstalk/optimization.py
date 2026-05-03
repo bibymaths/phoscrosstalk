@@ -1,14 +1,36 @@
 """
 optimization.py
-Pymoo Problem definition, objective functions, and parameter bounds.
+Optimistix-based objective functions and parameter fitting for the phospho-network.
+
+Replaces the previous pymoo / ElementwiseProblem backend with:
+  - A JAX-differentiable scalarized loss (w1*f1 + w2*f2 + w3*f3)
+  - Optimistix BFGS minimiser for gradient-based parameter fitting
+  - A thin NetworkProblem wrapper that preserves the .simulate() interface
+    used by steadystate, knockouts, sensitivity, and app modules.
 """
 
 import numpy as np
 from numba import njit
-from pymoo.core.problem import ElementwiseProblem
+import jax
+import jax.numpy as jnp
+import optimistix as optx
+import diffrax
+
 from phoscrosstalk.config import ModelDims
-from phoscrosstalk.simulation import simulate_p_scipy, build_full_A0
+from phoscrosstalk.simulation import simulate_ode, build_full_A0
+from phoscrosstalk.jax_mechanisms import (
+    decode_theta_jax,
+    compute_prev_site_idx,
+    make_rhs,
+    compute_objectives_jax,
+)
 from phoscrosstalk.core_mechanisms import decode_theta
+
+
+# ---------------------------------------------------------------------------
+# Numba helpers kept for non-differentiable analysis paths
+# (analysis.py uses decode_theta; bio_score used for post-fit reporting)
+# ---------------------------------------------------------------------------
 
 
 @njit(cache=True)
@@ -37,13 +59,13 @@ def compute_objectives_nb(
     Calculates the loss/cost for a given simulation result compared to experimental data.
 
     The objectives are:
-    1. **Phosphosite Error (f1)**: Weighted Mean Squared Logarithmic Error (MSLE) between simulated phosphosite
-       trajectories (`P_sim`) and observed data (`P_data`).
-    2. **Protein Abundance Error (f2)**: Weighted MSLE between simulated protein levels (`A_sim`) and
-       observed protein data (`A_scaled`). Returns 0.0 if no protein data is available.
-    3. **Complexity/Regularization (f3)**: A composite penalty term including:
-       - L2 regularization on all parameters (`reg_lambda`).
-       - Network Laplacian regularization (`lambda_net`) encouraging smoothness in kinase-kinase interactions.
+    1. Phosphosite Error (f1): Weighted Mean Squared Logarithmic Error (MSLE) between simulated phosphosite
+       trajectories (P_sim) and observed data (P_data).
+    2. Protein Abundance Error (f2): Weighted MSLE between simulated protein levels (A_sim) and
+       observed protein data (A_scaled). Returns 0.0 if no protein data is available.
+    3. Complexity/Regularization (f3): A composite penalty term including:
+       - L2 regularization on all parameters (reg_lambda).
+       - Network Laplacian regularization (lambda_net) encouraging smoothness in kinase-kinase interactions.
 
     Args:
         theta (np.ndarray): Decoded parameter vector.
@@ -84,7 +106,6 @@ def compute_objectives_nb(
     N_sites, T = P_data.shape
     loss_p = 0.0
     for i in range(N_sites):
-        # offset = P_sim[i, 0] - P_data[i, 0] # Option to shift
         for j in range(T):
             diff = P_data[i, j] - P_sim[i, j]
             loss_p += np.log1p(W_data[i, j] * (diff * diff))
@@ -124,9 +145,8 @@ def bio_score_nb(theta, K, M, N):
     """
     Numba-compiled kernel to calculate the Biological Plausibility Score.
 
-    Derives the half-lives ($t_{1/2} = \ln(2)/k$) for kinases and proteins from the parameter
-    vector `theta` and penalizes deviations from expected biological time scales (e.g., ~10 min for
-    phosphorylation, ~600 min for protein turnover).
+    Derives the half-lives (t_half = ln(2)/k) for kinases and proteins from the parameter
+    vector theta and penalizes deviations from expected biological time scales.
 
     Args:
         theta (np.ndarray): Parameter vector.
@@ -135,14 +155,13 @@ def bio_score_nb(theta, K, M, N):
     Returns:
         float: The calculated biological score (lower is better/more plausible).
     """
-
     (k_act, k_deact, s_prod, d_deg, _, _, _, kK_act, kK_deact, _, _, _, _, _) = (
         decode_theta(theta, K, M, N)
     )
-    t_half_kinase = np.log(2.0) / kK_deact
+    t_half_kinase  = np.log(2.0) / kK_deact
     t_half_protein = np.log(2.0) / d_deg
 
-    median_t_kinase = np.sort(t_half_kinase)[len(t_half_kinase) // 2]
+    median_t_kinase  = np.sort(t_half_kinase)[len(t_half_kinase) // 2]
     median_t_protein = np.sort(t_half_protein)[len(t_half_protein) // 2]
 
     return (np.log10(median_t_kinase) - np.log10(10.0)) ** 2 + (
@@ -165,25 +184,14 @@ def bio_score(theta):
 
 def create_bounds(K, M, N):
     """
-    Generates the lower (`xl`) and upper (`xu`) bound vectors for the optimization search space.
-
-    Constructs flat arrays corresponding to the `theta` vector, setting limits for:
-    - Kinetic rates (activation, deactivation, synthesis, degradation)
-    - Coupling constants (global/local beta)
-    - Kinase parameters (alpha, activity)
-    - Phosphatase rates (k_off)
-    - Sigmoidal shape parameters (gammas)
+    Generates the lower (xl) and upper (xu) bound vectors for the optimization search space.
 
     Args:
         K, M, N (int): Model dimensions.
 
     Returns:
         tuple: (xl, xu, dim)
-            - xl (np.ndarray): Lower bounds vector.
-            - xu (np.ndarray): Upper bounds vector.
-            - dim (int): Total number of parameters.
     """
-
     dim = 4 * K + 2 + 3 * M + N + 4
     xl, xu = np.zeros(dim), np.zeros(dim)
     idx = 0
@@ -224,20 +232,193 @@ def create_bounds(K, M, N):
     return xl, xu, dim
 
 
-class NetworkOptimizationProblem(ElementwiseProblem):
+# ---------------------------------------------------------------------------
+# Scalarized JAX loss for Optimistix
+# ---------------------------------------------------------------------------
+
+
+def make_loss_fn(
+    t,
+    P_data,
+    A_scaled,
+    prot_idx_for_A,
+    W_data,
+    W_data_prot,
+    Cg,
+    Cl,
+    site_prot_idx,
+    K_site_kin,
+    R,
+    L_alpha,
+    kin_to_prot_idx,
+    receptor_mask_prot,
+    receptor_mask_kin,
+    mechanism,
+    lambda_net,
+    reg_lambda,
+    w_phospho=1.0,
+    w_abundance=1.0,
+    w_reg=1.0,
+    rtol=1e-6,
+    atol=1e-9,
+    max_steps=16384,
+):
     """
-    Pymoo `ElementwiseProblem` definition for the Phospho-Crosstalk Network inference.
+    Build a JAX-differentiable scalarized loss function for Optimistix.
 
-    Encapsulates the simulation logic, data comparison, and objective calculation into a
-    standardized interface for Multi-Objective Evolutionary Algorithms (MOEAs).
+    The returned function ``loss_fn(theta, args)`` is compatible with
+    ``optimistix.minimise``. It:
+      1. Runs diffrax.diffeqsolve inside the loss.
+      2. Computes f1 (phosphosite), f2 (abundance), f3 (regularisation).
+      3. Returns ``total_loss = w_phospho*f1 + w_abundance*f2 + w_reg*f3``,
+         plus (f1, f2, f3) as auxiliary output.
 
-    Attributes:
-        t (np.ndarray): Time points.
-        P_data (np.ndarray): Experimental phosphosite data.
-        Cg, Cl (np.ndarray): Connectivity matrices.
-        K_site_kin, R, L_alpha (np.ndarray): Interaction matrices.
-        lambda_net, reg_lambda (float): Regularization strengths.
-        mechanism (str): Kinetic mechanism identifier.
+    Parameters are frozen at creation time (topology arrays, scalars, weights).
+    Only ``theta`` varies during optimisation.
+    """
+    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+
+    n_p   = max(1, P_data.size)
+    n_A   = max(1, A_scaled.size)
+    n_var = 4 * K + 2 + 3 * M + N + 4
+
+    prev_site_idx = compute_prev_site_idx(site_prot_idx.astype(np.int32), N)
+
+    # Build initial state from data
+    T       = P_data.shape[1]
+    A0_full = build_full_A0(K, T, A_scaled, prot_idx_for_A)
+
+    x0 = np.zeros(2 * K + M + N, dtype=np.float64)
+    a0 = np.nan_to_num(A0_full[:, 0], nan=1.0, posinf=5.0, neginf=0.0)
+    x0[K : 2 * K] = np.clip(a0, 0.0, 5.0)
+    p0 = np.nan_to_num(P_data[:, 0], nan=0.0, posinf=1.0, neginf=0.0)
+    x0[2 * K + M :] = np.clip(p0, 0.0, 1.0)
+
+    # JAX static arrays
+    Cg_j   = jnp.asarray(Cg,                  dtype=jnp.float32)
+    Cl_j   = jnp.asarray(Cl,                  dtype=jnp.float32)
+    K_sk_j = jnp.asarray(K_site_kin,          dtype=jnp.float32)
+    R_j    = jnp.asarray(R,                   dtype=jnp.float32)
+    La_j   = jnp.asarray(L_alpha,             dtype=jnp.float32)
+    spi_j  = jnp.asarray(site_prot_idx,       dtype=jnp.int32)
+    k2p_j  = jnp.asarray(kin_to_prot_idx,     dtype=jnp.int32)
+    rmp_j  = jnp.asarray(receptor_mask_prot,  dtype=jnp.float32)
+    rmk_j  = jnp.asarray(receptor_mask_kin,   dtype=jnp.float32)
+    psi_j  = jnp.asarray(prev_site_idx,       dtype=jnp.int32)
+
+    y0_j   = jnp.asarray(x0,                  dtype=jnp.float32)
+    t_eval = jnp.asarray(t,                   dtype=jnp.float32)
+
+    P_data_j    = jnp.asarray(P_data,          dtype=jnp.float32)
+    A_scaled_j  = jnp.asarray(A_scaled,        dtype=jnp.float32)
+    W_data_j    = jnp.asarray(W_data,          dtype=jnp.float32)
+    W_prot_j    = jnp.asarray(W_data_prot,     dtype=jnp.float32)
+    prot_idx_j  = jnp.asarray(prot_idx_for_A,  dtype=jnp.int32)
+    La_loss_j   = jnp.asarray(L_alpha,         dtype=jnp.float32)
+
+    rhs_fn = make_rhs(K, M, N, mechanism)
+    term   = diffrax.ODETerm(rhs_fn)
+    solver = diffrax.Tsit5()
+    sctrl  = diffrax.PIDController(rtol=rtol, atol=atol)
+    saveat = diffrax.SaveAt(ts=t_eval)
+
+    t0_val = float(t[0])
+    t1_val = float(t[-1])
+
+    # Large penalty for failed solves
+    FAILED_SOLVE_PENALTY = jnp.float32(1e6)
+
+    def loss_fn(theta, _args):
+        theta_j = jnp.asarray(theta, dtype=jnp.float32)
+
+        ode_args = (
+            theta_j, Cg_j, Cl_j, spi_j,
+            K_sk_j, R_j, La_j,
+            k2p_j, rmp_j, rmk_j, psi_j,
+        )
+
+        sol = diffrax.diffeqsolve(
+            term, solver,
+            t0=t0_val, t1=t1_val, dt0=0.01,
+            y0=y0_j, args=ode_args,
+            saveat=saveat,
+            stepsize_controller=sctrl,
+            max_steps=max_steps,
+            throw=False,
+        )
+
+        xs = sol.ys  # (T, 2K+M+N)
+
+        P_sim = jnp.clip(xs[:, 2 * K + M :],       0.0, 1.0).T  # (N, T)
+        A_sim = jnp.clip(xs[:, K : 2 * K],         0.0, 5.0).T  # (K, T)
+
+        f1, f2, f3 = compute_objectives_jax(
+            theta_j,
+            P_data_j, P_sim,
+            A_scaled_j, A_sim,
+            W_data_j, W_prot_j,
+            prot_idx_j, La_loss_j,
+            lambda_net, reg_lambda,
+            n_p, n_A, n_var,
+            K, M, N,
+        )
+
+        total = jnp.float32(w_phospho) * f1 + jnp.float32(w_abundance) * f2 + jnp.float32(w_reg) * f3
+
+        # Penalise non-finite results without crashing
+        total = jnp.where(jnp.isfinite(total), total, FAILED_SOLVE_PENALTY)
+        return total, (f1, f2, f3)
+
+    return loss_fn
+
+
+def run_single_optimisation(
+    loss_fn,
+    theta0,
+    max_steps=256,
+):
+    """
+    Run a single Optimistix BFGS minimisation from starting point theta0.
+
+    Parameters
+    ----------
+    loss_fn  : callable (theta, args) -> (scalar, aux)
+    theta0   : np.ndarray
+    max_steps: int
+
+    Returns
+    -------
+    theta_opt : np.ndarray
+    total_loss: float
+    f1, f2, f3: float
+    """
+    solver = optx.BFGS(rtol=1e-5, atol=1e-7)
+    sol = optx.minimise(
+        loss_fn,
+        solver,
+        jnp.asarray(theta0, dtype=jnp.float32),
+        args=None,
+        has_aux=True,
+        max_steps=max_steps,
+        throw=False,
+    )
+    theta_opt  = np.asarray(sol.value, dtype=np.float64)
+    total_loss, (f1, f2, f3) = loss_fn(sol.value, None)
+    return theta_opt, float(total_loss), float(f1), float(f2), float(f3)
+
+
+# ---------------------------------------------------------------------------
+# Thin problem wrapper (keeps .simulate() for downstream modules)
+# ---------------------------------------------------------------------------
+
+
+class NetworkProblem:
+    """
+    Minimal problem wrapper that preserves the .simulate() interface used by
+    steadystate, knockouts, sensitivity, and app modules.
+
+    Does NOT inherit from pymoo.  The _evaluate / optimisation logic has moved
+    to make_loss_fn + run_single_optimisation.
     """
 
     def __init__(
@@ -262,164 +443,94 @@ class NetworkOptimizationProblem(ElementwiseProblem):
         mechanism,
         xl,
         xu,
-        **kwargs,
+        **kwargs,     # absorb legacy keyword args (elementwise_runner, etc.)
     ):
-        """
-        Initializes the optimization problem structure.
-
-        Args:
-            t (np.ndarray): Simulation time points.
-            P_data (np.ndarray): Target phosphosite data.
-            Cg, Cl (np.ndarray): Global and local crosstalk matrices.
-            site_prot_idx (np.ndarray): Map of sites to parent proteins.
-            K_site_kin (np.ndarray): Kinase-Substrate interaction matrix.
-            R (np.ndarray): Receptor input matrix.
-            A_scaled (np.ndarray): Protein abundance data.
-            prot_idx_for_A (np.ndarray): Map of abundance data to proteins.
-            W_data, W_data_prot (np.ndarray): Loss weights for sites and proteins.
-            L_alpha (np.ndarray): Laplacian for kinase network regularization.
-            kin_to_prot_idx (np.ndarray): Map of kinases to proteins.
-            lambda_net (float): Laplacian regularization weight.
-            reg_lambda (float): L2 parameter regularization weight.
-            receptor_mask_prot, receptor_mask_kin (np.ndarray): Boolean masks for receptor inputs.
-            mechanism (str): ODE mechanism type ('dist', 'seq', 'rand').
-            xl, xu (np.ndarray): Lower and upper parameter bounds.
-            **kwargs: Additional arguments passed to the Pymoo ElementwiseProblem.
-        """
-        super().__init__(n_var=len(xl), n_obj=3, n_ieq_constr=0, xl=xl, xu=xu, **kwargs)
-        self.t = t
-        self.P_data = P_data
-        self.Cg = Cg
-        self.Cl = Cl
-        self.site_prot_idx = site_prot_idx
-        self.K_site_kin = K_site_kin
-        self.R = R
-        self.A_scaled = A_scaled
-        self.prot_idx_for_A = prot_idx_for_A
-        self.W_data = W_data
-        self.W_data_prot = W_data_prot
-        self.L_alpha = L_alpha
-        self.kin_to_prot_idx = kin_to_prot_idx
-        self.lambda_net = lambda_net
-        self.reg_lambda = reg_lambda
+        self.t                  = t
+        self.P_data             = P_data
+        self.Cg                 = Cg
+        self.Cl                 = Cl
+        self.site_prot_idx      = site_prot_idx
+        self.K_site_kin         = K_site_kin
+        self.R                  = R
+        self.A_scaled           = A_scaled
+        self.prot_idx_for_A     = prot_idx_for_A
+        self.W_data             = W_data
+        self.W_data_prot        = W_data_prot
+        self.L_alpha            = L_alpha
+        self.kin_to_prot_idx    = kin_to_prot_idx
+        self.lambda_net         = lambda_net
+        self.reg_lambda         = reg_lambda
         self.receptor_mask_prot = receptor_mask_prot
-        self.receptor_mask_kin = receptor_mask_kin
-        self.mechanism = mechanism
-        self.n_p = max(1, self.P_data.size)
-        self.n_A = max(1, self.A_scaled.size)
-        self.n_var = len(xl)
-
-    def _evaluate(self, x, out, *args, **kwargs):
-        """
-        Core evaluation function called by the optimizer for a single candidate solution `x`.
-
-        1. Reconstructs the full `A0` matrix.
-        2. Runs the ODE simulation (`simulate_p_scipy`).
-        3. Checks for simulation divergence/NaNs (penalizing if found).
-        4. Computes the 3 objectives (`f1`, `f2`, `f3`) via `compute_objectives_nb`.
-        5. Stores results in the `out` dictionary.
-
-        Args:
-            x (np.ndarray): Candidate parameter vector (theta).
-            out (dict): Pymoo output dictionary to store results ("F" key).
-        """
-        theta = x
-        K, T = ModelDims.K, self.P_data.shape[1]
-
-        self._A0_full = build_full_A0(K, T, self.A_scaled, self.prot_idx_for_A)
-        A0_full = self._A0_full
-
-        P_sim, A_sim = simulate_p_scipy(
-            self.t,
-            self.P_data,
-            A0_full,
-            theta,
-            self.Cg,
-            self.Cl,
-            self.site_prot_idx,
-            self.K_site_kin,
-            self.R,
-            self.L_alpha,
-            self.kin_to_prot_idx,
-            self.receptor_mask_prot,
-            self.receptor_mask_kin,
-            self.mechanism,
-        )
-
-        if (
-            not np.all(np.isfinite(P_sim))
-            or not np.all(np.isfinite(A_sim))
-            or np.max(P_sim) > 5.0
-            or np.min(P_sim) < -1e-6
-        ):
-            out["F"] = np.array([1e12, 1e12, 1e12])
-            return
-
-        f1, f2, f3 = compute_objectives_nb(
-            theta,
-            self.P_data,
-            P_sim,
-            self.A_scaled,
-            A_sim,
-            self.W_data,
-            self.W_data_prot,
-            self.prot_idx_for_A,
-            self.L_alpha,
-            self.lambda_net,
-            self.reg_lambda,
-            self.n_p,
-            self.n_A,
-            self.n_var,
-            ModelDims.K,
-            ModelDims.M,
-            ModelDims.N,
-        )
-        out["F"] = np.array([f1, f2, f3], dtype=float)
+        self.receptor_mask_kin  = receptor_mask_kin
+        self.mechanism          = mechanism
+        self.xl                 = xl
+        self.xu                 = xu
 
     def simulate(self, x):
         """
-        Runs a simulation for a specific parameter vector `x` and returns the phosphosite trajectories.
-
-        Useful for post-hoc analysis or generating plots for a specific solution found during
-        optimization, without computing the objective values.
+        Run a simulation for parameter vector x and return phosphosite trajectories.
 
         Args:
             x (np.ndarray): Parameter vector.
 
         Returns:
-            np.ndarray: Simulated phosphosite matrix `P_sim` (N_sites x T).
+            np.ndarray: P_sim (N_sites x T).
         """
         theta = np.asarray(x, dtype=np.float64)
+        K, T  = ModelDims.K, self.P_data.shape[1]
+        A0    = build_full_A0(K, T, self.A_scaled, self.prot_idx_for_A)
 
-        # Use the actually-stored site data matrix.
-        # In this codebase it's typically stored as `self.P_data` (scaled data passed from main).
-        P_mat = np.asarray(self.P_data, dtype=np.float64)
-
-        K, T = ModelDims.K, self.P_data.shape[1]
-
-        # Build full protein activity/abundance matrix (K x T)
-        A0_full = build_full_A0(
-            K,
-            T,
-            np.asarray(self.A_scaled, dtype=np.float64),
-            np.asarray(self.prot_idx_for_A, dtype=np.int64),
+        P_sim, _A_sim = simulate_ode(
+            self.t, self.P_data, A0, theta,
+            self.Cg, self.Cl, self.site_prot_idx,
+            self.K_site_kin, self.R, self.L_alpha,
+            self.kin_to_prot_idx,
+            self.receptor_mask_prot, self.receptor_mask_kin,
+            self.mechanism,
         )
+        return P_sim
 
-        P_sim, _A_sim = simulate_p_scipy(
-            np.asarray(self.t, dtype=np.float64),
-            P_mat,
-            A0_full,
-            theta,
-            np.asarray(self.Cg, dtype=np.float64),
-            np.asarray(self.Cl, dtype=np.float64),
-            np.asarray(self.site_prot_idx, dtype=np.int64),
-            np.asarray(self.K_site_kin, dtype=np.float64),
-            np.asarray(self.R, dtype=np.float64),
-            np.asarray(self.L_alpha, dtype=np.float64),
-            np.asarray(self.kin_to_prot_idx, dtype=np.int64),
-            np.asarray(self.receptor_mask_prot, dtype=np.int64),
-            np.asarray(self.receptor_mask_kin, dtype=np.int64),
+    def evaluate(self, x):
+        """
+        Evaluate the three objectives for a single parameter vector.
+
+        Returns:
+            np.ndarray: [f1, f2, f3]
+        """
+        theta = np.asarray(x, dtype=np.float64)
+        K, T  = ModelDims.K, self.P_data.shape[1]
+        A0    = build_full_A0(K, T, self.A_scaled, self.prot_idx_for_A)
+
+        P_sim, A_sim = simulate_ode(
+            self.t, self.P_data, A0, theta,
+            self.Cg, self.Cl, self.site_prot_idx,
+            self.K_site_kin, self.R, self.L_alpha,
+            self.kin_to_prot_idx,
+            self.receptor_mask_prot, self.receptor_mask_kin,
             self.mechanism,
         )
 
-        return P_sim
+        if not np.all(np.isfinite(P_sim)) or not np.all(np.isfinite(A_sim)):
+            return np.array([1e12, 1e12, 1e12])
+
+        n_p   = max(1, self.P_data.size)
+        n_A   = max(1, self.A_scaled.size)
+        n_var = len(self.xl)
+
+        f1, f2, f3 = compute_objectives_nb(
+            theta,
+            self.P_data, P_sim,
+            self.A_scaled, A_sim,
+            self.W_data, self.W_data_prot,
+            self.prot_idx_for_A,
+            self.L_alpha,
+            self.lambda_net, self.reg_lambda,
+            n_p, n_A, n_var,
+            ModelDims.K, ModelDims.M, ModelDims.N,
+        )
+        return np.array([f1, f2, f3])
+
+
+# Legacy alias so that any remaining code that imports NetworkOptimizationProblem
+# still works without crashing.
+NetworkOptimizationProblem = NetworkProblem

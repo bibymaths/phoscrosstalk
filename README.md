@@ -13,7 +13,7 @@ Global phospho-network ODE modeling with PTM-based crosstalk integration and mul
 
 PhosCrosstalk is a systems-level phosphorylation modeling framework that integrates PTMcode2-derived inter/intra-crosstalk, KEA3 kinase-substrate networks, and experimental phosphosite time-series into a unified global ODE model.
 
-It reconstructs protein activation, kinase activity, and phosphosite kinetics across a network. Large parameter sets are fitted using parallel multi-objective evolutionary algorithms through `pymoo`.
+It reconstructs protein activation, kinase activity, and phosphosite kinetics across a network. Large parameter sets are fitted using gradient-based multi-start optimisation through `optimistix` (JAX/Diffrax backend).
 
 ## Overview
 
@@ -70,7 +70,7 @@ The objectives include:
 2. protein abundance error
 3. model complexity regularization
 
-Supported optimization strategies include NSGA-II and UNSGA-III through `pymoo`.
+The optimisation uses a scalarized loss (w₁·phospho_error + w₂·abundance_error + w₃·regularisation) minimised with `optimistix.BFGS` from multiple random starting points (multi-start). Legacy flags `--algorithm nsga2/unsga3` are accepted for backward compatibility but mapped to the new backend. Pseudo-Pareto diversity is achieved by running a small set of starts with different scalarisation weights.
 
 ### Post-optimization analysis
 
@@ -144,10 +144,13 @@ Main dependencies:
 
 ```text
 numpy
-scipy
+jax
+jaxlib
+diffrax
+optimistix
+equinox
 pandas
 numba
-pymoo
 networkx
 salib
 streamlit

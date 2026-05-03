@@ -6,12 +6,8 @@ Entry point for the Global Phospho-Network Model orchestration.
 
 import argparse
 import os
-import multiprocessing
 import numpy as np
 import pandas as pd
-
-
-from pymoo.parallelization import StarmapParallelization
 
 from phoscrosstalk import analysis, steadystate, knockouts, hyperparam
 from phoscrosstalk import data_loader
@@ -29,7 +25,7 @@ from phoscrosstalk.sensitivity import run_global_sensitivity, _generate_param_la
 
 # from phoscrosstalk.debug_main import _sanity_report_data, _sanity_report_C, _coverage_report_K_site_kin, _sanity_report_R,  _sanity_report_weights, _one_shot_sim_check, sim_summary
 from phoscrosstalk.weighting import build_weight_matrices
-from phoscrosstalk.optimization import NetworkOptimizationProblem, create_bounds
+from phoscrosstalk.optimization import NetworkProblem as NetworkOptimizationProblem, create_bounds
 from phoscrosstalk.logger import get_logger
 
 logger = get_logger()
@@ -45,10 +41,10 @@ def main():
     parser = argparse.ArgumentParser(
         prog="phoscrosstalk",
         description=(
-            "Fit a global phospho-network ODE model using multi-objective "
-            "evolutionary optimization (pymoo). Supports multiple phosphorylation "
-            "mechanisms, flexible weighting schemes, kinase–substrate network "
-            "priors, and optional PTM crosstalk filtering."
+            "Fit a global phospho-network ODE model using JAX/Diffrax ODE solving "
+            "and Optimistix gradient-based optimisation. Supports multiple "
+            "phosphorylation mechanisms, flexible weighting schemes, kinase–substrate "
+            "network priors, and optional PTM crosstalk filtering."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -173,20 +169,74 @@ def main():
     parser.add_argument(
         "--gen",
         type=int,
-        default=500,
-        help="Number of generations for the evolutionary optimizer.",
+        default=200,
+        help="Max optimiser steps per run (maps to max_steps for Optimistix).",
     )
     parser.add_argument(
         "--pop-size",
         type=int,
-        default=400,
-        help="Population size for the multi-objective algorithm.",
+        default=20,
+        help="Number of multi-start restarts (maps to n_starts for Optimistix).",
     )
     parser.add_argument(
         "--cores",
         type=int,
         default=os.cpu_count(),
-        help="Number of CPU cores used for parallel model evaluations.",
+        help=(
+            "Number of CPU cores (accepted for backward compatibility). "
+            "The JAX/Optimistix backend manages its own parallelism; "
+            "this flag does not directly control worker count. "
+            "Pass it to avoid breaking existing scripts."
+        ),
+    )
+    parser.add_argument(
+        "--algorithm",
+        default=None,
+        help="Legacy flag (nsga2/unsga3); accepted for backward compatibility but ignored.",
+    )
+    parser.add_argument(
+        "--optimizer",
+        default="bfgs",
+        help="Optimistix optimiser to use (currently 'bfgs' is the only option).",
+    )
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=None,
+        help="Override --gen; maximum steps for the Optimistix minimiser.",
+    )
+    parser.add_argument(
+        "--rtol",
+        type=float,
+        default=1e-6,
+        help="Relative tolerance for the Diffrax ODE solver.",
+    )
+    parser.add_argument(
+        "--atol",
+        type=float,
+        default=1e-9,
+        help="Absolute tolerance for the Diffrax ODE solver.",
+    )
+    parser.add_argument(
+        "--loss-weight-phospho",
+        type=float,
+        default=1.0,
+        dest="loss_weight_phospho",
+        help="Scalarisation weight for the phosphosite error objective.",
+    )
+    parser.add_argument(
+        "--loss-weight-abundance",
+        type=float,
+        default=1.0,
+        dest="loss_weight_abundance",
+        help="Scalarisation weight for the protein abundance error objective.",
+    )
+    parser.add_argument(
+        "--loss-weight-reg",
+        type=float,
+        default=1.0,
+        dest="loss_weight_reg",
+        help="Scalarisation weight for the regularisation objective.",
     )
 
     # ------------------------------------------------------------------
@@ -444,9 +494,11 @@ def main():
 
     # 7. Optimization
 
-    logger.info(f"[*] Initializing Pool ({args.cores} cores)...")
-    pool = multiprocessing.Pool(args.cores)
-    runner = StarmapParallelization(pool.starmap)
+    # Apply --max-steps if provided (overrides --gen)
+    if args.max_steps is not None:
+        args.gen = args.max_steps
+
+    logger.info(f"[*] Initializing Optimistix problem ({args.pop_size} starts, max_steps={args.gen})...")
 
     problem = NetworkOptimizationProblem(
         t,
@@ -469,26 +521,9 @@ def main():
         args.mechanism,
         xl,
         xu,
-        elementwise_runner=runner,
     )
 
-    # _one_shot_sim_check(problem, xl, xu, P_scaled)
-    #
-    # x_mid = 0.5 * (xl + xu)
-    # x_lo = xl.copy()
-    # x_hi = xu.copy()
-    #
-    # P_mid = sim_summary(problem, "mid", x_mid)
-    # P_lo = sim_summary(problem, "lo", x_lo)
-    # P_hi = sim_summary(problem, "hi", x_hi)
-    #
-    # logger.info("||P_mid - P_lo||_inf =", np.max(np.abs(P_mid - P_lo)))
-    # logger.info("||P_hi  - P_mid||_inf =", np.max(np.abs(P_hi - P_mid)))
-
     res, best_idx, J = run_multi_start_optimization(problem, args, P_scaled)
-
-    pool.close()
-    pool.join()
 
     # 8. Analysis & Saving
     # Find best solution using Fretchet distance for all trajectories as primary criterion
