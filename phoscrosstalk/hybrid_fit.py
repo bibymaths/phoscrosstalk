@@ -310,7 +310,7 @@ def run_evosax(
         return losses
 
     # metrics_fn for best-fitness tracking inside the scan
-    def metrics_fn(key, population, fitness, state, params):  # noqa: ARG001
+    def metrics_fn(_key, population, fitness, state, params):  # noqa: ARG001
         return {"best_fitness": state.best_fitness}
 
     # Instantiate strategy (with metrics_fn if the installed version supports it)
