@@ -78,6 +78,9 @@ interpolation    = "piecewise_constant"   # piecewise_constant | linear
 # ---------------------------------------------------------------------------
 [derived_rates]
 s_prod_fn = "softplus"   # softplus | linear
+# mRNA relaxation rate (min^-1).  Controls how fast R(t) tracks k_act(t).
+# At steady state R_ss = k_act.  Smaller values → slower mRNA turnover.
+rna_relax = 0.1
 
 # ---------------------------------------------------------------------------
 # [analysis]  – downstream analyses to run after fitting

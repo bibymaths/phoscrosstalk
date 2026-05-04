@@ -168,6 +168,7 @@ def make_loss_fn(
     w_mrna=1.0,
     rna_model_prot_idx=None,
     R_data0=None,
+    rna_relax=0.1,
 ):
     """
     Build a JAX-differentiable scalarized loss function for Optimistix.
@@ -273,7 +274,7 @@ def make_loss_fn(
         rna_prot_idx_j = None
         n_rna = 1
 
-    rhs_fn = make_rhs(K, M, N, mechanism, k_act_fn=k_act_fn, s_prod_fn=s_prod_fn)
+    rhs_fn = make_rhs(K, M, N, mechanism, k_act_fn=k_act_fn, s_prod_fn=s_prod_fn, rna_relax=rna_relax)
     term = diffrax.ODETerm(rhs_fn)
     solver = diffrax.Tsit5()
     sctrl = diffrax.PIDController(rtol=rtol, atol=atol)
@@ -456,6 +457,7 @@ class NetworkProblem:
         rna_fit_genes=None,
         loss_weight_rna=1.0,
         R_data0=None,
+        rna_relax=0.1,
         **kwargs,  # absorb legacy keyword args (elementwise_runner, etc.)
     ):
         self.t = t
@@ -480,6 +482,7 @@ class NetworkProblem:
         self.xu = xu
         self.k_act_fn = k_act_fn
         self.s_prod_fn = s_prod_fn
+        self.rna_relax = rna_relax
         # RNA-specific
         self.t_rna = t_rna
         self.rna_obs_matched = rna_obs_matched
@@ -521,6 +524,7 @@ class NetworkProblem:
             k_act_fn=self.k_act_fn,
             s_prod_fn=self.s_prod_fn,
             R_data0=self.R_data0,
+            rna_relax=self.rna_relax,
         )
         return P_sim
 
@@ -559,6 +563,7 @@ class NetworkProblem:
             s_prod_fn=self.s_prod_fn,
             t_rna=self.t_rna,
             R_data0=self.R_data0,
+            rna_relax=self.rna_relax,
         )
 
 
