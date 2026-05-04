@@ -3,12 +3,13 @@ post_processing.py
 Advanced diagnostics, network topology export, and provenance tracking.
 """
 
-import os
 import json
+import os
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import matplotlib.pyplot as plt
 
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.core_mechanisms import decode_theta
@@ -58,9 +59,7 @@ def export_network_for_cytoscape(
     # Decode parameters to get alpha (Kinase strength)
     # theta structure: [Prot params]...[Beta]...[Alpha]...
     K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
-    (_, _, _, _, alpha, kK_act, _, _, _, _, _, _) = decode_theta(
-        theta_opt, K, M, N
-    )
+    (_, _, _, _, alpha, kK_act, _, _, _, _, _, _) = decode_theta(theta_opt, K, M, N)
 
     edges = []
 

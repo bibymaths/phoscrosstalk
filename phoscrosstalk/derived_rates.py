@@ -24,9 +24,8 @@ respectively) when the required input data are not available.
 
 from __future__ import annotations
 
-import numpy as np
 import jax.numpy as jnp
-
+import numpy as np
 
 # ---------------------------------------------------------------------------
 # Interpolation helpers (JAX-traceable, no Python branching on traced values)
@@ -34,6 +33,7 @@ import jax.numpy as jnp
 
 
 _INTERPOLATION_EPSILON = 1e-12
+
 
 def _piecewise_constant(t, times_j: jnp.ndarray, values_j: jnp.ndarray) -> jnp.ndarray:
     """

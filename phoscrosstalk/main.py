@@ -6,30 +6,31 @@ Entry point for the Global Phospho-Network Model orchestration.
 
 import argparse
 import os
+
 import numpy as np
 import pandas as pd
 
-from phoscrosstalk import analysis, steadystate, knockouts, hyperparam
-from phoscrosstalk import data_loader
+from phoscrosstalk import analysis, data_loader, hyperparam, knockouts, steadystate
 from phoscrosstalk.analysis import _save_preopt_snapshot_txt_csv
 from phoscrosstalk.config import ModelDims, load_config
 from phoscrosstalk.derived_rates import make_k_act_fn, make_s_prod_fn
 from phoscrosstalk.equations import generate_equations_report
+from phoscrosstalk.logger import get_logger
 from phoscrosstalk.multistarts import run_multi_start_optimization
-from phoscrosstalk.post_processing import (
-    plot_parameter_clustermap,
-    plot_residual_heatmap,
-    export_network_for_cytoscape,
-    save_run_metadata,
-)
-from phoscrosstalk.sensitivity import run_global_sensitivity, _generate_param_labels
-
-from phoscrosstalk.weighting import build_weight_matrices
 from phoscrosstalk.optimization import (
     NetworkProblem as NetworkOptimizationProblem,
+)
+from phoscrosstalk.optimization import (
     create_bounds,
 )
-from phoscrosstalk.logger import get_logger
+from phoscrosstalk.post_processing import (
+    export_network_for_cytoscape,
+    plot_parameter_clustermap,
+    plot_residual_heatmap,
+    save_run_metadata,
+)
+from phoscrosstalk.sensitivity import _generate_param_labels, run_global_sensitivity
+from phoscrosstalk.weighting import build_weight_matrices
 
 logger = get_logger()
 
@@ -366,9 +367,7 @@ def main():
 
     if args.tf_net:
         tf_net_df = data_loader.load_tf_network(args.tf_net, gene_ids=gene_ids)
-        logger.success(
-            f"[*] Loaded TF network: {len(tf_net_df)} edges."
-        )
+        logger.success(f"[*] Loaded TF network: {len(tf_net_df)} edges.")
         if gene_ids is not None:
             tf_prot_weights = data_loader.build_tf_prot_weights(
                 tf_net_df, gene_ids, proteins
@@ -406,9 +405,7 @@ def main():
         logger.info(f"[*] Filtered to {len(sites)} sites.")
 
     # 4. Scaling
-    P_scaled, baselines, amplitudes = data_loader.apply_scaling(
-        Y, mode=args.scale_mode
-    )
+    P_scaled, baselines, amplitudes = data_loader.apply_scaling(Y, mode=args.scale_mode)
     P_scaled = np.nan_to_num(P_scaled, nan=0.0, posinf=0.0, neginf=0.0)
 
     if A_data is not None and len(A_data) > 0:

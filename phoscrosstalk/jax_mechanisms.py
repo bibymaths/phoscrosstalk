@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 jax_mechanisms.py
 
@@ -39,9 +38,8 @@ compute_objectives_jax(theta, P_data, P_sim, A_scaled, A_sim, W_data,
 
 from __future__ import annotations
 
-import numpy as np
 import jax.numpy as jnp
-
+import numpy as np
 
 # ---------------------------------------------------------------------------
 # Parameter decoding
@@ -212,12 +210,14 @@ def make_rhs(K: int, M: int, N: int, mechanism: str, k_act_fn=None, s_prod_fn=No
     _s_prod_const = jnp.full(K, 0.1, dtype=jnp.float32)
 
     if k_act_fn is None:
+
         def _k_act_fn(t):
             return _k_act_const
     else:
         _k_act_fn = k_act_fn
 
     if s_prod_fn is None:
+
         def _s_prod_fn(t):
             return _s_prod_const
     else:
@@ -260,11 +260,11 @@ def make_rhs(K: int, M: int, N: int, mechanism: str, k_act_fn=None, s_prod_fn=No
 
         # --- Unpack + clip state ------------------------------------------------
         # New state layout: y = [R_rna, S, A, Kdyn, p]  (dim = 3*K + M + N)
-        R_rna = jnp.clip(y[:K], 0.0, None)          # mRNA state
-        S = y[K : 2 * K]                             # protein signalling
-        A = y[2 * K : 3 * K]                         # protein abundance
+        R_rna = jnp.clip(y[:K], 0.0, None)  # mRNA state
+        S = y[K : 2 * K]  # protein signalling
+        A = y[2 * K : 3 * K]  # protein abundance
         Kdyn = jnp.clip(y[3 * K : 3 * K + M], 0.0, 1.0)  # kinase activity
-        p = jnp.clip(y[3 * K + M :], 0.0, 1.0)     # phosphosite occupancy
+        p = jnp.clip(y[3 * K + M :], 0.0, 1.0)  # phosphosite occupancy
 
         # Smooth external stimulus: sigmoid ramp from 0→1
         u = 1.0 / (1.0 + jnp.exp(-t / 0.1))

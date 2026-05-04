@@ -5,18 +5,19 @@ and full perturbation data export.
 """
 
 import os
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import seaborn as sns
-from SALib.sample import saltelli
-from SALib.analyze import sobol
 from joblib import Parallel, delayed
+from SALib.analyze import sobol
+from SALib.sample import saltelli
 from tqdm import tqdm
 
 from phoscrosstalk.config import ModelDims
-from phoscrosstalk.simulation import simulate_p_scipy, build_full_A0
 from phoscrosstalk.logger import get_logger
+from phoscrosstalk.simulation import build_full_A0, simulate_p_scipy
 
 logger = get_logger()
 
@@ -66,9 +67,7 @@ def _generate_param_labels(K, M, N, proteins, kinases, sites):
         )
 
     if len(sites) != N:
-        raise ValueError(
-            f"Site label count mismatch: N={N}, len(sites)={len(sites)}"
-        )
+        raise ValueError(f"Site label count mismatch: N={N}, len(sites)={len(sites)}")
 
     # 1. Optimized protein kinetics
     for tag in ["k_deact", "d_deg"]:

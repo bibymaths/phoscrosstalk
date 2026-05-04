@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 core_mechanisms.py
 
@@ -21,9 +20,9 @@ callers that only import decode_theta.
 from __future__ import annotations
 
 import math
+
 import numpy as np
 from numba import njit
-
 
 # -------------------------
 # small utilities

@@ -17,15 +17,14 @@ import pytest
 
 from phoscrosstalk.config import DEFAULT_TIMEPOINTS
 from phoscrosstalk.data_loader import (
-    load_site_data,
-    load_kinase_site_matrix,
-    build_kinase_site_from_kea,
-    build_C_matrices_from_db,
-    build_alpha_laplacian_from_unified_graph,
     apply_scaling,
+    build_alpha_laplacian_from_unified_graph,
+    build_C_matrices_from_db,
+    build_kinase_site_from_kea,
+    load_kinase_site_matrix,
+    load_site_data,
     row_normalize,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -232,6 +231,7 @@ def test_row_normalize_basic():
 # load_rna_data tests
 # ---------------------------------------------------------------------------
 
+
 def test_load_rna_data_valid(tmp_path):
     from phoscrosstalk.data_loader import load_rna_data
 
@@ -286,6 +286,7 @@ def test_load_rna_data_nan_values(tmp_path):
 # load_tf_network tests
 # ---------------------------------------------------------------------------
 
+
 def test_load_tf_network_valid(tmp_path):
     from phoscrosstalk.data_loader import load_tf_network
 
@@ -337,6 +338,7 @@ def test_load_tf_network_warns_on_unknown_tf(tmp_path, recwarn):
 # ---------------------------------------------------------------------------
 # build_tf_prot_weights tests
 # ---------------------------------------------------------------------------
+
 
 def test_build_tf_prot_weights_shape():
     from phoscrosstalk.data_loader import build_tf_prot_weights

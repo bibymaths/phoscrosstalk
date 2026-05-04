@@ -24,14 +24,13 @@ Regression tests for the JAX/Diffrax/Optimistix migration:
    - new flags (--optimizer, --max-steps, --rtol, etc.) are accepted
 """
 
-import sys
 import importlib
+import sys
 
 import numpy as np
 import pytest
 
 from phoscrosstalk.config import ModelDims
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -172,7 +171,7 @@ class TestDiffraxSimulation:
 
     def test_backward_compat_alias(self):
         """simulate_p_scipy must be an alias for simulate_ode."""
-        from phoscrosstalk.simulation import simulate_p_scipy, simulate_ode
+        from phoscrosstalk.simulation import simulate_ode, simulate_p_scipy
 
         assert simulate_p_scipy is simulate_ode
 
@@ -286,10 +285,11 @@ class TestDiffraxSimulation:
 class TestOptimistixOptimisation:
     def test_loss_decreases(self):
         import jax.numpy as jnp
+
         from phoscrosstalk.optimization import (
+            create_bounds,
             make_loss_fn,
             run_single_optimisation,
-            create_bounds,
         )
 
         m = _make_tiny_model()
@@ -331,9 +331,9 @@ class TestOptimistixOptimisation:
 
     def test_fitted_param_shape(self):
         from phoscrosstalk.optimization import (
+            create_bounds,
             make_loss_fn,
             run_single_optimisation,
-            create_bounds,
         )
 
         m = _make_tiny_model()
@@ -371,7 +371,8 @@ class TestOptimistixOptimisation:
 
     def test_objectives_finite(self):
         import jax.numpy as jnp
-        from phoscrosstalk.optimization import make_loss_fn, create_bounds
+
+        from phoscrosstalk.optimization import create_bounds, make_loss_fn
 
         m = _make_tiny_model()
         K, M, N = m["K"], m["M"], m["N"]
@@ -413,11 +414,12 @@ class TestDependencyRegression:
     def test_no_pymoo_imports(self):
         """After migration, phoscrosstalk modules must not import from pymoo."""
         import re
-        import phoscrosstalk.simulation as sim_mod
-        import phoscrosstalk.optimization as opt_mod
-        import phoscrosstalk.multistarts as ms_mod
+
         import phoscrosstalk.hyperparam as hp_mod
         import phoscrosstalk.main as main_mod
+        import phoscrosstalk.multistarts as ms_mod
+        import phoscrosstalk.optimization as opt_mod
+        import phoscrosstalk.simulation as sim_mod
 
         # Pattern: an actual Python import statement (not a docstring mention)
         import_pattern = re.compile(r"^\s*(from pymoo|import pymoo)", re.MULTILINE)
@@ -434,6 +436,7 @@ class TestDependencyRegression:
     def test_no_scipy_ode_imports(self):
         """After migration, simulation.py must not import scipy.integrate."""
         import importlib.util
+
         import phoscrosstalk.simulation as sim_mod
 
         src = importlib.util.find_spec(sim_mod.__name__)
@@ -550,6 +553,7 @@ class TestCLIRegression:
 class TestJaxMechanisms:
     def test_decode_theta_jax_shapes(self):
         import jax.numpy as jnp
+
         from phoscrosstalk.jax_mechanisms import decode_theta_jax
 
         K, M, N = 3, 5, 7
@@ -573,7 +577,8 @@ class TestJaxMechanisms:
 
     def test_make_rhs_output_shape(self):
         import jax.numpy as jnp
-        from phoscrosstalk.jax_mechanisms import make_rhs, compute_prev_site_idx
+
+        from phoscrosstalk.jax_mechanisms import compute_prev_site_idx, make_rhs
 
         K, M, N = 2, 3, 4
         rhs = make_rhs(K, M, N, "dist")

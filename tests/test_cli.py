@@ -8,6 +8,7 @@ These tests verify that:
 """
 
 import sys
+
 import pytest
 
 from phoscrosstalk.main import cli, main

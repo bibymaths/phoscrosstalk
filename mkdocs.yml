@@ -3,33 +3,84 @@ site_description: Global phospho-network ODE modeling with PTM crosstalk and TF/
 site_url: https://bibymaths.github.io/phoscrosstalk
 repo_url: https://github.com/bibymaths/phoscrosstalk
 repo_name: bibymaths/phoscrosstalk
+edit_uri: edit/main/docs/
 
 theme:
   name: material
+  language: en
+  font:
+    text: Ubuntu           # The font for standard paragraph text
+    code: Fira Code        # The font for code blocks
+
   logo: assets/logo.png
   favicon: assets/logo.png
-  features:
-    - navigation.sections
-    - navigation.expand
-    - navigation.top
-    - content.code.copy
-    - content.tabs.link
   palette:
     - scheme: default
       primary: indigo
-      accent: indigo
+      accent: cyan
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: cyan
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - toc.follow
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.select
+    - content.code.annotate
+    - content.action.edit
+    - content.action.view
+    - header.autohide
 
 markdown_extensions:
   - admonition
-  - pymdownx.details
-  - pymdownx.superfences
-  - pymdownx.tabbed:
-      alternate_style: true
-  - pymdownx.highlight:
-      anchor_linenums: true
-  - pymdownx.inlinehilite
+  - attr_list
+  - md_in_html
+  - footnotes
+  - def_list
+  - tables
   - toc:
       permalink: true
+      title: On this page
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+plugins:
+  - search
+  - tags
 
 nav:
   - Home: index.md
@@ -42,3 +93,23 @@ nav:
   - Dashboard: dashboard.md
   - Troubleshooting: troubleshooting.md
   - Developer Guide: developer.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/bibymaths
+      name: GitHub
+    - icon: fontawesome/solid/globe
+      link: https://bibymaths.github.io
+      name: Website
+
+extra_css:
+  - assets/stylesheets/extra.css
+
+watch:
+  - docs
+
+copyright: >
+  Copyright &copy; 2025
+  <a href="https://bibymaths.github.io">Abhinav Mishra</a>.
+  All rights reserved.

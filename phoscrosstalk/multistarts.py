@@ -32,9 +32,9 @@ Old pymoo-specific flags (--gen, --pop-size, --algorithm) are mapped:
 
 import numpy as np
 
-from phoscrosstalk.optimization import make_loss_fn, run_single_optimisation
 from phoscrosstalk.fretchet import frechet_distance
 from phoscrosstalk.logger import get_logger
+from phoscrosstalk.optimization import make_loss_fn, run_single_optimisation
 
 logger = get_logger()
 
@@ -148,9 +148,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
     starts = _generate_starts(n_starts, xl, xu)
 
     logger.header("[*] Starting Multi-Start Optimistix Optimisation")
-    logger.info(
-        f"    {len(starts)} starting points, max_steps={max_steps} each"
-    )
+    logger.info(f"    {len(starts)} starting points, max_steps={max_steps} each")
     logger.info(
         f"    weights: phospho={w_phospho}, abundance={w_abundance}, reg={w_reg}, mrna={w_mrna}"
     )
@@ -188,9 +186,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
     # Select best solution by minimum total loss (single-objective criterion)
     best_idx = int(np.argmin(total_losses))
     best_loss = total_losses[best_idx]
-    logger.success(
-        f"[*] Best Solution: total_loss = {best_loss:.6f} (idx={best_idx})"
-    )
+    logger.success(f"[*] Best Solution: total_loss = {best_loss:.6f} (idx={best_idx})")
 
     # Compute Fréchet Distance as a diagnostic metric (not used for selection)
     logger.info("[*] Computing Fréchet Distances (diagnostic only)...")

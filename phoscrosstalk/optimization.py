@@ -15,21 +15,20 @@ Loss components:
   f4 : mRNA / R_rna state loss (zero when no RNA data provided)
 """
 
-import numpy as np
-from numba import njit
-import jax.numpy as jnp
-import optimistix as optx
 import diffrax
+import jax.numpy as jnp
+import numpy as np
+import optimistix as optx
+from numba import njit
 
 from phoscrosstalk.config import ModelDims
-from phoscrosstalk.simulation import simulate_ode, build_full_A0
+from phoscrosstalk.core_mechanisms import decode_theta
 from phoscrosstalk.jax_mechanisms import (
+    compute_objectives_jax,
     compute_prev_site_idx,
     make_rhs,
-    compute_objectives_jax,
 )
-from phoscrosstalk.core_mechanisms import decode_theta
-
+from phoscrosstalk.simulation import build_full_A0, simulate_ode
 
 # ---------------------------------------------------------------------------
 # Numba helper kept for non-differentiable analysis paths
@@ -52,8 +51,8 @@ def bio_score_nb(theta, K, M, N):
     Returns:
         float: The calculated biological score (lower is better/more plausible).
     """
-    (k_deact, d_deg, _, _, _, kK_act, kK_deact, _, _, _, _, _) = (
-        decode_theta(theta, K, M, N)
+    (k_deact, d_deg, _, _, _, kK_act, kK_deact, _, _, _, _, _) = decode_theta(
+        theta, K, M, N
     )
     t_half_kinase = np.log(2.0) / kK_deact
     t_half_protein = np.log(2.0) / d_deg
@@ -321,8 +320,8 @@ def make_loss_fn(
         # Sample at protein time indices
         xs_prot = xs[prot_idx_solver, :]
         # New slicing: [R_rna, S, A, Kdyn, p]
-        P_sim = jnp.clip(xs_prot[:, 3 * K + M :], 0.0, 1.0).T      # (N, T_prot)
-        A_sim = jnp.clip(xs_prot[:, 2 * K : 3 * K], 0.0, 5.0).T    # (K, T_prot)
+        P_sim = jnp.clip(xs_prot[:, 3 * K + M :], 0.0, 1.0).T  # (N, T_prot)
+        A_sim = jnp.clip(xs_prot[:, 2 * K : 3 * K], 0.0, 5.0).T  # (K, T_prot)
 
         f1, f2, f3 = compute_objectives_jax(
             theta_j,
@@ -347,8 +346,8 @@ def make_loss_fn(
         # f4: mRNA / R_rna loss (only when RNA data is available)
         if has_mrna:
             xs_rna = xs[mrna_idx_j, :]
-            R_sim_rna = jnp.clip(xs_rna[:, :K], 0.0, None).T   # (K, T_rna)
-            R_sim_matched = R_sim_rna[rna_prot_idx_j, :]         # (n_match, T_rna)
+            R_sim_rna = jnp.clip(xs_rna[:, :K], 0.0, None).T  # (K, T_rna)
+            R_sim_matched = R_sim_rna[rna_prot_idx_j, :]  # (n_match, T_rna)
             diff_R = rna_j - R_sim_matched
             f4 = jnp.sum(jnp.log1p(diff_R * diff_R)) / n_rna
         else:
