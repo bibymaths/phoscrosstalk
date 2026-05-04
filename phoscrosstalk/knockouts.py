@@ -86,7 +86,8 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
     res_P, res_S, res_Kdyn = {}, {}, {}
 
     # 2. Kinase Knockouts (Set Alpha -> 0)
-    idx_alpha = 4 * K + 2
+    # Alpha index in parameter vector: 2*K + 2  (k_deact: K, d_deg: K, beta_g: 1, beta_l: 1)
+    idx_alpha = 2 * K + 2
     for m, kin_name in enumerate(tqdm(kinases, desc="Kinase KOs")):
         theta_ko = theta_opt.copy()
         theta_ko[idx_alpha + m] = -20.0  # Effectively zero in log space
