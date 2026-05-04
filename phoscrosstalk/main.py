@@ -24,6 +24,8 @@ from phoscrosstalk.optimization import (
 )
 from phoscrosstalk.optimization import (
     create_bounds,
+    make_loss_fn,
+    make_residuals_fn,
     validate_problem_shapes,
 )
 from phoscrosstalk.post_processing import (
@@ -177,8 +179,9 @@ def main():
     """
     Entry point for PhosCrosstalk.
 
-    The CLI accepts only ``--config <path>`` (plus ``--help`` and ``--version``).
-    All runtime options are read from the TOML configuration file.
+    The CLI accepts ``--config <path>`` (plus ``--help`` and ``--version``)
+    as well as optional ``--solver`` flags to select the hybrid fitting backend.
+    All other runtime options are read from the TOML configuration file.
     """
 
     parser = argparse.ArgumentParser(
@@ -201,6 +204,97 @@ def main():
         "--version",
         action="version",
         version="Phospho-Network Model Fitting 2.0",
+    )
+
+    # ------------------------------------------------------------------
+    # Hybrid solver flags (additive – existing --config path is unchanged)
+    # ------------------------------------------------------------------
+    parser.add_argument(
+        "--solver",
+        choices=["lm", "hybrid"],
+        default="lm",
+        help=(
+            "Solver backend.  "
+            "lm: existing run_single_optimisation (default).  "
+            "hybrid: run_hybrid_fit from hybrid_fit.py."
+        ),
+    )
+    parser.add_argument(
+        "--es-algo",
+        choices=["sep_cma_es", "cma_es", "de"],
+        default="sep_cma_es",
+        dest="es_algo",
+        help="Evolutionary strategy algorithm for the hybrid solver.",
+    )
+    parser.add_argument(
+        "--es-popsize",
+        type=int,
+        default=64,
+        dest="es_popsize",
+        help="Population size for the evolutionary strategy.",
+    )
+    parser.add_argument(
+        "--es-generations",
+        type=int,
+        default=200,
+        dest="es_generations",
+        help="Number of evolutionary strategy generations.",
+    )
+    parser.add_argument(
+        "--es-top-k",
+        type=int,
+        default=5,
+        dest="es_top_k",
+        help="Number of top evosax candidates to pass to LM polish.",
+    )
+    parser.add_argument(
+        "--lhs-samples",
+        type=int,
+        default=512,
+        dest="lhs_samples",
+        help="Number of Latin Hypercube Sampling samples (Phase 0).",
+    )
+    parser.add_argument(
+        "--skip-lhs",
+        action="store_true",
+        default=False,
+        dest="skip_lhs",
+        help="Skip Phase 0 LHS screen.",
+    )
+    parser.add_argument(
+        "--qdax-centroids",
+        type=int,
+        default=1024,
+        dest="qdax_centroids",
+        help="Number of CVT centroids for QDax MAP-Elites.",
+    )
+    parser.add_argument(
+        "--qdax-iterations",
+        type=int,
+        default=2000,
+        dest="qdax_iterations",
+        help="Number of QDax MAP-Elites iterations.",
+    )
+    parser.add_argument(
+        "--qdax-batch",
+        type=int,
+        default=256,
+        dest="qdax_batch",
+        help="Batch size for QDax MAP-Elites.",
+    )
+    parser.add_argument(
+        "--hybrid-seed",
+        type=int,
+        default=0,
+        dest="hybrid_seed",
+        help="Random seed for the hybrid solver.",
+    )
+    parser.add_argument(
+        "--hybrid-verbose",
+        action="store_true",
+        default=False,
+        dest="hybrid_verbose",
+        help="Enable verbose output for the hybrid solver.",
     )
 
     args = parser.parse_args()
@@ -688,15 +782,118 @@ def main():
     except ValueError as e:
         logger.warning(f"[!] Problem shape validation warnings:\n{e}")
 
-    res, best_idx, total_losses = run_multi_start_optimization(problem, args, P_scaled)
+    # ------------------------------------------------------------------
+    # Choose solver backend
+    # ------------------------------------------------------------------
+    solver_choice = getattr(args, "solver", "lm")
+
+    if solver_choice == "hybrid":
+        # Build shared kwargs used by both make_loss_fn and make_residuals_fn
+        _common_fn_kwargs = dict(
+            t=t,
+            P_data=P_scaled,
+            A_scaled=A_scaled,
+            prot_idx_for_A=prot_idx_for_A,
+            W_data=W_data,
+            W_data_prot=W_data_prot,
+            Cg=Cg,
+            Cl=Cl,
+            site_prot_idx=site_prot_idx,
+            K_site_kin=K_site_kin,
+            R=R,
+            L_alpha=L_alpha,
+            kin_to_prot_idx=kin_to_prot_idx,
+            receptor_mask_prot=receptor_mask_prot,
+            receptor_mask_kin=receptor_mask_kin,
+            mechanism=mechanism,
+            lambda_net=args.lambda_net,
+            reg_lambda=args.reg_lambda,
+            w_phospho=args.loss_weight_phospho,
+            w_abundance=args.loss_weight_abundance,
+            w_reg=args.loss_weight_reg,
+            rtol=args.rtol,
+            atol=args.atol,
+            max_steps=args.solver_max_steps,
+            k_act_fn=k_act_fn,
+            s_prod_fn=s_prod_fn,
+            t_mrna=t_rna if rna_matrix is not None else None,
+            rna_data_scaled=rna_obs_matched,
+            w_mrna=args.loss_weight_mrna,
+            rna_model_prot_idx=rna_model_prot_idx,
+            rna_obs_idx=rna_obs_idx,
+            rna_fit_genes=rna_fit_genes,
+            R_data0=R_data0,
+            rna_relax=cfg.derived_rates.rna_relax,
+        )
+
+        _hybrid_loss_fn = make_loss_fn(
+            **_common_fn_kwargs,
+            W_data_rna=W_data_mrna_matched if len(rna_fit_genes) > 0 else None,
+        )
+        _hybrid_residuals_fn = make_residuals_fn(
+            **_common_fn_kwargs,
+            W_data_mrna=W_data_mrna_matched if len(rna_fit_genes) > 0 else None,
+        )
+
+        from phoscrosstalk.hybrid_fit import run_hybrid_fit
+
+        hybrid_result = run_hybrid_fit(
+            problem=problem,
+            loss_fn=_hybrid_loss_fn,
+            residuals_fn=_hybrid_residuals_fn,
+            n_var=dim,
+            xl=xl,
+            xu=xu,
+            lhs_n_samples=getattr(args, "lhs_samples", 512),
+            lhs_top_p=16,
+            skip_lhs=getattr(args, "skip_lhs", False),
+            es_algo=getattr(args, "es_algo", "sep_cma_es"),
+            es_popsize=getattr(args, "es_popsize", 64),
+            es_n_generations=getattr(args, "es_generations", 200),
+            es_top_k=getattr(args, "es_top_k", 5),
+            lm_max_steps=args.max_steps,
+            lm_rtol=args.opt_rtol,
+            lm_atol=args.opt_atol,
+            qdax_n_centroids=getattr(args, "qdax_centroids", 1024),
+            qdax_batch_size=getattr(args, "qdax_batch", 256),
+            qdax_n_iterations=getattr(args, "qdax_iterations", 2000),
+            seed=getattr(args, "hybrid_seed", 0),
+            verbose=getattr(args, "hybrid_verbose", False),
+        )
+
+        theta_best = hybrid_result.theta_opt
+
+        # Save QDax repertoire
+        qdax_out = os.path.join(outdir, "hybrid_qdax_repertoire.npz")
+        np.savez(
+            qdax_out,
+            qdax_genotypes=hybrid_result.qdax_genotypes,
+            qdax_descriptors=hybrid_result.qdax_descriptors,
+            qdax_fitnesses=hybrid_result.qdax_fitnesses,
+        )
+        logger.success(f"[*] QDax repertoire saved to {qdax_out}")
+
+        # Build F/X arrays compatible with downstream analysis code
+        F = np.array(
+            [[hybrid_result.f1, hybrid_result.f2, hybrid_result.f3, hybrid_result.f4]]
+        )
+        X = theta_best[None, :]  # (1, n_var)
+        total_losses = np.array([hybrid_result.total_loss])
+        best_idx = 0
+
+    else:
+        # Default: multi-start LM via run_multi_start_optimization
+        res, best_idx, total_losses = run_multi_start_optimization(problem, args, P_scaled)
+
+        F, X = res.F, res.X
+        theta_best = X[best_idx]
 
     # 11. Analysis & Saving
-    F, X = res.F, res.X
-    f1, f2, f3 = F[:, 0], F[:, 1], F[:, 2]
+    f1 = F[:, 0]
+    f2 = F[:, 1]
+    f3 = F[:, 2]
     # f4 (RNA loss) is in column 3 when present
     f4 = F[:, 3] if F.shape[1] > 3 else np.zeros(len(f1))
-
-    theta_best = X[best_idx]
 
     analysis.save_derived_rates(
         outdir=outdir,
