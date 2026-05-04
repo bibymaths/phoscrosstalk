@@ -668,7 +668,7 @@ def main():
         t_rna=t_rna if rna_matrix is not None else None,
         rna_obs_matched=rna_obs_matched,
         rna_model_prot_idx=rna_model_prot_idx,
-        rna_obs_idx=rna_obs_idx if len(rna_fit_genes) > 0 else None,
+        rna_obs_idx=rna_obs_idx,
         rna_fit_genes=rna_fit_genes,
         loss_weight_rna=args.loss_weight_mrna,
         R_data0=R_data0,
