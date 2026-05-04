@@ -67,8 +67,8 @@ reg       = 1.0
 
 # ── Phase 0: LHS screen ────────────────────────────────────────────────────
 # skip_lhs = true bypasses Phase 0; evosax starts from a random population.
-lhs_n_samples = 512    # total LHS draw size
-lhs_top_p     = 16     # top-P seeds forwarded to evosax as warm-start
+lhs_n_samples = 128    # total LHS draw size
+lhs_top_p     = 8     # top-P seeds forwarded to evosax as warm-start
 skip_lhs      = false
 
 # ── Phase 1: evosax global search ──────────────────────────────────────────
