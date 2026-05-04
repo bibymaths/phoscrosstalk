@@ -390,32 +390,38 @@ def test_network_problem_loss_includes_rna():
 
 
 # ---------------------------------------------------------------------------
-# 9. CLI parses --rna-data and --tf-net
+# 9. Config file is the source of truth for rna_data and tf_net
 # ---------------------------------------------------------------------------
 
 
-def test_main_cli_with_rna_args(monkeypatch):
-    """CLI must accept --rna-data and --tf-net without argparse error."""
+def test_main_cli_with_rna_args(tmp_path, monkeypatch):
+    """Config file with rna_data/tf_net must be accepted without argparse error."""
+    import toml  # may not be available; try tomllib/tomli path
+    import importlib
+
+    # Build a minimal config that sets rna_data and tf_net paths
+    # (files need not exist; the test only checks that the CLI reads TOML
+    # and fails with an informative error rather than an argparse error)
+    cfg_content = """
+[paths]
+data = "fake.csv"
+ptm_intra = "fake.db"
+ptm_inter = "fake.db"
+rna_data = "fake_rna.csv"
+tf_net = "fake_tf.csv"
+output_dir = "results"
+
+[optimisation]
+n_starts = 1
+max_steps = 5
+"""
+    cfg_path = tmp_path / "test_config.toml"
+    cfg_path.write_text(cfg_content)
+
     monkeypatch.setattr(
         sys,
         "argv",
-        [
-            "phoscrosstalk",
-            "--data",
-            "fake.csv",
-            "--ptm-intra",
-            "fake.db",
-            "--ptm-inter",
-            "fake.db",
-            "--rna-data",
-            "fake_rna.csv",
-            "--tf-net",
-            "fake_tf.csv",
-            "--n-starts",
-            "1",
-            "--max-steps",
-            "5",
-        ],
+        ["phoscrosstalk", "--config", str(cfg_path)],
     )
     from phoscrosstalk.main import main
 
@@ -423,7 +429,9 @@ def test_main_cli_with_rna_args(monkeypatch):
         main()
     exc = exc_info.value
     if isinstance(exc, SystemExit):
-        assert exc.code != 2, "--rna-data / --tf-net rejected by argparse (exit 2)"
+        # Should not be argparse error (exit code 2)
+        assert exc.code != 2, "CLI rejected --config argument (exit 2)"
+        # Allowed to fail with exit code 1 (file-not-found or validation error)
 
 
 # ---------------------------------------------------------------------------
