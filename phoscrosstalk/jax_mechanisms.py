@@ -259,10 +259,12 @@ def make_rhs(K: int, M: int, N: int, mechanism: str, k_act_fn=None, s_prod_fn=No
         s_prod = _s_prod_fn(t)
 
         # --- Unpack + clip state ------------------------------------------------
-        S = y[:K]
-        A = y[K : 2 * K]
-        Kdyn = jnp.clip(y[2 * K : 2 * K + M], 0.0, 1.0)
-        p = jnp.clip(y[2 * K + M :], 0.0, 1.0)
+        # New state layout: y = [R_rna, S, A, Kdyn, p]  (dim = 3*K + M + N)
+        R_rna = jnp.clip(y[:K], 0.0, None)          # mRNA state
+        S = y[K : 2 * K]                             # protein signalling
+        A = y[2 * K : 3 * K]                         # protein abundance
+        Kdyn = jnp.clip(y[3 * K : 3 * K + M], 0.0, 1.0)  # kinase activity
+        p = jnp.clip(y[3 * K + M :], 0.0, 1.0)     # phosphosite occupancy
 
         # Smooth external stimulus: sigmoid ramp from 0→1
         u = 1.0 / (1.0 + jnp.exp(-t / 0.1))
@@ -279,13 +281,19 @@ def make_rhs(K: int, M: int, N: int, mechanism: str, k_act_fn=None, s_prod_fn=No
         mp = num_p / safe_den
         mc = num_c / safe_den
 
+        # --- 0. mRNA state (R_rna) -----------------------------------------------
+        # dR/dt = k_act(t) - d_deg * R
+        # k_act drives mRNA transcription; d_deg controls RNA decay.
+        dR_rna = k_act - d_deg * R_rna
+
         # --- 1. Protein signalling state (S) ------------------------------------
         D_S = 1.0 + gamma_S_p * mp + mc + receptor_mask_prot * u
         D_S = jnp.clip(D_S, 0.0, None)
         dS = k_act * D_S * (1.0 - S) - k_deact * S
 
         # --- 2. Protein abundance (A) -------------------------------------------
-        s_eff = jnp.clip(s_prod * (1.0 + gamma_A_S * S), 0.0, None)
+        # R_rna couples mRNA level to protein synthesis: s_eff ∝ R_rna
+        s_eff = jnp.clip(s_prod * R_rna * (1.0 + gamma_A_S * S), 0.0, None)
         dA = s_eff - d_deg * A
 
         # --- 3. Kinase dynamics (Kdyn) ------------------------------------------
@@ -331,7 +339,8 @@ def make_rhs(K: int, M: int, N: int, mechanism: str, k_act_fn=None, s_prod_fn=No
 
         dp = v_on - v_off
 
-        return jnp.concatenate([dS, dA, dKdyn, dp])
+        # New state order: [R_rna, S, A, Kdyn, p]  (3*K + M + N)
+        return jnp.concatenate([dR_rna, dS, dA, dKdyn, dp])
 
     return rhs
 

@@ -321,7 +321,7 @@ class TestOptimistixOptimisation:
         theta0 = xl + rng.random(len(xl)) * (xu - xl)
         loss0, _ = loss_fn(jnp.asarray(theta0, dtype=jnp.float32), None)
 
-        theta_opt, total_loss, f1, f2, f3 = run_single_optimisation(
+        theta_opt, total_loss, f1, f2, f3, f4 = run_single_optimisation(
             loss_fn, theta0, max_steps=30
         )
 
@@ -399,7 +399,7 @@ class TestOptimistixOptimisation:
         )
 
         theta0 = 0.5 * (xl + xu)
-        total, (f1, f2, f3) = loss_fn(jnp.asarray(theta0, dtype=jnp.float32), None)
+        total, (f1, f2, f3, f4) = loss_fn(jnp.asarray(theta0, dtype=jnp.float32), None)
         assert np.isfinite(float(total)), "total loss is not finite"
         assert np.isfinite(float(f1)), "f1 is not finite"
 
@@ -594,8 +594,8 @@ class TestJaxMechanisms:
             compute_prev_site_idx(np.array([0, 0, 1, 1]), N), dtype=jnp.int32
         )
 
-        y = jnp.zeros(2 * K + M + N)
+        y = jnp.zeros(3 * K + M + N)
         args = (theta, Cg, Cl, spi, K_sk, R, La, k2p, rmp, rmk, prev_spi)
 
         dy = rhs(0.0, y, args)
-        assert dy.shape == (2 * K + M + N,), f"dy shape: {dy.shape}"
+        assert dy.shape == (3 * K + M + N,), f"dy shape: {dy.shape}"
