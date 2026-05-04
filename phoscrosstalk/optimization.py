@@ -907,8 +907,137 @@ def validate_problem_shapes(problem):
 
 
 # ---------------------------------------------------------------------------
-# Thin problem wrapper (keeps .simulate() for downstream modules)
+# Biological input validation
 # ---------------------------------------------------------------------------
+
+
+def validate_biological_inputs(
+    P_data=None,
+    A_scaled=None,
+    rna_data_scaled=None,
+    W_data=None,
+    W_data_prot=None,
+    theta=None,
+    K=None,
+    M=None,
+    N=None,
+):
+    """
+    Defensive validation of biological inputs before fitting.
+
+    Checks
+    ------
+    * All observed data matrices contain only finite values.
+    * Observed phosphosite occupancy (P_data) is non-negative;
+      negative values are invalid for occupancy-scale data.
+    * Observed protein abundance (A_scaled) values are non-negative
+      (fold-change data must be ≥ 0).
+    * Observed mRNA data (rna_data_scaled) values are non-negative;
+      negative fold-change values are invalid for this model.
+    * All loss weight matrices are finite and non-negative.
+    * When a decoded ``theta`` vector is provided together with K, M, N,
+      the positive-definite rate parameters are finite and > 0, and the
+      gamma parameters are finite.
+
+    Parameters
+    ----------
+    P_data          : np.ndarray | None – (N, T) phosphosite occupancy data.
+    A_scaled        : np.ndarray | None – (K_obs, T) protein abundance data.
+    rna_data_scaled : np.ndarray | None – (n_genes, T_rna) mRNA fold-change.
+    W_data          : np.ndarray | None – per-element phosphosite weights.
+    W_data_prot     : np.ndarray | None – per-element abundance weights.
+    theta           : np.ndarray | None – flat parameter vector.
+    K, M, N         : int | None        – model dimensions for theta decoding.
+
+    Raises
+    ------
+    ValueError  on the first detected violation (with a descriptive message).
+    """
+    errors = []
+
+    def _chk_finite(name, arr):
+        arr = np.asarray(arr, dtype=float)
+        n_bad = int((~np.isfinite(arr)).sum())
+        if n_bad > 0:
+            errors.append(
+                f"{name} contains {n_bad} non-finite value(s) (NaN or Inf). "
+                "Replace or impute these before fitting."
+            )
+
+    def _chk_nonneg(name, arr):
+        arr = np.asarray(arr, dtype=float)
+        finite = arr[np.isfinite(arr)]
+        if finite.size > 0 and float(finite.min()) < 0.0:
+            n_neg = int((finite < 0.0).sum())
+            raise ValueError(
+                f"{name} contains {n_neg} negative value(s). "
+                "Negative fold-change/occupancy values are invalid for this model. "
+                "Transform or correct the data before fitting."
+            )
+
+    # --- Observed data arrays ---
+    if P_data is not None:
+        _chk_finite("P_data", P_data)
+        _chk_nonneg("P_data (phosphosite occupancy)", P_data)
+    if A_scaled is not None and np.asarray(A_scaled).size > 0:
+        _chk_finite("A_scaled", A_scaled)
+        _chk_nonneg("A_scaled (protein abundance)", A_scaled)
+    if rna_data_scaled is not None and np.asarray(rna_data_scaled).size > 0:
+        _chk_finite("rna_data_scaled", rna_data_scaled)
+        _chk_nonneg("rna_data_scaled (mRNA fold-change)", rna_data_scaled)
+
+    # --- Loss weights ---
+    for wname, warr in [("W_data", W_data), ("W_data_prot", W_data_prot)]:
+        if warr is not None and np.asarray(warr).size > 0:
+            warr_np = np.asarray(warr, dtype=float)
+            _chk_finite(wname, warr_np)
+            finite_w = warr_np[np.isfinite(warr_np)]
+            if finite_w.size > 0 and float(finite_w.min()) < 0.0:
+                errors.append(
+                    f"{wname} contains negative weight(s). "
+                    "Loss weights must be non-negative."
+                )
+
+    # --- Decoded parameter check ---
+    if theta is not None and K is not None and M is not None and N is not None:
+        from phoscrosstalk.core_mechanisms import decode_theta
+
+        (
+            k_deact, d_deg, beta_g, beta_l, alpha,
+            kK_act, kK_deact, k_off,
+            gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net,
+        ) = decode_theta(np.asarray(theta, dtype=np.float64), K, M, N)
+
+        for pname, parr in [
+            ("k_deact", k_deact), ("d_deg", d_deg),
+            ("alpha", alpha), ("kK_act", kK_act), ("kK_deact", kK_deact),
+            ("k_off", k_off),
+        ]:
+            parr_np = np.asarray(parr, dtype=float)
+            if not np.all(np.isfinite(parr_np)):
+                errors.append(f"Decoded parameter '{pname}' contains non-finite values.")
+            elif float(parr_np.min()) < 1e-15:
+                errors.append(
+                    f"Decoded parameter '{pname}' has non-positive value(s) "
+                    f"(min={float(parr_np.min()):.3g}). Rate parameters must be > 0."
+                )
+
+        for sname, sval in [
+            ("beta_g", beta_g), ("beta_l", beta_l),
+            ("gamma_S_p", gamma_S_p), ("gamma_A_S", gamma_A_S),
+            ("gamma_A_p", gamma_A_p), ("gamma_K_net", gamma_K_net),
+        ]:
+            if not np.isfinite(float(sval)):
+                errors.append(f"Decoded parameter '{sname}' is non-finite.")
+
+    if errors:
+        raise ValueError(
+            "validate_biological_inputs found issues:\n  "
+            + "\n  ".join(errors)
+        )
+
+
+
 
 
 class NetworkProblem:
