@@ -106,9 +106,16 @@ class RichLogger:
 
         Args:
             msg (str): The message string.
+            flush (bool, optional): If True, flush all handlers after logging.
             *args, **kwargs: Arguments passed to the standard logger.
         """
+        flush = kwargs.pop("flush", False)  # accept & remove flush kwarg
         self.logger.info(msg, *args, **kwargs)
+        if flush:
+            # flush all handlers (file handler, rich handler, etc.)
+            for handler in self.logger.handlers:
+                if hasattr(handler, "flush"):
+                    handler.flush()
 
     def success(self, msg, *args, **kwargs):
         """
