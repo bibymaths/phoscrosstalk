@@ -1,0 +1,44 @@
+site_name: PhosCrosstalk
+site_description: Global phospho-network ODE modeling with PTM crosstalk and TF/mRNA integration
+site_url: https://bibymaths.github.io/phoscrosstalk
+repo_url: https://github.com/bibymaths/phoscrosstalk
+repo_name: bibymaths/phoscrosstalk
+
+theme:
+  name: material
+  logo: assets/logo.png
+  favicon: assets/logo.png
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.code.copy
+    - content.tabs.link
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Inputs: inputs.md
+  - Configuration: configuration.md
+  - Running PhosCrosstalk: running.md
+  - Model: model.md
+  - Outputs: outputs.md
+  - Dashboard: dashboard.md
+  - Troubleshooting: troubleshooting.md
+  - Developer Guide: developer.md
