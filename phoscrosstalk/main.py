@@ -24,6 +24,7 @@ from phoscrosstalk.optimization import (
 )
 from phoscrosstalk.optimization import (
     create_bounds,
+    validate_problem_shapes,
 )
 from phoscrosstalk.post_processing import (
     export_network_for_cytoscape,
@@ -262,6 +263,10 @@ def main():
         max_steps=cfg.optimisation.max_steps,
         lambda_net=cfg.optimisation.lambda_net,
         reg_lambda=cfg.optimisation.reg_lambda,
+        # Optimistix solver settings (separate from ODE solver tolerances)
+        opt_rtol=getattr(cfg.optimisation, "rtol", 1e-8),
+        opt_atol=getattr(cfg.optimisation, "atol", 1e-8),
+        opt_verbose=getattr(cfg.optimisation, "verbose", False),
         # model tuning
         scale_mode=cfg.model.scale_mode,
         length_scale=cfg.model.length_scale,
@@ -675,6 +680,13 @@ def main():
         rna_relax=cfg.derived_rates.rna_relax,
         W_data_mrna=W_data_mrna_matched if len(rna_fit_genes) > 0 else None,
     )
+
+    # Validate problem shapes before starting optimization
+    try:
+        validate_problem_shapes(problem)
+        logger.info("[*] Problem shape validation passed.")
+    except ValueError as e:
+        logger.warning(f"[!] Problem shape validation warnings:\n{e}")
 
     res, best_idx, total_losses = run_multi_start_optimization(problem, args, P_scaled)
 
