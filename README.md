@@ -60,7 +60,7 @@ Two rates are derived from data and **not** optimized:
 - `k_act(t)` – protein activation rate, derived from the TF→mRNA regulatory signal
 - `s_prod(t)` – kinase production rate, derived from kinase/protein signals
 
-If `--rna-data` and `--tf-net` are absent, `k_act` defaults to a constant vector of 1.0.
+If `rna_data` and `tf_net` are absent from `config.toml`, `k_act` defaults to a constant vector of 1.0.
 
 ### Single scalar objective
 
@@ -68,7 +68,7 @@ If `--rna-data` and `--tf-net` are absent, `k_act` defaults to a constant vector
 total_loss =
     w_phospho   × phosphosite_loss
   + w_abundance × protein_abundance_loss
-  + w_rna       × rna_loss          (only when --rna-data is provided)
+  + w_rna       × rna_loss          (only when rna_data is set in config.toml)
   + w_reg       × regularization_loss
 ```
 
@@ -78,22 +78,24 @@ Weights are set in `config.toml` under `[loss_weights]`.
 
 ## Inputs
 
-| Flag | Description | Example |
-|------|-------------|---------|
-| `--data` | Protein/phosphosite time-series CSV | `data_timeseries/filtered_input1.csv` |
-| `--rna-data` | mRNA time-series CSV (GeneID, x1…x9) | `data_timeseries/filtered_input3.csv` |
-| `--tf-net` | TF→mRNA network CSV (Source, Target, Weight) | `data_interactions/tf_mrna.csv` |
-| `--ptm-intra` | PTMcode2 intra-protein SQLite DB | `data_curated/processed/ptm_intra.db` |
-| `--ptm-inter` | PTMcode2 inter-protein SQLite DB | `data_curated/processed/ptm_inter.db` |
-| `--kinase-tsv` | Kinase-site prior TSV (Site, Kinase, weight) | `data_interactions/kinase_sites.tsv` |
-| `--kea-ks-table` | Alternative KEA/KS table | `data_curated/processed/ks_psite_table.tsv` |
-| `--unified-graph-pkl` | Kinase-kinase graph for Laplacian regularization | `data_curated/processed/unified_kinase_graph.gpickle` |
+All input paths are configured in `config.toml` under `[paths]`:
+
+| `config.toml` key | Description | Example |
+|-------------------|-------------|---------|
+| `data` | Protein/phosphosite time-series CSV | `data_timeseries/input1.csv` |
+| `rna_data` | mRNA time-series CSV (GeneID, x1…x9) | `data_timeseries/input3.csv` |
+| `tf_net` | TF→mRNA network CSV (Source, Target, Weight) | `data_interactions/tf_mrna.csv` |
+| `ptm_intra` | PTMcode2 intra-protein SQLite DB | `data_curated/processed/ptm_intra.db` |
+| `ptm_inter` | PTMcode2 inter-protein SQLite DB | `data_curated/processed/ptm_inter.db` |
+| `kinase_tsv` | Kinase-site prior TSV (Site, Kinase, weight) | `data_interactions/kinase_sites.tsv` |
+| `kea_ks_table` | Alternative KEA/KS table | `data_curated/processed/ks_psite_table.tsv` |
+| `unified_graph_pkl` | Kinase-kinase graph for Laplacian regularization | `data_curated/processed/unified_kinase_graph.gpickle` |
 
 ### Input sanity checks
 
 ```bash
-head data_timeseries/filtered_input1.csv
-head data_timeseries/filtered_input3.csv
+head data_timeseries/input1.csv
+head data_timeseries/input3.csv
 head data_interactions/tf_mrna.csv
 head data_interactions/kinase_sites.tsv
 ```
@@ -127,18 +129,23 @@ pip install -e ".[dev,docs]"
 
 ## Configuration
 
-Copy and edit `config.toml`:
+All runtime options live in `config.toml`.
+Copy the template and edit it for your dataset:
 
 ```toml
 [paths]
-data_dir   = "data_timeseries"
-output_dir = "results"
+data      = "data_timeseries/input1.csv"
+ptm_intra = "data_curated/processed/ptm_intra.db"
+ptm_inter = "data_curated/processed/ptm_inter.db"
+output_dir = "results/experiment_01"
+kinase_tsv = "data_interactions/kinase_sites.tsv"
+
+# optional
+# rna_data = "data_timeseries/input3.csv"
+# tf_net   = "data_interactions/tf_mrna.csv"
 
 [model]
-mechanism    = "dist"      # dist | seq | rand
-scale_mode   = "none"
-length_scale = 50.0
-weight_scheme = "uniform"
+mechanism = "dist"   # dist | seq | rand
 
 [optimisation]
 n_starts  = 3
@@ -160,6 +167,12 @@ max_steps = 16384
 [time]
 mrna_time_points = [4, 8, 15, 30, 60, 120, 240, 480, 960]
 interpolation    = "piecewise_constant"
+
+[analysis]
+tune            = false
+run_steadystate = false
+run_knockouts   = false
+run_sensitivity = false
 ```
 
 ---
@@ -169,54 +182,24 @@ interpolation    = "piecewise_constant"
 ### Base command
 
 ```bash
-phoscrosstalk \
-  --config config.toml \
-  --data data_timeseries/filtered_input1.csv \
-  --rna-data data_timeseries/filtered_input3.csv \
-  --tf-net data_interactions/tf_mrna.csv \
-  --ptm-intra data_curated/processed/ptm_intra.db \
-  --ptm-inter data_curated/processed/ptm_inter.db \
-  --kinase-tsv data_interactions/kinase_sites.tsv \
-  --unified-graph-pkl data_curated/processed/unified_kinase_graph.gpickle \
-  --outdir results/experiment_01 \
-  --mechanism dist \
-  --n-starts 3 \
-  --max-steps 20000
+phoscrosstalk --config config.toml
 ```
 
-### Mechanism variants
-
-```bash
-# Distributive (default)
-phoscrosstalk ... --mechanism dist --outdir results/dist_run
-
-# Sequential
-phoscrosstalk ... --mechanism seq --outdir results/seq_run
-
-# Random / cooperative
-phoscrosstalk ... --mechanism rand --outdir results/rand_run
-```
-
-### With downstream analyses
-
-```bash
-phoscrosstalk ... \
-  --run-steadystate \
-  --run-knockouts \
-  --run-sensitivity
-```
-
-### With KEA kinase-substrate table
-
-```bash
-phoscrosstalk ... \
-  --kea-ks-table data_curated/processed/ks_psite_table.tsv
-```
+The CLI only accepts `--config <path>` (plus `--help` and `--version`).
+All data paths, model settings, optimisation parameters, and analysis flags
+live in `config.toml`.
 
 ### Smoke test
 
+```toml
+# smoke_config.toml
+[optimisation]
+n_starts  = 1
+max_steps = 50
+```
+
 ```bash
-phoscrosstalk ... --n-starts 1 --max-steps 50 --outdir results/smoke
+phoscrosstalk --config smoke_config.toml
 ```
 
 ### Dashboard
@@ -246,8 +229,8 @@ streamlit run phoscrosstalk/app.py
 | `steadystate/` | Steady-state simulation results |
 
 > **Note:** `mrna_fit_timeseries.tsv` contains model-simulated `R(t)` values,
-> not a copy of the input mRNA data. It is only written when `--rna-data` is
-> provided and at least one gene symbol matches a model protein.
+> not a copy of the input mRNA data. It is only written when `rna_data` is
+> set in `config.toml` and at least one gene symbol matches a model protein.
 
 ---
 
@@ -255,12 +238,13 @@ streamlit run phoscrosstalk/app.py
 
 | Symptom | Likely cause |
 |---------|-------------|
-| Warning: No RNA genes matched | Gene symbols differ between `--rna-data` and `--data` |
+| Warning: No RNA genes matched | Gene symbols differ between `rna_data` and `data` files |
 | `mrna_fit_timeseries.tsv` absent | RNA data not provided, or no symbol match |
 | Loss is `NaN` | Solver non-finite; check `rtol`/`atol`, try smoke test |
 | `IndexError` decoding parameters | Stale `fitted_params.npz` from a run with different dimensions |
-| Wrong TF direction | `Source` and `Target` columns swapped in `tf_mrna.csv` |
-| Empty kinase-site matrix | Site labels in `--kinase-tsv` do not match model site labels |
+| Wrong TF direction | `Source` and `Target` columns swapped in the TF network file |
+| Empty kinase-site matrix | Site labels in `kinase_tsv` do not match model site labels |
+| Validation error at startup | Required `[paths]` fields missing or files not found in `config.toml` |
 
 ---
 

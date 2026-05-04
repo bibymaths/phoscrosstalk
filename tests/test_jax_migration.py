@@ -482,7 +482,7 @@ class TestCLIRegression:
         assert exc.value.code == 0
 
     def test_old_flags_removed(self, monkeypatch):
-        """Legacy flags --gen, --pop-size, --algorithm must be rejected (removed)."""
+        """Legacy flags --gen, --pop-size, --algorithm, --data, etc. are now rejected."""
         monkeypatch.setattr(
             sys,
             "argv",
@@ -490,10 +490,6 @@ class TestCLIRegression:
                 "phoscrosstalk",
                 "--data",
                 "fake.csv",
-                "--ptm-intra",
-                "fake.db",
-                "--ptm-inter",
-                "fake.db",
                 "--gen",
                 "100",
                 "--pop-size",
@@ -506,35 +502,20 @@ class TestCLIRegression:
 
         with pytest.raises(SystemExit) as exc_info:
             main()
-        # argparse SystemExit(2) means unrecognized argument – that IS expected now
+        # argparse SystemExit(2) means unrecognized argument – expected
         assert exc_info.value.code == 2, (
-            "stale pymoo flags should be rejected by argparse with exit code 2"
+            "Removed flags should be rejected by argparse with exit code 2"
         )
 
-    def test_new_flags_accepted(self, monkeypatch):
-        """New flags --config, --rna-data, --tf-net must parse without error."""
+    def test_new_flags_accepted(self, monkeypatch, tmp_path):
+        """Only --config (and --help/--version) are accepted; config file is read."""
+        cfg_path = tmp_path / "config.toml"
+        cfg_path.write_text("")  # empty → validation error (exit 1, not argparse exit 2)
+
         monkeypatch.setattr(
             sys,
             "argv",
-            [
-                "phoscrosstalk",
-                "--data",
-                "fake.csv",
-                "--ptm-intra",
-                "fake.db",
-                "--ptm-inter",
-                "fake.db",
-                "--config",
-                "nonexistent_config.toml",
-                "--rna-data",
-                "fake_rna.csv",
-                "--tf-net",
-                "fake_tf.csv",
-                "--n-starts",
-                "2",
-                "--max-steps",
-                "50",
-            ],
+            ["phoscrosstalk", "--config", str(cfg_path)],
         )
         from phoscrosstalk.main import main
 
@@ -542,7 +523,8 @@ class TestCLIRegression:
             main()
         exc = exc_info.value
         if isinstance(exc, SystemExit):
-            assert exc.code != 2, "new flag was rejected by argparse"
+            # exit 2 would mean argparse rejected --config, which is wrong
+            assert exc.code != 2, "--config flag rejected by argparse (exit 2)"
 
 
 # ---------------------------------------------------------------------------

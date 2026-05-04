@@ -223,6 +223,7 @@ def save_fitted_simulation(
     k_act_fn=None,
     s_prod_fn=None,
     R_data0=None,
+    kinases=None,
 ):
     """
     Run a simulation with optimized parameters, rescale outputs, and save comparison data.
@@ -254,6 +255,9 @@ def save_fitted_simulation(
         L_alpha (np.ndarray): Laplacian or interaction matrix for alpha term.
         kin_to_prot_idx (np.ndarray): Mapping of kinases to protein indices.
         mask_p, mask_k (np.ndarray): Boolean masks for proteins and kinases.
+        kinases (list | None): List of kinase names.  When provided, Kdyn_sim
+            rows in ``internal_states.tsv`` use real kinase names instead of
+            generic ``Kinase_0, Kinase_1, …`` labels.
 
     Returns:
         None: Saves 'fitted_params.npz' and 'fit_timeseries.tsv' to `outdir`.
@@ -375,15 +379,10 @@ def save_fitted_simulation(
             rec[cols[j]] = S_sim[k, j]
         records_internal.append(rec)
 
-    # Kdyn_sim (Kinase Activity)
-    # Note: We need kinase names. If not passed to this function, we rely on mapping or generic
-    # ideally update signature to accept kinases, but we can assume generic indices if needed.
-    # In main.py loop, K_site_kin usually implies standard indexing.
+    # Kdyn_sim (Kinase Activity) – use real kinase names when available
     for m in range(M):
-        # Try to find name if kin_to_prot works or pass explicit list
-        # For now using generic if list not in scope, but typically kinases are known
-        # We will assume index based ID
-        rec = {"Type": "Kdyn_sim", "ID": f"Kinase_{m}"}
+        kin_name = kinases[m] if (kinases is not None and m < len(kinases)) else f"Kinase_{m}"
+        rec = {"Type": "Kdyn_sim", "ID": kin_name}
         for j in range(T):
             rec[cols[j]] = Kdyn_sim[m, j]
         records_internal.append(rec)
@@ -392,10 +391,10 @@ def save_fitted_simulation(
     df_int.to_csv(os.path.join(outdir, "internal_states.tsv"), sep="\t", index=False)
 
     # Plot the internal states
-    plot_internal_states(outdir, t, S_sim, Kdyn_sim, proteins)
+    plot_internal_states(outdir, t, S_sim, Kdyn_sim, proteins, kinases=kinases)
 
 
-def plot_internal_states(outdir, t, S_sim, Kdyn_sim, proteins):
+def plot_internal_states(outdir, t, S_sim, Kdyn_sim, proteins, kinases=None):
     """
     Plot the internal states (S_sim and Kdyn_sim) for comparison with experimental data.
 
@@ -405,6 +404,8 @@ def plot_internal_states(outdir, t, S_sim, Kdyn_sim, proteins):
         S_sim (np.ndarray): Simulated protein activity.
         Kdyn_sim (np.ndarray): Simulated kinase activity.
         proteins (list): List of protein names.
+        kinases (list | None): List of kinase names.  When provided, legend
+            labels use real kinase names instead of generic ``Kinase_N``.
 
     Returns:
         None
@@ -431,7 +432,12 @@ def plot_internal_states(outdir, t, S_sim, Kdyn_sim, proteins):
     top_k = np.argsort(k_range)[-10:]
 
     for idx in top_k:
-        axK.plot(t, Kdyn_sim[idx], label=f"Kinase_{idx}", lw=2, alpha=0.8)
+        kin_label = (
+            kinases[idx]
+            if (kinases is not None and idx < len(kinases))
+            else f"Kinase_{idx}"
+        )
+        axK.plot(t, Kdyn_sim[idx], label=kin_label, lw=2, alpha=0.8)
 
     axK.set_title("Kinase Active Fraction ($K_{dyn}$)")
     axK.set_xlabel("Time (min)")
@@ -521,7 +527,13 @@ def plot_fitted_simulation(outdir):
             panel_idx += 1
             rna_sub = df_mrna[df_mrna["gene"] == prot].sort_values("time")
             t_rna_vals = rna_sub["time"].values
-            y_rna_fit = rna_sub["fitted"].values
+            # Support both "fitted" and "simulated" column names
+            if "fitted" in rna_sub.columns:
+                y_rna_fit = rna_sub["fitted"].values
+            elif "simulated" in rna_sub.columns:
+                y_rna_fit = rna_sub["simulated"].values
+            else:
+                y_rna_fit = np.full(len(t_rna_vals), np.nan)
             y_rna_obs = rna_sub["observed"].values
             axR.plot(
                 t_rna_vals, y_rna_fit, "-", lw=3, color=color, label="mRNA (model)"
@@ -531,7 +543,7 @@ def plot_fitted_simulation(outdir):
             )
             axR.set_title("mRNA / R(t)", fontsize=12, fontweight="bold")
             axR.set_xlabel("Time (min)")
-            axR.set_ylabel("mRNA FC")
+            axR.set_ylabel("mRNA fold-change / R(t)")
             axR.legend(fontsize=9)
             axR.grid(alpha=0.25)
 
@@ -579,7 +591,7 @@ def plot_fitted_simulation(outdir):
             )
         axP.set_title("Protein abundance", fontsize=12, fontweight="bold")
         axP.set_xlabel("Time (min)")
-        axP.set_ylabel("FC / Scaled abundance")
+        axP.set_ylabel("Protein abundance / A(t)")
         axP.legend(fontsize=9)
         axP.grid(alpha=0.25)
 
@@ -635,7 +647,7 @@ def plot_fitted_simulation(outdir):
                     )
         axS.set_title("Phosphosites", fontsize=12, fontweight="bold")
         axS.set_xlabel("Time (min)")
-        axS.set_ylabel("Phospho occupancy")
+        axS.set_ylabel("Phosphosite occupancy / p(t)")
         axS.legend(
             fontsize=8,
             loc="upper left",
@@ -1111,6 +1123,9 @@ def save_mrna_outputs(outdir, gene_ids, t_rna, rna_data_obs, rna_simulated):
     *rna_simulated* is None – do not use this function to save fake zero-residual
     outputs.  Always pass real simulated R(t) from the ODE.
 
+    Emits a warning when the simulated maximum is more than 10× the observed
+    maximum, which indicates a numerical scaling problem in the RNA ODE.
+
     Args:
         outdir (str): Output directory.
         gene_ids (list[str]): Gene identifiers (matched model proteins only).
@@ -1141,6 +1156,35 @@ def save_mrna_outputs(outdir, gene_ids, t_rna, rna_data_obs, rna_simulated):
             f"vs simulated {rna_simulated.shape}.  Ensure both use matched gene rows."
         )
 
+    # --- Global scale diagnostics ---
+    obs_finite = rna_data_obs[np.isfinite(rna_data_obs)]
+    sim_finite = rna_simulated[np.isfinite(rna_simulated)]
+    obs_min = float(np.min(obs_finite)) if obs_finite.size > 0 else float("nan")
+    obs_max = float(np.max(obs_finite)) if obs_finite.size > 0 else float("nan")
+    obs_mean = float(np.mean(obs_finite)) if obs_finite.size > 0 else float("nan")
+    sim_min = float(np.min(sim_finite)) if sim_finite.size > 0 else float("nan")
+    sim_max = float(np.max(sim_finite)) if sim_finite.size > 0 else float("nan")
+    sim_mean = float(np.mean(sim_finite)) if sim_finite.size > 0 else float("nan")
+
+    logger.info(
+        f"[*] mRNA scale diagnostics – observed: min={obs_min:.3f}, "
+        f"mean={obs_mean:.3f}, max={obs_max:.3f} | "
+        f"fitted R(t): min={sim_min:.3f}, mean={sim_mean:.3f}, max={sim_max:.3f}"
+    )
+
+    if not np.isfinite(sim_max):
+        logger.warning(
+            "[!] mRNA WARNING: fitted R(t) contains non-finite values. "
+            "The RNA ODE may be numerically unstable."
+        )
+    elif np.isfinite(obs_max) and obs_max > 0 and sim_max > 10.0 * obs_max:
+        logger.warning(
+            f"[!] mRNA WARNING: max(R_sim)={sim_max:.2f} > "
+            f"10 × max(R_obs)={obs_max:.2f}. "
+            "Fitted R(t) is far off the observed fold-change scale. "
+            "Check RNA ODE and initial conditions."
+        )
+
     records = []
     diag_records = []
 
@@ -1159,6 +1203,12 @@ def save_mrna_outputs(outdir, gene_ids, t_rna, rna_data_obs, rna_simulated):
 
         # Per-gene diagnostics – computed from real residuals
         resid = obs - fit
+        gene_obs_min = float(np.nanmin(obs))
+        gene_obs_max = float(np.nanmax(obs))
+        gene_obs_mean = float(np.nanmean(obs))
+        gene_sim_min = float(np.nanmin(fit))
+        gene_sim_max = float(np.nanmax(fit))
+        gene_sim_mean = float(np.nanmean(fit))
         rmse = float(np.sqrt(np.mean(resid**2)))
         ss_res = float(np.sum(resid**2))
         ss_tot = float(np.sum((obs - np.mean(obs)) ** 2))
@@ -1171,6 +1221,12 @@ def save_mrna_outputs(outdir, gene_ids, t_rna, rna_data_obs, rna_simulated):
                 "mean_residual": float(np.mean(resid)),
                 "std_residual": float(np.std(resid)),
                 "max_abs_residual": float(np.max(np.abs(resid))),
+                "obs_min": gene_obs_min,
+                "obs_max": gene_obs_max,
+                "obs_mean": gene_obs_mean,
+                "sim_min": gene_sim_min,
+                "sim_max": gene_sim_max,
+                "sim_mean": gene_sim_mean,
             }
         )
 
