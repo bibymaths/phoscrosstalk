@@ -161,9 +161,9 @@ def simulate_ode(
 
     # p initial condition (phosphosite occupancy)
     p0 = np.nan_to_num(
-        P_data0[:, 0].astype(np.float64), nan=0.0, posinf=1.0, neginf=0.0
+        P_data0[:, 0].astype(np.float64), nan=0.0, posinf=10.0, neginf=0.0
     )
-    p0 = np.clip(p0, 0.0, 1.0)
+    p0 = np.clip(p0, 0.0, None)
     x0[3 * K + M :] = p0
 
     nan_result = _nan_result(N_sites, K, M, T, full_output, return_full, t_rna_arr)
@@ -238,7 +238,11 @@ def simulate_ode(
     np.clip(R_rna_sim, 0.0, None, out=R_rna_sim)
     np.clip(S_sim, 0.0, 1.0, out=S_sim)
     np.clip(Kdyn_sim, 0.0, 1.0, out=Kdyn_sim)
-    np.clip(P_sim, 0.0, 1.0, out=P_sim)
+
+    # p is now a non-negative relative phosphosite signal, not a bounded occupancy.
+    # Keep only the biological/numerical lower bound.
+    np.clip(P_sim, 0.0, None, out=P_sim)
+
     np.clip(A_sim, 0.0, 5.0, out=A_sim)
 
     # return_full: rich dict with all outputs including RNA at RNA time points

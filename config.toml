@@ -10,7 +10,7 @@
 data              = "data_subset/subnetwork_EPHA2_LYN/filtered_input1_subset.csv"
 ptm_intra         = "data_curated/processed/ptm_intra.db"
 ptm_inter         = "data_curated/processed/ptm_inter.db"
-output_dir        = "test_results"
+output_dir        = "test_results_rand"
 crosstalk_tsv     = ""
 rna_data          = "data_subset/subnetwork_EPHA2_LYN/filtered_input3_subset.csv"
 tf_net            = "data_subset/subnetwork_EPHA2_LYN/tf_mrna_subset.csv"
@@ -22,9 +22,9 @@ unified_graph_pkl = "data_curated/processed/unified_kinase_graph.gpickle"
 # [model]  – ODE model settings
 # ---------------------------------------------------------------------------
 [model]
-mechanism               = "seq"      # dist | seq | rand
+mechanism               = "rand"      # dist | seq | rand
 scale_mode              = "none"     # none | minmax | zscore
-length_scale            = 100.0
+length_scale            = 25.0
 weight_scheme           = "uniform"  # uniform | inverse_variance | time_weighted
 receptors               = []
 receptor_kinases        = []
@@ -36,12 +36,12 @@ include_tfs_as_proteins = false
 # solver = "hybrid" → run_hybrid_fit (Phase 0 LHS + Phase 1 evosax + Phase 2 LM + QDax)
 # ---------------------------------------------------------------------------
 [optimisation]
-n_starts   = 1
-max_steps  = 300          # LM iteration cap when solver = "lm"
-solver     = "hybrid"      # lm | hybrid
+n_starts   = 5
+max_steps  = 500          # LM iteration cap when solver = "lm"
+solver     = "lm"      # lm | hybrid
 verbose    = false
 loss_type  = "mse"
-lambda_net = 0.001
+lambda_net = 0.0
 reg_lambda = 0.0001
 rtol       = 1e-8          # Optimistix convergence rtol
 atol       = 1e-8          # Optimistix convergence atol
@@ -84,7 +84,7 @@ es_top_k         = 5      # number of LM seeds drawn from final evosax populatio
 
 # ── Phase 2: LM polish ─────────────────────────────────────────────────────
 # These override [optimisation] max_steps / rtol / atol for the hybrid path.
-lm_max_steps = 300
+lm_max_steps = 500
 lm_rtol      = 1e-8
 lm_atol      = 1e-8
 
@@ -146,6 +146,6 @@ rna_relax = 0.02
 # ---------------------------------------------------------------------------
 [analysis]
 tune            = false
-run_steadystate = false
-run_knockouts   = false
-run_sensitivity = false
+run_steadystate = true
+run_knockouts   = true
+run_sensitivity = true
