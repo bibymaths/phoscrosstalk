@@ -270,6 +270,9 @@ def make_loss_fn(
     )
 
     if has_mrna:
+        # All of t_mrna, rna_data_scaled, rna_model_prot_idx are guaranteed non-None
+        # and non-empty here by the has_mrna gate above.
+        assert t_mrna is not None  # type checker hint
         rna_j = jnp.asarray(rna_data_scaled, dtype=jnp.float32)
         mrna_idx_j = jnp.asarray(mrna_time_idx, dtype=jnp.int32)
         rna_prot_idx_j = jnp.asarray(rna_model_prot_idx, dtype=jnp.int32)
