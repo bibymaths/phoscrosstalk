@@ -218,8 +218,8 @@ def make_loss_fn(
             r0 = r_data.copy()
         else:
             r0 = r_data[:, 0].copy()
-        r0 = np.nan_to_num(r0, nan=1.0, posinf=10.0, neginf=0.0)
-        x0[:K] = np.clip(r0, 0.0, 20.0)
+        r0 = np.nan_to_num(r0, nan=1.0, posinf=5.0, neginf=0.0)
+        x0[:K] = np.clip(r0, 0.0, 10.0)
     else:
         x0[:K] = 1.0  # default fold-change = 1.0
     # A initial condition

@@ -145,8 +145,8 @@ def simulate_ode(
             r0 = r_data.copy()
         else:
             r0 = r_data[:, 0].copy()
-        r0 = np.nan_to_num(r0, nan=1.0, posinf=10.0, neginf=0.0)
-        r0 = np.clip(r0, 0.0, 20.0)
+        r0 = np.nan_to_num(r0, nan=1.0, posinf=5.0, neginf=0.0)
+        r0 = np.clip(r0, 0.0, 10.0)
     else:
         r0 = np.ones(K, dtype=np.float64)
     x0[:K] = r0
