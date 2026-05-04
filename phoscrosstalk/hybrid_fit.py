@@ -280,15 +280,30 @@ def run_evosax(
 
     mean_init = jnp.full(n_var, 0.5, dtype=jnp.float32)  # centre of [0,1] space
 
-    # Strategy params can be an immutable object with .replace (newer evosax)
-    # or a namedtuple with ._replace (older evosax). Fall back to default as-is.
+    # Start from default params; try to override sigma_init if the field exists.
     es_params = strategy.default_params
-    if hasattr(es_params, "replace"):
-        es_params = es_params.replace(sigma_init=sigma_init)
-    elif hasattr(es_params, "_replace"):
-        es_params = es_params._replace(sigma_init=sigma_init)
-    else:
-        logger.warning(f"Strategy params type {type(es_params)} does not support sigma_init override; using default sigma_init={es_params.sigma_init}")
+    if sigma_init is not None:
+        if hasattr(es_params, "replace"):
+            try:
+                es_params = es_params.replace(sigma_init=sigma_init)
+            except TypeError:
+                logger.warning(
+                    f"evosax Params {type(es_params)} has no field 'sigma_init'; "
+                    "using default strategy.default_params."
+                )
+        elif hasattr(es_params, "_replace"):
+            try:
+                es_params = es_params._replace(sigma_init=sigma_init)
+            except TypeError:
+                logger.warning(
+                    f"evosax Params {type(es_params)} has no field 'sigma_init'; "
+                    "using default strategy.default_params."
+                )
+        else:
+            logger.warning(
+                f"evosax Params type {type(es_params)} does not support replace/_replace; "
+                "using default strategy.default_params."
+            )
 
     key = jax.random.PRNGKey(seed)
     key, init_key = jax.random.split(key)
