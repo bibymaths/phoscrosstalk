@@ -90,7 +90,7 @@ lm_atol      = 1e-8
 
 # ── General ────────────────────────────────────────────────────────────────
 seed    = 0      # master RNG seed (covers LHS, evosax, QDax init)
-verbose = false  # per-generation / per-seed progress logging
+verbose = true  # per-generation / per-seed progress logging
 
 # ---------------------------------------------------------------------------
 # [qdax]  – MAP-Elites behavioural repertoire
