@@ -34,7 +34,7 @@ import numpy as np
 
 from phoscrosstalk.fretchet import frechet_distance
 from phoscrosstalk.logger import get_logger
-from phoscrosstalk.optimization import make_loss_fn, run_single_optimisation
+from phoscrosstalk.optimization import make_loss_fn, make_residuals_fn, run_single_optimisation
 
 logger = get_logger()
 
@@ -102,6 +102,11 @@ def run_multi_start_optimization(problem, args, P_scaled):
     w_reg = getattr(args, "loss_weight_reg", 1.0)
     w_mrna = getattr(problem, "loss_weight_rna", getattr(args, "loss_weight_mrna", 1.0))
 
+    # Optimistix solver settings (optimisation-level, not ODE solver)
+    opt_rtol = getattr(args, "opt_rtol", getattr(args, "rtol", 1e-8))
+    opt_atol = getattr(args, "opt_atol", getattr(args, "atol", 1e-8))
+    opt_verbose = getattr(args, "opt_verbose", False)
+
     # Warn if evolutionary algorithm flags were passed
     algo = getattr(args, "algorithm", None)
     if algo is not None:
@@ -113,8 +118,10 @@ def run_multi_start_optimization(problem, args, P_scaled):
     xl = problem.xl
     xu = problem.xu
 
-    # Build the differentiable loss function (shared across all starts)
-    loss_fn = make_loss_fn(
+    # Build the residual-vector function for LevenbergMarquardt + optx.least_squares.
+    # This is the primary fitting path following the canonical Diffrax+Optimistix approach.
+    # We use make_residuals_fn (not make_loss_fn) so the optimizer sees a residual vector.
+    residuals_fn = make_residuals_fn(
         t=problem.t,
         P_data=problem.P_data,
         A_scaled=problem.A_scaled,
@@ -148,17 +155,21 @@ def run_multi_start_optimization(problem, args, P_scaled):
         rna_obs_idx=getattr(problem, "rna_obs_idx", None),
         rna_fit_genes=getattr(problem, "rna_fit_genes", None),
         R_data0=getattr(problem, "R_data0", None),
-        W_data_rna=getattr(problem, "W_data_mrna", None),
+        W_data_mrna=getattr(problem, "W_data_mrna", None),
         rna_relax=getattr(problem, "rna_relax", 0.1),
     )
 
     starts = _generate_starts(n_starts, xl, xu)
 
     logger.header("[*] Starting Multi-Start Optimistix Optimisation")
+    logger.info(f"    Optimizer: Optimistix LevenbergMarquardt(verbose={opt_verbose})")
+    logger.info(f"    ODE solver: Diffrax Tsit5 + PIDController + DirectAdjoint")
     logger.info(f"    {len(starts)} starting points, max_steps={max_steps} each")
     logger.info(
         f"    weights: phospho={w_phospho}, abundance={w_abundance}, reg={w_reg}, mrna={w_mrna}"
     )
+    logger.info(f"    Optimistix rtol={opt_rtol}, atol={opt_atol}")
+    logger.info(f"    ODE rtol={getattr(args, 'rtol', 1e-6)}, atol={getattr(args, 'atol', 1e-9)}, max_steps={getattr(args, 'solver_max_steps', 16384)}")
 
     all_X, all_F, all_total = [], [], []
 
@@ -167,7 +178,12 @@ def run_multi_start_optimization(problem, args, P_scaled):
 
         try:
             theta_opt, total_loss, f1, f2, f3, f4 = run_single_optimisation(
-                loss_fn, theta0, max_steps=max_steps
+                residuals_fn,
+                theta0,
+                max_steps=max_steps,
+                rtol=opt_rtol,
+                atol=opt_atol,
+                verbose=opt_verbose,
             )
             all_X.append(theta_opt)
             all_F.append([f1, f2, f3, f4])

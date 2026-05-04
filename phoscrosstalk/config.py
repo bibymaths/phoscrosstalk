@@ -87,6 +87,10 @@ _DEFAULTS = {
     "optimisation": {
         "n_starts": 3,
         "max_steps": 500,
+        "solver": "levenberg_marquardt",
+        "verbose": False,
+        "rtol": 1e-8,
+        "atol": 1e-8,
         "loss_type": "mse",
         "lambda_net": 0.0001,
         "reg_lambda": 0.0001,
