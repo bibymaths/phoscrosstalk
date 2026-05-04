@@ -613,6 +613,7 @@ def main():
         k_act_fn=k_act_fn,
         s_prod_fn=s_prod_fn,
         t_rna=t_rna if rna_matrix is not None else None,
+        rna_relax=cfg.derived_rates.rna_relax,
     )
 
     # Build RNA-to-model-protein mapping (when RNA data is available)

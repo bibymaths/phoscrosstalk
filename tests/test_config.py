@@ -104,7 +104,6 @@ def test_validate_config_missing_required_paths(tmp_path):
     cfg_path.write_text("")
     cfg = load_config(str(cfg_path))
 
-    import pytest
 
     with pytest.raises(SystemExit) as exc_info:
         validate_config(cfg, str(cfg_path))
@@ -120,7 +119,6 @@ def test_validate_config_invalid_mechanism(tmp_path):
     cfg = load_config(str(cfg_path))
     # required paths also missing so it will fail, but mechanism error must appear
 
-    import pytest
 
     with pytest.raises(SystemExit) as exc_info:
         validate_config(cfg, str(cfg_path))
@@ -179,7 +177,6 @@ include_tfs_as_proteins = true
     cfg_path.write_text(toml_content)
     cfg = load_config(str(cfg_path))
 
-    import pytest
 
     with pytest.raises(SystemExit) as exc_info:
         validate_config(cfg, str(cfg_path))
@@ -198,6 +195,8 @@ def test_validate_config_loads_new_paths_section(tmp_path):
     assert cfg.paths.kea_ks_table == ""
     assert cfg.paths.unified_graph_pkl == ""
     assert cfg.paths.crosstalk_tsv == ""
+    # rna_relax is in derived_rates
+    assert cfg.derived_rates.rna_relax == pytest.approx(0.1)
 
 
 def test_validate_config_loads_analysis_section(tmp_path):
@@ -235,7 +234,6 @@ n_starts = 0
     cfg_path.write_text(toml_content)
     cfg = load_config(str(cfg_path))
 
-    import pytest
 
     with pytest.raises(SystemExit) as exc_info:
         validate_config(cfg, str(cfg_path))

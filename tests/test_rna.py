@@ -396,9 +396,6 @@ def test_network_problem_loss_includes_rna():
 
 def test_main_cli_with_rna_args(tmp_path, monkeypatch):
     """Config file with rna_data/tf_net must be accepted without argparse error."""
-    import toml  # may not be available; try tomllib/tomli path
-    import importlib
-
     # Build a minimal config that sets rna_data and tf_net paths
     # (files need not exist; the test only checks that the CLI reads TOML
     # and fails with an informative error rather than an argparse error)

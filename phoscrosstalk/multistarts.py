@@ -143,6 +143,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
         rna_data_scaled=getattr(problem, "rna_obs_matched", None),
         rna_model_prot_idx=getattr(problem, "rna_model_prot_idx", None),
         R_data0=getattr(problem, "R_data0", None),
+        rna_relax=getattr(problem, "rna_relax", 0.1),
     )
 
     starts = _generate_starts(n_starts, xl, xu)

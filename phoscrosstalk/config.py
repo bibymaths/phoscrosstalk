@@ -108,6 +108,7 @@ _DEFAULTS = {
     },
     "derived_rates": {
         "s_prod_fn": "softplus",
+        "rna_relax": 0.1,
     },
     "analysis": {
         "tune": False,
