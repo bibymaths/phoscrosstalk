@@ -1,43 +1,92 @@
-[paths]
-data_dir   = "data_timeseries"
-output_dir = "results"
+# PhosCrosstalk configuration file
+# All runtime options live here; the CLI only accepts --config <path>.
 
+# ---------------------------------------------------------------------------
+# [paths]  – input files and output directory
+# Required: data, ptm_intra, ptm_inter
+# Optional: set to "" (empty string) or omit the key entirely to disable.
+# ---------------------------------------------------------------------------
+[paths]
+data            = "data_timeseries/input1.csv"
+ptm_intra       = "data_curated/processed/ptm_intra.db"
+ptm_inter       = "data_curated/processed/ptm_inter.db"
+output_dir      = "results"
+# crosstalk_tsv   = ""          # optional PTM-pair filter TSV
+# rna_data        = ""          # optional mRNA time-series CSV
+# tf_net          = ""          # optional TF→mRNA network CSV
+# kinase_tsv      = "data_interactions/kinase_sites.tsv"   # kinase-site prior
+# kea_ks_table    = ""          # alternative KEA/KS table
+# unified_graph_pkl = ""        # kinase-kinase graph for Laplacian regularizer
+
+# ---------------------------------------------------------------------------
+# [model]  – ODE model settings
+# ---------------------------------------------------------------------------
 [model]
-mechanism    = "dist"
-scale_mode   = "none"
-length_scale = 50.0
-weight_scheme = "uniform"
-# Set to true to include TF source/target proteins even when they lack
-# kinase-site priors. Requires --rna-data and --tf-net. Pass full (unfiltered)
-# time-series files when this option is enabled.
+mechanism               = "dist"     # dist | seq | rand
+scale_mode              = "none"
+length_scale            = 50.0
+weight_scheme           = "uniform"
+receptors               = []         # proteins receiving external stimulus u(t)
+receptor_kinases        = []         # kinases receiving external stimulus u(t)
+# Set to true to include TF source/target proteins even without kinase-site priors.
+# Requires rna_data and tf_net.  Pass full (unfiltered) time-series files.
 include_tfs_as_proteins = false
 
+# ---------------------------------------------------------------------------
+# [optimisation]  – multi-start gradient fitting
+# ---------------------------------------------------------------------------
 [optimisation]
 n_starts  = 3
 max_steps = 500
-loss_type = "mse"
+loss_type  = "mse"
 lambda_net = 0.0001
 reg_lambda = 0.0001
 
+# ---------------------------------------------------------------------------
+# [loss_weights]  – relative weight of each objective term
+# ---------------------------------------------------------------------------
 [loss_weights]
 phospho   = 1.0
 abundance = 1.0
 mrna      = 1.0
 reg       = 1.0
 
+# ---------------------------------------------------------------------------
+# [bounds]  – optional per-parameter bound overrides (leave empty for defaults)
+# ---------------------------------------------------------------------------
 [bounds]
-# Leave empty to use internal defaults; override per-parameter as needed
 # lower = [...]
 # upper = [...]
 
+# ---------------------------------------------------------------------------
+# [solver]  – Diffrax ODE solver tolerances
+# ---------------------------------------------------------------------------
 [solver]
-rtol = 1e-6
-atol = 1e-9
+rtol      = 1e-6
+atol      = 1e-9
 max_steps = 16384
 
+# ---------------------------------------------------------------------------
+# [time]  – time-point configuration
+# ---------------------------------------------------------------------------
 [time]
 mrna_time_points = [4, 8, 15, 30, 60, 120, 240, 480, 960]
-interpolation    = "piecewise_constant"
+interpolation    = "piecewise_constant"   # piecewise_constant | linear
 
+# ---------------------------------------------------------------------------
+# [derived_rates]  – options for data-derived rate functions
+# ---------------------------------------------------------------------------
 [derived_rates]
-s_prod_fn = "softplus"
+s_prod_fn = "softplus"   # softplus | linear
+# mRNA relaxation rate (min^-1).  Controls how fast R(t) tracks k_act(t).
+# At steady state R_ss = k_act.  Smaller values → slower mRNA turnover.
+rna_relax = 0.1
+
+# ---------------------------------------------------------------------------
+# [analysis]  – downstream analyses to run after fitting
+# ---------------------------------------------------------------------------
+[analysis]
+tune            = false   # run hyperparameter scan before optimisation
+run_steadystate = false   # run post-optimisation steady-state simulation
+run_knockouts   = false   # run in-silico kinase knockout screening
+run_sensitivity = false   # run global Sobol sensitivity analysis

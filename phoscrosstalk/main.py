@@ -6,13 +6,14 @@ Entry point for the Global Phospho-Network Model orchestration.
 
 import argparse
 import os
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 
 from phoscrosstalk import analysis, data_loader, hyperparam, knockouts, steadystate
 from phoscrosstalk.analysis import _save_preopt_snapshot_txt_csv
-from phoscrosstalk.config import ModelDims, load_config
+from phoscrosstalk.config import ModelDims, _opt, load_config, validate_config
 from phoscrosstalk.derived_rates import make_k_act_fn, make_s_prod_fn
 from phoscrosstalk.equations import generate_equations_report
 from phoscrosstalk.logger import get_logger
@@ -107,361 +108,188 @@ def _save_model_entities_table(
     )
 
 
+def _print_config_summary(cfg, config_path: str) -> None:
+    """Print a compact, human-readable summary of validated configuration."""
+    p = cfg.paths
+    m = cfg.model
+    o = cfg.optimisation
+    s = cfg.solver
+    lw = cfg.loss_weights
+    an = getattr(cfg, "analysis", None)
+
+    def _opt(v):
+        v = (v or "").strip()
+        return v if v else "(not set)"
+
+    lines = [
+        "",
+        "╔══════════════════════════════════════════════════════╗",
+        f"  PhosCrosstalk  –  config: {config_path}",
+        "╚══════════════════════════════════════════════════════╝",
+        "",
+        "  [paths]",
+        f"    data            = {p.data}",
+        f"    ptm_intra       = {p.ptm_intra}",
+        f"    ptm_inter       = {p.ptm_inter}",
+        f"    output_dir      = {p.output_dir}",
+        f"    rna_data        = {_opt(p.rna_data)}",
+        f"    tf_net          = {_opt(p.tf_net)}",
+        f"    kinase_tsv      = {_opt(p.kinase_tsv)}",
+        f"    kea_ks_table    = {_opt(p.kea_ks_table)}",
+        f"    unified_graph   = {_opt(p.unified_graph_pkl)}",
+        "",
+        "  [model]",
+        f"    mechanism               = {m.mechanism}",
+        f"    scale_mode              = {m.scale_mode}",
+        f"    length_scale            = {m.length_scale}",
+        f"    weight_scheme           = {m.weight_scheme}",
+        f"    include_tfs_as_proteins = {m.include_tfs_as_proteins}",
+        f"    receptors               = {list(m.receptors)}",
+        f"    receptor_kinases        = {list(m.receptor_kinases)}",
+        "",
+        "  [optimisation]",
+        f"    n_starts  = {o.n_starts}",
+        f"    max_steps = {o.max_steps}",
+        f"    lambda_net = {o.lambda_net}",
+        f"    reg_lambda = {o.reg_lambda}",
+        "",
+        "  [loss_weights]",
+        f"    phospho={lw.phospho}  abundance={lw.abundance}  "
+        f"mrna={lw.mrna}  reg={lw.reg}",
+        "",
+        "  [solver]",
+        f"    rtol={s.rtol}  atol={s.atol}  max_steps={s.max_steps}",
+        "",
+    ]
+    if an is not None:
+        lines += [
+            "  [analysis]",
+            f"    tune={an.tune}  steadystate={an.run_steadystate}  "
+            f"knockouts={an.run_knockouts}  sensitivity={an.run_sensitivity}",
+            "",
+        ]
+    print("\n".join(lines), flush=True)
+
+
 def main():
     """
-    Command-line interface for running the global phospho-network model fitting
-    pipeline. This wrapper exposes all major configuration options for data
-    loading, model construction, weighting, and optimization.
+    Entry point for PhosCrosstalk.
+
+    The CLI accepts only ``--config <path>`` (plus ``--help`` and ``--version``).
+    All runtime options are read from the TOML configuration file.
     """
 
     parser = argparse.ArgumentParser(
         prog="phoscrosstalk",
         description=(
             "Fit a global phospho-network ODE model using JAX/Diffrax ODE solving "
-            "and Optimistix gradient-based optimisation. Supports multiple "
-            "phosphorylation mechanisms, flexible weighting schemes, kinase–substrate "
-            "network priors, and optional PTM crosstalk filtering."
+            "and Optimistix gradient-based optimisation. "
+            "All options are configured via config.toml; "
+            "see docs/running.md for details."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    # ------------------------------------------------------------------
-    # CONFIGURATION FILE
-    # ------------------------------------------------------------------
     parser.add_argument(
         "--config",
         default="./config.toml",
-        help="Path to config.toml file with tuneable parameters.",
+        help="Path to config.toml.  All runtime settings live here.",
     )
-
-    # ------------------------------------------------------------------
-    # INPUT DATA
-    # ------------------------------------------------------------------
-    parser.add_argument(
-        "--data",
-        required=True,
-        help=(
-            "CSV file containing protein/phosphosite time-series data. "
-            "Expected columns: Protein (or GeneID), Psite (or Residue), "
-            "and value columns (x1..xN or v1..vN). "
-            "Rows without a Psite/Residue value are treated as protein abundance rows. "
-            "Example: data_timeseries/filtered_input1.csv"
-        ),
-    )
-    parser.add_argument(
-        "--ptm-intra",
-        required=True,
-        help=(
-            "SQLite database containing intra-protein PTM crosstalk pairs "
-            "(table: intra_pairs). "
-            "Example: data_curated/processed/ptm_intra.db"
-        ),
-    )
-    parser.add_argument(
-        "--ptm-inter",
-        required=True,
-        help=(
-            "SQLite database containing inter-protein PTM crosstalk pairs "
-            "(table: inter_pairs). "
-            "Example: data_curated/processed/ptm_inter.db"
-        ),
-    )
-    parser.add_argument(
-        "--crosstalk-tsv",
-        help=(
-            "Optional TSV listing specific PTM pairs to keep (crosstalk filtering). "
-            "Rows not in this list are removed from the model. "
-            "Columns: Protein, Site1, Site2."
-        ),
-    )
-    parser.add_argument(
-        "--rna-data",
-        default=None,
-        dest="rna_data",
-        help=(
-            "CSV file with mRNA time-series data. "
-            "Expected columns: GeneID, x1, x2, ..., x9 "
-            "(mapped to time points [4, 8, 15, 30, 60, 120, 240, 480, 960] min). "
-            "When provided, mRNA state R(t) is included in the ODE system and "
-            "an mRNA loss term (f4) is added to the objective. "
-            "Example: data_timeseries/filtered_input3.csv"
-        ),
-    )
-    parser.add_argument(
-        "--tf-net",
-        default=None,
-        dest="tf_net",
-        help=(
-            "CSV file describing the TF-to-mRNA regulatory network. "
-            "Required columns (case-insensitive): Source, Target, Weight. "
-            "Source = TF gene symbol; Target = regulated gene symbol. "
-            "Used to construct k_act(t) as a derived rate from mRNA signals. "
-            "Example: data_interactions/tf_mrna.csv"
-        ),
-    )
-
-    # ------------------------------------------------------------------
-    # KINASE–SUBSTRATE MAPPING
-    # ------------------------------------------------------------------
-    parser.add_argument(
-        "--kinase-tsv",
-        help=(
-            "TSV file mapping phosphosites to kinases (Kinase-Substrate prior). "
-            "Required columns: Site, Kinase; optional: weight. "
-            "At least one of --kinase-tsv or --kea-ks-table must be provided; "
-            "if neither is given, the model falls back to an identity mapping. "
-            "Example: data_interactions/kinase_sites.tsv"
-        ),
-    )
-    parser.add_argument(
-        "--kea-ks-table",
-        help=(
-            "Alternative KEA/KS kinase-substrate mapping table in TSV format. "
-            "Required columns: substrate_site, kinase, pmid. "
-            "Used when --kinase-tsv is not available. "
-            "Example: data_curated/processed/ks_psite_table.tsv"
-        ),
-    )
-    parser.add_argument(
-        "--unified-graph-pkl",
-        help=(
-            "Pickled NetworkX graph of kinase-kinase regulatory relationships. "
-            "Used to build the Laplacian regularizer L_alpha. "
-            "Optional; if absent, L_alpha is set to zero. "
-            "Example: data_curated/processed/unified_kinase_graph.gpickle"
-        ),
-    )
-
-    # ------------------------------------------------------------------
-    # EXTERNAL STIMULI SPECIFIC RECEPTORS & KINASES
-    # ------------------------------------------------------------------
-    parser.add_argument(
-        "--receptors",
-        nargs="*",
-        default=[],
-        help="List of proteins that act as receptors (receive external u(t)).",
-    )
-    parser.add_argument(
-        "--receptor-kinases",
-        nargs="*",
-        default=[],
-        help="List of kinases that act as receptors.",
-    )
-
-    # ------------------------------------------------------------------
-    # OUTPUT DIRECTORY
-    # ------------------------------------------------------------------
-    parser.add_argument(
-        "--outdir",
-        default=None,
-        help=(
-            "Directory where all results, plots, and output files are saved. "
-            "Overrides config.toml [paths] output_dir. "
-            "Created automatically if it does not exist."
-        ),
-    )
-
-    # ------------------------------------------------------------------
-    # MODEL CONFIGURATION
-    # ------------------------------------------------------------------
-    parser.add_argument(
-        "--mechanism",
-        choices=["dist", "seq", "rand"],
-        default=None,
-        help=(
-            "Phosphorylation mechanism for the kinetic model. "
-            "dist = distributive (default), seq = sequential, "
-            "rand = random/cooperative. "
-            "Overrides config.toml [model] mechanism."
-        ),
-    )
-
-    # ------------------------------------------------------------------
-    # OPTIMIZATION SETTINGS (override TOML)
-    # ------------------------------------------------------------------
-    parser.add_argument(
-        "--n-starts",
-        type=int,
-        default=None,
-        help=(
-            "Number of multi-start optimization initialisations. "
-            "The run with the lowest total loss is selected as the best result. "
-            "Use --n-starts 1 --max-steps 50 for a quick smoke test. "
-            "Overrides config.toml [optimisation] n_starts."
-        ),
-    )
-    parser.add_argument(
-        "--max-steps",
-        type=int,
-        default=None,
-        help=(
-            "Maximum number of gradient-based optimization steps per start. "
-            "Larger values improve convergence but increase runtime. "
-            "Overrides config.toml [optimisation] max_steps."
-        ),
-    )
-
-    # ------------------------------------------------------------------
-    # MODES
-    # ------------------------------------------------------------------
-    parser.add_argument(
-        "--tune",
-        action="store_true",
-        help="Run hyperparameter scanning before optimization.",
-    )
-    parser.add_argument(
-        "--run-steadystate",
-        action="store_true",
-        help=(
-            "Run post-optimization steady-state simulation. "
-            "Results are saved to <outdir>/steadystate/."
-        ),
-    )
-    parser.add_argument(
-        "--run-knockouts",
-        action="store_true",
-        help=(
-            "Run systematic in-silico kinase knockout screening. "
-            "Each kinase is zeroed out and the dynamics compared to baseline. "
-            "Results are saved to <outdir>/knockouts/."
-        ),
-    )
-    parser.add_argument(
-        "--run-sensitivity",
-        action="store_true",
-        help=(
-            "Run global sensitivity analysis (Sobol indices) over the parameter space. "
-            "Results are saved to <outdir>/sensitivity/."
-        ),
-    )
-    parser.add_argument(
-        "--include-tfs-as-proteins",
-        action="store_true",
-        default=False,
-        dest="include_tfs_as_proteins",
-        help=(
-            "Extended mode: include TF source and target proteins as modeled entities "
-            "even when they lack kinase-site priors or upstream TF regulators in the "
-            "TF→mRNA network. "
-            "Requires --rna-data and --tf-net to be provided. "
-            "Pass full (unfiltered) time-series files when this flag is set; "
-            "filtered files may exclude TF proteins before modeling. "
-            "Can also be set via config.toml [model] include_tfs_as_proteins = true. "
-            "In this mode, proteins without TF upstream edges use their own RNA "
-            "trajectory as activation signal, or constant 1.0 if RNA is absent."
-        ),
-    )
-
-    # ------------------------------------------------------------------
-    # META OPTIONS
-    # ------------------------------------------------------------------
     parser.add_argument(
         "--version",
         action="version",
         version="Phospho-Network Model Fitting 2.0",
     )
 
-    # ------------------------------------------------------------------
-    # PARSE ARGUMENTS & LOAD CONFIG
-    # ------------------------------------------------------------------
     args = parser.parse_args()
+    config_path = args.config
 
     # ------------------------------------------------------------------
-    # DEFENSIVE VALIDATION
+    # LOAD AND VALIDATE CONFIG
     # ------------------------------------------------------------------
-    # Validate input file existence before doing any heavy computation.
-    _missing_files = []
-    for _flag, _path in [
-        ("--data", args.data),
-        ("--ptm-intra", args.ptm_intra),
-        ("--ptm-inter", args.ptm_inter),
-        ("--crosstalk-tsv", args.crosstalk_tsv),
-        ("--rna-data", args.rna_data),
-        ("--tf-net", args.tf_net),
-        ("--kinase-tsv", args.kinase_tsv),
-        ("--kea-ks-table", args.kea_ks_table),
-        ("--unified-graph-pkl", args.unified_graph_pkl),
-    ]:
-        if _path is not None and not os.path.exists(_path):
-            _missing_files.append(f"  {_flag}: {_path}")
-    if _missing_files:
+    if not os.path.exists(config_path):
         print(
-            "ERROR: The following input files do not exist:\n"
-            + "\n".join(_missing_files),
+            f"ERROR: Config file not found: {config_path!r}\n"
+            "Create a config.toml file or pass --config <path>.\n"
+            "See docs/running.md for a complete example.",
             flush=True,
         )
         raise SystemExit(1)
 
-    cfg = load_config(args.config)
+    cfg = load_config(config_path)
+    validate_config(cfg, config_path)
 
-    # Merge CLI overrides into config (CLI wins when explicitly provided)
-    outdir = args.outdir if args.outdir is not None else cfg.paths.output_dir
-    mechanism = args.mechanism if args.mechanism is not None else cfg.model.mechanism
-    n_starts = args.n_starts if args.n_starts is not None else cfg.optimisation.n_starts
-    max_steps = (
-        args.max_steps if args.max_steps is not None else cfg.optimisation.max_steps
+    # ------------------------------------------------------------------
+    # EXTRACT ALL SETTINGS FROM CONFIG
+    # ------------------------------------------------------------------
+    # Paths
+    data_path = cfg.paths.data
+    ptm_intra_path = cfg.paths.ptm_intra
+    ptm_inter_path = cfg.paths.ptm_inter
+    outdir = cfg.paths.output_dir
+    crosstalk_tsv_path = _opt(cfg.paths.crosstalk_tsv)
+    rna_data_path = _opt(cfg.paths.rna_data)
+    tf_net_path = _opt(cfg.paths.tf_net)
+    kinase_tsv_path = _opt(cfg.paths.kinase_tsv)
+    kea_ks_table_path = _opt(cfg.paths.kea_ks_table)
+    unified_graph_pkl_path = _opt(cfg.paths.unified_graph_pkl)
+
+    # Model
+    mechanism = cfg.model.mechanism
+    include_tfs_as_proteins = bool(cfg.model.include_tfs_as_proteins)
+    receptor_names = set(list(cfg.model.receptors))
+    receptor_kin_names = set(list(cfg.model.receptor_kinases))
+
+    # Optimisation / solver / misc – expose on a namespace for run_multi_start_optimization
+    args = SimpleNamespace(
+        data=data_path,
+        ptm_intra=ptm_intra_path,
+        ptm_inter=ptm_inter_path,
+        outdir=outdir,
+        crosstalk_tsv=crosstalk_tsv_path,
+        rna_data=rna_data_path,
+        tf_net=tf_net_path,
+        kinase_tsv=kinase_tsv_path,
+        kea_ks_table=kea_ks_table_path,
+        unified_graph_pkl=unified_graph_pkl_path,
+        mechanism=mechanism,
+        include_tfs_as_proteins=include_tfs_as_proteins,
+        receptors=list(receptor_names),
+        receptor_kinases=list(receptor_kin_names),
+        # optimisation
+        n_starts=cfg.optimisation.n_starts,
+        max_steps=cfg.optimisation.max_steps,
+        lambda_net=cfg.optimisation.lambda_net,
+        reg_lambda=cfg.optimisation.reg_lambda,
+        # model tuning
+        scale_mode=cfg.model.scale_mode,
+        length_scale=cfg.model.length_scale,
+        weight_scheme=cfg.model.weight_scheme,
+        # loss weights (read by run_multi_start_optimization via getattr)
+        loss_weight_phospho=cfg.loss_weights.phospho,
+        loss_weight_abundance=cfg.loss_weights.abundance,
+        loss_weight_reg=cfg.loss_weights.reg,
+        loss_weight_mrna=cfg.loss_weights.mrna,
+        # solver
+        rtol=cfg.solver.rtol,
+        atol=cfg.solver.atol,
+        # analysis flags
+        tune=getattr(cfg.analysis, "tune", False),
+        run_steadystate=getattr(cfg.analysis, "run_steadystate", False),
+        run_knockouts=getattr(cfg.analysis, "run_knockouts", False),
+        run_sensitivity=getattr(cfg.analysis, "run_sensitivity", False),
     )
-
-    # Merge include_tfs_as_proteins: CLI flag wins over config
-    cfg_flag = getattr(cfg.model, "include_tfs_as_proteins", False)
-    include_tfs_as_proteins = args.include_tfs_as_proteins or bool(cfg_flag)
-    args.include_tfs_as_proteins = include_tfs_as_proteins
-
-    # Expose merged values back on args namespace for compatibility with
-    # run_multi_start_optimization which reads from args
-    args.outdir = outdir
-    args.mechanism = mechanism
-    args.n_starts = n_starts
-    args.max_steps = max_steps
-
-    # Validate numeric settings.
-    if args.n_starts < 1:
-        print(f"ERROR: --n-starts must be >= 1; got {args.n_starts}", flush=True)
-        raise SystemExit(1)
-    if args.max_steps < 1:
-        print(f"ERROR: --max-steps must be >= 1; got {args.max_steps}", flush=True)
-        raise SystemExit(1)
-
-    # Validate extended-mode requirements.
-    if include_tfs_as_proteins:
-        if not args.rna_data:
-            print(
-                "ERROR: --include-tfs-as-proteins requires --rna-data to be provided.",
-                flush=True,
-            )
-            raise SystemExit(1)
-        if not args.tf_net:
-            print(
-                "ERROR: --include-tfs-as-proteins requires --tf-net to be provided.",
-                flush=True,
-            )
-            raise SystemExit(1)
-        # Warn if filenames suggest filtered inputs
-        for _path in [args.data, args.rna_data]:
-            if _path and "filtered" in os.path.basename(_path).lower():
-                logger.warning(
-                    "[!] --include-tfs-as-proteins expects full time-series files. "
-                    f"You passed a file containing 'filtered' in the name ({_path}). "
-                    "This may remove TF proteins before modeling."
-                )
-
-    # Pull numeric settings from config
-    args.length_scale = cfg.model.length_scale
-    args.scale_mode = cfg.model.scale_mode
-    args.weight_scheme = cfg.model.weight_scheme
-    args.lambda_net = cfg.optimisation.lambda_net
-    args.reg_lambda = cfg.optimisation.reg_lambda
-    args.loss_weight_phospho = cfg.loss_weights.phospho
-    args.loss_weight_abundance = cfg.loss_weights.abundance
-    args.loss_weight_reg = cfg.loss_weights.reg
-    args.rtol = cfg.solver.rtol
-    args.atol = cfg.solver.atol
 
     interp_mode = cfg.time.interpolation
     s_prod_fn_type = cfg.derived_rates.s_prod_fn
 
-    os.makedirs(outdir, exist_ok=True)
+    # ------------------------------------------------------------------
+    # PRINT CONFIG SUMMARY
+    # ------------------------------------------------------------------
+    _print_config_summary(cfg, config_path)
 
+    # Create output directory
+    os.makedirs(outdir, exist_ok=True)
     logger.header(f"[*] Output directory: {outdir}")
 
     # 1. Load primary phospho data
@@ -492,7 +320,7 @@ def main():
             )
     elif args.rna_data:
         logger.warning(
-            "[!] --rna-data provided but --tf-net is absent; "
+            "[!] rna_data is set but tf_net is absent; "
             "k_act will default to constant 1.0."
         )
 
@@ -589,9 +417,7 @@ def main():
     prot_map_all = {p: i for i, p in enumerate(proteins)}
     kin_to_prot_idx = np.array([prot_map_all.get(k, -1) for k in kinases], dtype=int)
 
-    receptor_names = set(args.receptors)
-    receptor_kin_names = set(args.receptor_kinases)
-
+    # receptor_names / receptor_kin_names come from cfg.model (set above in args)
     receptor_mask_prot = np.array(
         [1 if p in receptor_names else 0 for p in proteins], dtype=int
     )
@@ -601,7 +427,8 @@ def main():
 
     if len(receptor_names) == 0:
         logger.warning(
-            "[!] No Receptors defined. External stimulus u(t) will be ignored."
+            "[!] No receptors defined in [model] receptors. "
+            "External stimulus u(t) will be ignored."
         )
 
     # 7b. Build entity metadata masks (prior support, TF membership, RNA presence)
@@ -636,7 +463,7 @@ def main():
         n_ext = entity_masks["n_included_by_extended"]
         logger.info(
             f"[*] Extended mode: {n_ext} protein(s) included only due to "
-            "--include-tfs-as-proteins."
+            "include_tfs_as_proteins = true."
         )
 
     # Save model_entities.tsv
@@ -754,8 +581,8 @@ def main():
 
     # 10. Optimisation
     logger.info(
-        f"[*] Initialising Optimistix problem ({n_starts} starts, "
-        f"max_steps={max_steps})..."
+        f"[*] Initialising Optimistix problem ({args.n_starts} starts, "
+        f"max_steps={args.max_steps})..."
     )
 
     problem = NetworkOptimizationProblem(
@@ -782,6 +609,7 @@ def main():
         k_act_fn=k_act_fn,
         s_prod_fn=s_prod_fn,
         t_rna=t_rna if rna_matrix is not None else None,
+        rna_relax=cfg.derived_rates.rna_relax,
     )
 
     # Build RNA-to-model-protein mapping (when RNA data is available)
@@ -866,6 +694,7 @@ def main():
         k_act_fn=k_act_fn,
         s_prod_fn=s_prod_fn,
         R_data0=R_data0,
+        kinases=kinases,
     )
 
     analysis.plot_fitted_simulation(outdir)

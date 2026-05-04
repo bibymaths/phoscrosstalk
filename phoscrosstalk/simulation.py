@@ -56,6 +56,7 @@ def simulate_ode(
     t_extra=None,
     t_rna=None,
     R_data0=None,
+    rna_relax=0.1,
 ):
     """
     Simulate the phosphoproteomic network dynamics using Diffrax (JAX backend).
@@ -145,8 +146,8 @@ def simulate_ode(
             r0 = r_data.copy()
         else:
             r0 = r_data[:, 0].copy()
-        r0 = np.nan_to_num(r0, nan=1.0, posinf=10.0, neginf=0.0)
-        r0 = np.clip(r0, 0.0, 20.0)
+        r0 = np.nan_to_num(r0, nan=1.0, posinf=5.0, neginf=0.0)
+        r0 = np.clip(r0, 0.0, 10.0)
     else:
         r0 = np.ones(K, dtype=np.float64)
     x0[:K] = r0
@@ -187,7 +188,7 @@ def simulate_ode(
         jnp.asarray(prev_site_idx, dtype=jnp.int32),
     )
 
-    rhs_fn = make_rhs(K, M, N, mechanism, k_act_fn=k_act_fn, s_prod_fn=s_prod_fn)
+    rhs_fn = make_rhs(K, M, N, mechanism, k_act_fn=k_act_fn, s_prod_fn=s_prod_fn, rna_relax=rna_relax)
     term = diffrax.ODETerm(rhs_fn)
     t_eval = jnp.asarray(solver_times, dtype=jnp.float32)
     y0_jax = jnp.asarray(x0, dtype=jnp.float32)
