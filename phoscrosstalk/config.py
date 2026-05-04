@@ -114,6 +114,16 @@ _DEFAULTS = {
         "s_prod_fn": "softplus",
         "rna_relax": 0.1,
     },
+    "bounds": {
+        "rate_min": 1e-5,
+        "rate_max": 10.0,
+        "protein_degradation_max": 0.5,
+        "kinase_rate_max": 3.0,
+        "phosphatase_rate_max": 5.0,
+        "gamma_abs_max": 2.0,
+        "rna_max": 10.0,
+        "abundance_max": 5.0,
+    },
     "analysis": {
         "tune": False,
         "run_steadystate": False,
@@ -385,6 +395,25 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
             f"  [time] interpolation = {interp!r} is invalid. "
             f"Must be one of: {sorted(_VALID_INTERP)}"
         )
+
+    # -------------------------------------------------------------------
+    # Bounds (optional section – all values must be positive when present)
+    # -------------------------------------------------------------------
+    bounds_cfg = getattr(cfg, "bounds", None)
+    if bounds_cfg is not None:
+        _positive_bound_fields = [
+            "rate_min", "rate_max", "protein_degradation_max",
+            "kinase_rate_max", "phosphatase_rate_max",
+            "gamma_abs_max", "rna_max", "abundance_max",
+        ]
+        for field in _positive_bound_fields:
+            val = getattr(bounds_cfg, field, None)
+            if val is not None and (
+                not isinstance(val, (int, float)) or val <= 0
+            ):
+                errors.append(
+                    f"  [bounds] {field} = {val!r} must be a positive number."
+                )
 
     # -------------------------------------------------------------------
     # Report

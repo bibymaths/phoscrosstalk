@@ -172,6 +172,7 @@ def make_rhs(
     k_act_fn=None,
     s_prod_fn=None,
     rna_relax: float = 0.1,
+    abundance_max: float = 5.0,
 ):
     """
     Return a JAX-compatible RHS function for ``diffrax.ODETerm``.
@@ -199,10 +200,11 @@ def make_rhs(
 
     Parameters
     ----------
-    K, M, N      : int   – proteins, kinases, phosphosites
-    mechanism    : str   – ``"dist"`` | ``"seq"`` | ``"rand"``
-    k_act_fn     : callable | None
-    s_prod_fn    : callable | None
+    K, M, N        : int   – proteins, kinases, phosphosites
+    mechanism      : str   – ``"dist"`` | ``"seq"`` | ``"rand"``
+    k_act_fn       : callable | None
+    s_prod_fn      : callable | None
+    abundance_max  : float – upper clip bound for protein abundance A (default 5.0)
 
     Returns
     -------
@@ -263,16 +265,17 @@ def make_rhs(
         ) = decode_theta_jax(theta, K, M, N)
 
         # Derived rates (time-varying, not optimised)
-        k_act = _k_act_fn(t)
-        s_prod = _s_prod_fn(t)
+        # Clip to non-negative: k_act is a rate (activation), s_prod is a synthesis rate
+        k_act = jnp.clip(_k_act_fn(t), 0.0, None)
+        s_prod = jnp.clip(_s_prod_fn(t), 0.0, None)
 
         # --- Unpack + clip state ------------------------------------------------
         # New state layout: y = [R_rna, S, A, Kdyn, p]  (dim = 3*K + M + N)
-        R_rna = jnp.clip(y[:K], 0.0, None)  # mRNA state
-        S = y[K : 2 * K]  # protein signalling
-        A = y[2 * K : 3 * K]  # protein abundance
-        Kdyn = jnp.clip(y[3 * K : 3 * K + M], 0.0, 1.0)  # kinase activity
-        p = jnp.clip(y[3 * K + M :], 0.0, 1.0)  # phosphosite occupancy
+        R_rna = jnp.clip(y[:K], 0.0, None)  # mRNA state [0, ∞)
+        S = jnp.clip(y[K : 2 * K], 0.0, 1.0)  # protein signalling [0, 1]
+        A = jnp.clip(y[2 * K : 3 * K], 0.0, abundance_max)  # protein abundance [0, abundance_max]
+        Kdyn = jnp.clip(y[3 * K : 3 * K + M], 0.0, 1.0)  # kinase activity [0, 1]
+        p = jnp.clip(y[3 * K + M :], 0.0, 1.0)  # phosphosite occupancy [0, 1]
 
         # Smooth external stimulus: sigmoid ramp from 0→1
         u = 1.0 / (1.0 + jnp.exp(-t / 0.1))
@@ -353,6 +356,31 @@ def make_rhs(
         v_off = v_off_r / (1.0 + v_off_r)
 
         dp = v_on - v_off
+
+        # --- Derivative boundary guards ----------------------------------------
+        # Prevent the solver from pushing bounded states out of their valid range.
+        # If a state is at its lower bound and the derivative is negative, zero it.
+        # If a state is at its upper bound and the derivative is positive, zero it.
+
+        # R_rna: lower bound only (unbounded above)
+        dR_rna = jnp.where((R_rna <= 0.0) & (dR_rna < 0.0), 0.0, dR_rna)
+
+        # S: lower and upper bound [0, 1]
+        dS = jnp.where((S <= 0.0) & (dS < 0.0), 0.0, dS)
+        dS = jnp.where((S >= 1.0) & (dS > 0.0), 0.0, dS)
+
+        # A: lower bound only.  The state is clipped to [0, abundance_max] above
+        # for solver stability, but the derivative guard only enforces the lower
+        # bound so that the ODE can still drive A toward abundance_max naturally.
+        dA = jnp.where((A <= 0.0) & (dA < 0.0), 0.0, dA)
+
+        # Kdyn: lower and upper bound [0, 1]
+        dKdyn = jnp.where((Kdyn <= 0.0) & (dKdyn < 0.0), 0.0, dKdyn)
+        dKdyn = jnp.where((Kdyn >= 1.0) & (dKdyn > 0.0), 0.0, dKdyn)
+
+        # p: lower and upper bound [0, 1]
+        dp = jnp.where((p <= 0.0) & (dp < 0.0), 0.0, dp)
+        dp = jnp.where((p >= 1.0) & (dp > 0.0), 0.0, dp)
 
         # New state order: [R_rna, S, A, Kdyn, p]  (3*K + M + N)
         return jnp.concatenate([dR_rna, dS, dA, dKdyn, dp])

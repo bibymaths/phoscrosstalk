@@ -1158,6 +1158,9 @@ def save_mrna_outputs(outdir, gene_ids, t_rna, rna_data_obs, rna_simulated):
             f"vs simulated {rna_simulated.shape}.  Ensure both use matched gene rows."
         )
 
+    # Clip simulated RNA to non-negative before saving (fold-change is always ≥ 0)
+    rna_simulated = np.clip(rna_simulated, 0.0, None)
+
     # --- Global scale diagnostics ---
     obs_finite = rna_data_obs[np.isfinite(rna_data_obs)]
     sim_finite = rna_simulated[np.isfinite(rna_simulated)]
