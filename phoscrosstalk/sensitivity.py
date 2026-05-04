@@ -108,8 +108,8 @@ def _decode_param_matrix(param_values, K, M, N):
     decoded = param_values.copy()
 
     # Parameters that are log-scaled in optimization:
-    # 4*K (Prot) + 2 (Beta) + 3*M (Kin) + N (Site)
-    n_log = 4 * K + 2 + 3 * M + N
+    # 2*K (Prot) + 2 (Beta) + 3*M (Kin) + N (Site)
+    n_log = 2 * K + 2 + 3 * M + N
 
     # 1. Exponentiate rates/constants (Log -> Linear)
     # This removes negative values arising from log(small_number)

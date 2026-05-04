@@ -199,6 +199,20 @@ def _generate_latex_source(
     if mode == "numeric":
         lines.append(r"\textbf{Note:} Parameters are fitted values.")
 
+    # --- STATE LAYOUT ---
+    lines.append(r"\section{ODE State Layout}")
+    lines.append(r"\begin{itemize}")
+    lines.append(
+        r"\item State vector: $\mathbf{y} = [R, S, A, K_{dyn}, p]$ "
+        r"with dimension $3K + M + N$"
+    )
+    lines.append(r"\item $R \in \mathbb{R}^K$: mRNA levels (fitted ODE state)")
+    lines.append(r"\item $S \in \mathbb{R}^K$: protein signalling/activation fraction")
+    lines.append(r"\item $A \in \mathbb{R}^K$: protein abundance")
+    lines.append(r"\item $K_{dyn} \in \mathbb{R}^M$: kinase activity fraction")
+    lines.append(r"\item $p \in \mathbb{R}^N$: phosphosite occupancy fraction")
+    lines.append(r"\end{itemize}")
+
     # --- GLOBAL ---
     lines.append(r"\section{Global Definitions}")
     lines.append(r"\begin{itemize}")
@@ -213,12 +227,35 @@ def _generate_latex_source(
         + bl
         + r"(C_l \mathbf{p})_i)$"
     )
+    lines.append(
+        r"\item $k_{act}(t)$ and $s_{prod}(t)$ are derived from TF/kinase signals "
+        r"(not optimised parameters)."
+    )
     lines.append(r"\end{itemize}")
 
-    # --- PROTEINS ---
-    lines.append(r"\section{Protein Dynamics}")
-    g_Sp = get_p("gamma_S_p", 0, r"\gamma_{Sp}")
+    # --- mRNA STATE ---
+    lines.append(r"\section{mRNA Dynamics (R)}")
+    lines.append(
+        r"The mRNA state $R_g$ is an explicit ODE variable. "
+        r"$k_{act}(t)$ drives transcription; $d_{deg}$ controls decay:"
+    )
+    lines.append(r"\begin{longtable}{" + _table_spec(eq_col) + r"}")
+    for k, prot in enumerate(proteins):
+        clean_prot = _clean_tex(prot)
+        dd = get_p("d_deg", k, rf"d_{{deg}}^{{{clean_prot}}}")
+        eq_R = (
+            rf"\frac{{dR_{{{clean_prot}}}}}{{dt}} = k_{{act}}^{{{clean_prot}}}(t) "
+            rf"- {dd} R_{{{clean_prot}}}"
+        )
+        lines.append(rf"\textbf{{{clean_prot}}} & ${eq_R}$ \\ \hline")
+    lines.append(r"\end{longtable}")
 
+    # --- PROTEINS ---
+    lines.append(r"\section{Protein Dynamics (S, A)}")
+    g_Sp = get_p("gamma_S_p", 0, r"\gamma_{Sp}")
+    g_AS = get_p("gamma_A_S", 0, r"\gamma_{AS}")
+
+    lines.append(r"\subsection{Protein signalling state (S)}")
     lines.append(r"\begin{longtable}{" + _table_spec(eq_col) + r"}")
     for k, prot in enumerate(proteins):
         clean_prot = _clean_tex(prot)
@@ -237,6 +274,24 @@ def _generate_latex_source(
 
         eq_S = rf"\frac{{dS}}{{dt}} = {ka} [{drive_str}] (1 - S) - {kd} S"
         lines.append(rf"\textbf{{{clean_prot}}} & ${eq_S}$ \\ \hline")
+    lines.append(r"\end{longtable}")
+
+    lines.append(r"\subsection{Protein abundance (A)}")
+    lines.append(
+        r"Protein synthesis is gated by $R_g$ (mRNA level): "
+        r"$s_{eff} = s_{prod}(t) \cdot R_g \cdot (1 + \gamma_{AS} S_g)$"
+    )
+    lines.append(r"\begin{longtable}{" + _table_spec(eq_col) + r"}")
+    for k, prot in enumerate(proteins):
+        clean_prot = _clean_tex(prot)
+        sp = get_p("s_prod", k, rf"s_{{prod}}^{{{clean_prot}}}(t)")
+        dd = get_p("d_deg", k, rf"d_{{deg}}^{{{clean_prot}}}")
+        eq_A = (
+            rf"\frac{{dA_{{{clean_prot}}}}}{{dt}} = "
+            rf"\text{{clip}}({sp} \cdot R_{{{clean_prot}}} (1 + {g_AS} S), 0, \infty) "
+            rf"- {dd} A_{{{clean_prot}}}"
+        )
+        lines.append(rf"\textbf{{{clean_prot}}} & ${eq_A}$ \\ \hline")
     lines.append(r"\end{longtable}")
 
     # --- KINASES ---

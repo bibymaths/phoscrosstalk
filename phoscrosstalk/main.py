@@ -513,13 +513,48 @@ def main():
         xu,
         k_act_fn=k_act_fn,
         s_prod_fn=s_prod_fn,
+        t_rna=t_rna if rna_matrix is not None else None,
     )
+
+    # Build RNA-to-model-protein mapping (when RNA data is available)
+    rna_fit_genes = []
+    rna_obs_matched = None
+    rna_model_prot_idx = None
+    R_data0 = None
+
+    if rna_matrix is not None and gene_ids is not None:
+        (
+            rna_fit_genes,
+            rna_obs_matched_raw,
+            rna_model_prot_idx_raw,
+            rna_obs_idx_raw,
+        ) = data_loader.match_rna_to_model_proteins(gene_ids, rna_matrix, proteins)
+
+        if len(rna_fit_genes) > 0:
+            rna_obs_matched = rna_obs_matched_raw
+            rna_model_prot_idx = rna_model_prot_idx_raw
+            # Build full R_rna initial condition vector for all K proteins
+            R_data0 = data_loader.build_full_R0(K, gene_ids, rna_matrix, proteins)
+            problem.rna_obs_matched = rna_obs_matched
+            problem.rna_model_prot_idx = rna_model_prot_idx
+            problem.rna_obs_idx = rna_obs_idx_raw
+            problem.rna_fit_genes = rna_fit_genes
+            problem.R_data0 = R_data0
+            logger.info(
+                f"[*] RNA-to-model mapping: {len(rna_fit_genes)} matched genes/proteins."
+            )
+        else:
+            logger.warning(
+                "[!] No RNA genes matched model proteins. RNA loss disabled."
+            )
 
     res, best_idx, total_losses = run_multi_start_optimization(problem, args, P_scaled)
 
     # 11. Analysis & Saving
     F, X = res.F, res.X
     f1, f2, f3 = F[:, 0], F[:, 1], F[:, 2]
+    # f4 (RNA loss) is in column 3 when present
+    f4 = F[:, 3] if F.shape[1] > 3 else np.zeros(len(f1))
 
     theta_best = X[best_idx]
 
@@ -560,6 +595,9 @@ def main():
         kin_to_prot_idx,
         receptor_mask_prot,
         receptor_mask_kin,
+        k_act_fn=k_act_fn,
+        s_prod_fn=s_prod_fn,
+        R_data0=R_data0,
     )
 
     analysis.plot_fitted_simulation(outdir)
@@ -568,16 +606,20 @@ def main():
     analysis.plot_biological_scores(outdir, X, F)
     analysis.plot_goodness_of_fit(f"{outdir}/fit_timeseries.tsv", outdir)
 
-    # mRNA outputs (only when RNA data was provided)
-    if rna_matrix is not None and gene_ids is not None:
-        analysis.save_mrna_outputs(
-            outdir=outdir,
-            gene_ids=gene_ids,
-            t_rna=t_rna,
-            rna_observed=rna_matrix,
-            rna_simulated=R_sim_rna,
-        )
-        analysis.plot_mrna_fit(outdir)
+    # mRNA outputs (only when RNA data was provided and RNA matched model proteins)
+    if rna_matrix is not None and gene_ids is not None and len(rna_fit_genes) > 0:
+        # Use full simulation to get R_sim_rna at RNA time points
+        sim_full = problem.simulate_full(theta_best)
+        R_sim_all = sim_full.get("R_sim_rna")  # (K, T_rna)
+        if R_sim_all is not None and rna_model_prot_idx is not None:
+            R_sim_matched = R_sim_all[rna_model_prot_idx, :]  # (n_match, T_rna)
+            analysis.save_mrna_outputs(
+                outdir=outdir,
+                gene_ids=rna_fit_genes,
+                t_rna=t_rna,
+                rna_data_obs=rna_obs_matched,
+                rna_simulated=R_sim_matched,
+            )
 
     if args.run_steadystate:
         steadystate.run_steadystate_analysis(

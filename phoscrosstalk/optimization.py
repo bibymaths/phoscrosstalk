@@ -3,10 +3,16 @@ optimization.py
 Optimistix-based objective functions and parameter fitting for the phospho-network.
 
 Replaces the previous pymoo / ElementwiseProblem backend with:
-  - A JAX-differentiable scalarized loss (w1*f1 + w2*f2 + w3*f3)
+  - A JAX-differentiable scalarized loss (w1*f1 + w2*f2 + w3*f3 + w4*f4)
   - Optimistix BFGS minimiser for gradient-based parameter fitting
   - A thin NetworkProblem wrapper that preserves the .simulate() interface
     used by steadystate, knockouts, sensitivity, and app modules.
+
+Loss components:
+  f1 : phosphosite occupancy loss
+  f2 : protein abundance loss
+  f3 : regularisation (L2 + Laplacian)
+  f4 : mRNA / R_rna state loss (zero when no RNA data provided)
 """
 
 import numpy as np
@@ -161,6 +167,8 @@ def make_loss_fn(
     t_mrna=None,
     rna_data_scaled=None,
     w_mrna=1.0,
+    rna_model_prot_idx=None,
+    R_data0=None,
 ):
     """
     Build a JAX-differentiable scalarized loss function for Optimistix.
@@ -169,11 +177,13 @@ def make_loss_fn(
     ``optimistix.minimise``. It:
       1. Runs diffrax.diffeqsolve inside the loss (over a unified time grid).
       2. Computes f1 (phosphosite), f2 (abundance), f3 (regularisation).
-      3. Optionally computes f4 (mRNA) when *t_mrna* and *rna_data_scaled*
+      3. Optionally computes f4 (mRNA/R_rna) when *t_mrna* and *rna_data_scaled*
          are provided.
-      4. Returns the weighted total loss plus (f1, f2, f3) as auxiliary output.
+      4. Returns the weighted total loss plus (f1, f2, f3, f4) as auxiliary output.
 
     Parameters are frozen at creation time; only ``theta`` varies.
+
+    State layout: y = [R_rna, S, A, Kdyn, p]  (dim = 3*K + M + N)
     """
     K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
 
@@ -197,15 +207,28 @@ def make_loss_fn(
     else:
         mrna_time_idx = None
 
-    # Build initial state from data
+    # Build initial state from data (new layout: [R_rna, S, A, Kdyn, p])
     T_prot = P_data.shape[1]
     A0_full = build_full_A0(K, T_prot, A_scaled, prot_idx_for_A)
 
-    x0 = np.zeros(2 * K + M + N, dtype=np.float64)
+    x0 = np.zeros(3 * K + M + N, dtype=np.float64)
+    # R_rna initial condition
+    if R_data0 is not None:
+        r_data = np.asarray(R_data0, dtype=np.float64)
+        if r_data.ndim == 1:
+            r0 = r_data.copy()
+        else:
+            r0 = r_data[:, 0].copy()
+        r0 = np.nan_to_num(r0, nan=1.0, posinf=10.0, neginf=0.0)
+        x0[:K] = np.clip(r0, 0.0, 20.0)
+    else:
+        x0[:K] = 1.0  # default fold-change = 1.0
+    # A initial condition
     a0 = np.nan_to_num(A0_full[:, 0], nan=1.0, posinf=5.0, neginf=0.0)
-    x0[K : 2 * K] = np.clip(a0, 0.0, 5.0)
+    x0[2 * K : 3 * K] = np.clip(a0, 0.0, 5.0)
+    # p initial condition
     p0 = np.nan_to_num(P_data[:, 0], nan=0.0, posinf=1.0, neginf=0.0)
-    x0[2 * K + M :] = np.clip(p0, 0.0, 1.0)
+    x0[3 * K + M :] = np.clip(p0, 0.0, 1.0)
 
     # JAX static arrays
     Cg_j = jnp.asarray(Cg, dtype=jnp.float32)
@@ -237,14 +260,18 @@ def make_loss_fn(
         and rna_data_scaled is not None
         and len(t_mrna) > 0
         and mrna_time_idx is not None
+        and rna_model_prot_idx is not None
+        and len(rna_model_prot_idx) > 0
     )
     if has_mrna:
-        rna_j = jnp.asarray(rna_data_scaled, dtype=jnp.float32)
+        rna_j = jnp.asarray(rna_data_scaled, dtype=jnp.float32)  # (n_match, T_rna)
         mrna_idx_j = jnp.asarray(mrna_time_idx, dtype=jnp.int32)
+        rna_prot_idx_j = jnp.asarray(rna_model_prot_idx, dtype=jnp.int32)
         n_rna = max(1, rna_data_scaled.size)
     else:
         rna_j = None
         mrna_idx_j = None
+        rna_prot_idx_j = None
         n_rna = 1
 
     rhs_fn = make_rhs(K, M, N, mechanism, k_act_fn=k_act_fn, s_prod_fn=s_prod_fn)
@@ -289,12 +316,13 @@ def make_loss_fn(
             throw=False,
         )
 
-        xs = sol.ys  # (T_unified, 2K+M+N)
+        xs = sol.ys  # (T_unified, 3K+M+N) – new state layout
 
         # Sample at protein time indices
         xs_prot = xs[prot_idx_solver, :]
-        P_sim = jnp.clip(xs_prot[:, 2 * K + M :], 0.0, 1.0).T  # (N, T_prot)
-        A_sim = jnp.clip(xs_prot[:, K : 2 * K], 0.0, 5.0).T  # (K, T_prot)
+        # New slicing: [R_rna, S, A, Kdyn, p]
+        P_sim = jnp.clip(xs_prot[:, 3 * K + M :], 0.0, 1.0).T      # (N, T_prot)
+        A_sim = jnp.clip(xs_prot[:, 2 * K : 3 * K], 0.0, 5.0).T    # (K, T_prot)
 
         f1, f2, f3 = compute_objectives_jax(
             theta_j,
@@ -316,15 +344,26 @@ def make_loss_fn(
             N,
         )
 
+        # f4: mRNA / R_rna loss (only when RNA data is available)
+        if has_mrna:
+            xs_rna = xs[mrna_idx_j, :]
+            R_sim_rna = jnp.clip(xs_rna[:, :K], 0.0, None).T   # (K, T_rna)
+            R_sim_matched = R_sim_rna[rna_prot_idx_j, :]         # (n_match, T_rna)
+            diff_R = rna_j - R_sim_matched
+            f4 = jnp.sum(jnp.log1p(diff_R * diff_R)) / n_rna
+        else:
+            f4 = jnp.float32(0.0)
+
         total = (
             jnp.float32(w_phospho) * f1
             + jnp.float32(w_abundance) * f2
             + jnp.float32(w_reg) * f3
+            + jnp.float32(w_mrna) * f4
         )
 
         # Penalise non-finite results without crashing
         total = jnp.where(jnp.isfinite(total), total, FAILED_SOLVE_PENALTY)
-        return total, (f1, f2, f3)
+        return total, (f1, f2, f3, f4)
 
     return loss_fn
 
@@ -339,7 +378,7 @@ def run_single_optimisation(
 
     Parameters
     ----------
-    loss_fn  : callable (theta, args) -> (scalar, aux)
+    loss_fn  : callable (theta, args) -> (scalar, (f1, f2, f3, f4))
     theta0   : np.ndarray
     max_steps: int
 
@@ -347,7 +386,7 @@ def run_single_optimisation(
     -------
     theta_opt : np.ndarray
     total_loss: float
-    f1, f2, f3: float
+    f1, f2, f3, f4: float
     """
     solver = optx.BFGS(rtol=1e-5, atol=1e-7)
     sol = optx.minimise(
@@ -360,8 +399,8 @@ def run_single_optimisation(
         throw=False,
     )
     theta_opt = np.asarray(sol.value, dtype=np.float64)
-    total_loss, (f1, f2, f3) = loss_fn(sol.value, None)
-    return theta_opt, float(total_loss), float(f1), float(f2), float(f3)
+    total_loss, (f1, f2, f3, f4) = loss_fn(sol.value, None)
+    return theta_opt, float(total_loss), float(f1), float(f2), float(f3), float(f4)
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +415,15 @@ class NetworkProblem:
 
     Does NOT inherit from pymoo.  The _evaluate / optimisation logic has moved
     to make_loss_fn + run_single_optimisation.
+
+    RNA-related attributes (optional):
+        t_rna             : np.ndarray | None – RNA time points
+        rna_obs_matched   : np.ndarray | None – observed RNA for matched proteins (n_match, T_rna)
+        rna_model_prot_idx: np.ndarray | None – protein indices for matched RNA rows
+        rna_obs_idx       : np.ndarray | None – gene indices in gene_ids for matched rows
+        rna_fit_genes     : list | None       – matched gene/protein names
+        loss_weight_rna   : float             – RNA loss weight
+        R_data0           : np.ndarray | None – RNA initial condition (K, T_rna or K,)
     """
 
     def __init__(
@@ -402,6 +450,13 @@ class NetworkProblem:
         xu,
         k_act_fn=None,
         s_prod_fn=None,
+        t_rna=None,
+        rna_obs_matched=None,
+        rna_model_prot_idx=None,
+        rna_obs_idx=None,
+        rna_fit_genes=None,
+        loss_weight_rna=1.0,
+        R_data0=None,
         **kwargs,  # absorb legacy keyword args (elementwise_runner, etc.)
     ):
         self.t = t
@@ -426,6 +481,14 @@ class NetworkProblem:
         self.xu = xu
         self.k_act_fn = k_act_fn
         self.s_prod_fn = s_prod_fn
+        # RNA-specific
+        self.t_rna = t_rna
+        self.rna_obs_matched = rna_obs_matched
+        self.rna_model_prot_idx = rna_model_prot_idx
+        self.rna_obs_idx = rna_obs_idx
+        self.rna_fit_genes = rna_fit_genes
+        self.loss_weight_rna = loss_weight_rna
+        self.R_data0 = R_data0
 
     def simulate(self, x):
         """
@@ -458,8 +521,46 @@ class NetworkProblem:
             self.mechanism,
             k_act_fn=self.k_act_fn,
             s_prod_fn=self.s_prod_fn,
+            R_data0=self.R_data0,
         )
         return P_sim
+
+    def simulate_full(self, x):
+        """
+        Run a full simulation returning all state components including R_sim_rna.
+
+        Args:
+            x (np.ndarray): Parameter vector.
+
+        Returns:
+            dict: Keys: P_sim, A_sim, S_sim, Kdyn_sim, R_sim, R_sim_rna, t, t_rna,
+                solver_times.
+        """
+        theta = np.asarray(x, dtype=np.float64)
+        K, T = ModelDims.K, self.P_data.shape[1]
+        A0 = build_full_A0(K, T, self.A_scaled, self.prot_idx_for_A)
+
+        return simulate_ode(
+            self.t,
+            self.P_data,
+            A0,
+            theta,
+            self.Cg,
+            self.Cl,
+            self.site_prot_idx,
+            self.K_site_kin,
+            self.R,
+            self.L_alpha,
+            self.kin_to_prot_idx,
+            self.receptor_mask_prot,
+            self.receptor_mask_kin,
+            self.mechanism,
+            return_full=True,
+            k_act_fn=self.k_act_fn,
+            s_prod_fn=self.s_prod_fn,
+            t_rna=self.t_rna,
+            R_data0=self.R_data0,
+        )
 
 
 # Legacy alias so that any remaining code that imports NetworkOptimizationProblem
