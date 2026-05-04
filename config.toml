@@ -36,8 +36,8 @@ include_tfs_as_proteins = false
 # [optimisation]  – multi-start gradient fitting
 # ---------------------------------------------------------------------------
 [optimisation]
-n_starts  = 3
-max_steps = 5000
+n_starts  = 10
+max_steps = 500
 loss_type  = "mse"
 lambda_net = 0.001
 reg_lambda = 0.0001
