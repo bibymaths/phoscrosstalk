@@ -67,33 +67,64 @@ def main():
     parser.add_argument(
         "--data",
         required=True,
-        help="CSV file containing time-series phosphorylation data.",
+        help=(
+            "CSV file containing protein/phosphosite time-series data. "
+            "Expected columns: Protein (or GeneID), Psite (or Residue), "
+            "and value columns (x1..xN or v1..vN). "
+            "Rows without a Psite/Residue value are treated as protein abundance rows. "
+            "Example: data_timeseries/filtered_input1.csv"
+        ),
     )
     parser.add_argument(
         "--ptm-intra",
         required=True,
-        help="SQLite DB containing intra-protein PTM relationships.",
+        help=(
+            "SQLite database containing intra-protein PTM crosstalk pairs "
+            "(table: intra_pairs). "
+            "Example: data_curated/processed/ptm_intra.db"
+        ),
     )
     parser.add_argument(
         "--ptm-inter",
         required=True,
-        help="SQLite DB containing inter-protein PTM relationships.",
+        help=(
+            "SQLite database containing inter-protein PTM crosstalk pairs "
+            "(table: inter_pairs). "
+            "Example: data_curated/processed/ptm_inter.db"
+        ),
     )
     parser.add_argument(
         "--crosstalk-tsv",
-        help="Optional TSV listing PTM pairs to keep (crosstalk filtering).",
+        help=(
+            "Optional TSV listing specific PTM pairs to keep (crosstalk filtering). "
+            "Rows not in this list are removed from the model. "
+            "Columns: Protein, Site1, Site2."
+        ),
     )
     parser.add_argument(
         "--rna-data",
         default=None,
         dest="rna_data",
-        help="CSV file with mRNA time-series (rows=genes, columns=time points).",
+        help=(
+            "CSV file with mRNA time-series data. "
+            "Expected columns: GeneID, x1, x2, ..., x9 "
+            "(mapped to time points [4, 8, 15, 30, 60, 120, 240, 480, 960] min). "
+            "When provided, mRNA state R(t) is included in the ODE system and "
+            "an mRNA loss term (f4) is added to the objective. "
+            "Example: data_timeseries/filtered_input3.csv"
+        ),
     )
     parser.add_argument(
         "--tf-net",
         default=None,
         dest="tf_net",
-        help="CSV file with TF–mRNA network (columns: source, target, weight).",
+        help=(
+            "CSV file describing the TF-to-mRNA regulatory network. "
+            "Required columns (case-insensitive): Source, Target, Weight. "
+            "Source = TF gene symbol; Target = regulated gene symbol. "
+            "Used to construct k_act(t) as a derived rate from mRNA signals. "
+            "Example: data_interactions/tf_mrna.csv"
+        ),
     )
 
     # ------------------------------------------------------------------
@@ -101,16 +132,31 @@ def main():
     # ------------------------------------------------------------------
     parser.add_argument(
         "--kinase-tsv",
-        help="TSV file mapping sites → kinases (weight column optional).",
+        help=(
+            "TSV file mapping phosphosites to kinases (Kinase-Substrate prior). "
+            "Required columns: Site, Kinase; optional: weight. "
+            "At least one of --kinase-tsv or --kea-ks-table must be provided; "
+            "if neither is given, the model falls back to an identity mapping. "
+            "Example: data_interactions/kinase_sites.tsv"
+        ),
     )
     parser.add_argument(
         "--kea-ks-table",
-        help="Alternative KEA/KS mapping table if --kinase-tsv is not provided.",
+        help=(
+            "Alternative KEA/KS kinase-substrate mapping table in TSV format. "
+            "Required columns: substrate_site, kinase, pmid. "
+            "Used when --kinase-tsv is not available. "
+            "Example: data_curated/processed/ks_psite_table.tsv"
+        ),
     )
     parser.add_argument(
         "--unified-graph-pkl",
-        help="Pickled networkx graph of kinase–kinase relationships "
-        "used to build Laplacian regularizers.",
+        help=(
+            "Pickled NetworkX graph of kinase-kinase regulatory relationships. "
+            "Used to build the Laplacian regularizer L_alpha. "
+            "Optional; if absent, L_alpha is set to zero. "
+            "Example: data_curated/processed/unified_kinase_graph.gpickle"
+        ),
     )
 
     # ------------------------------------------------------------------
@@ -135,8 +181,11 @@ def main():
     parser.add_argument(
         "--outdir",
         default=None,
-        help="Directory where results, logs, and output files are saved. "
-        "Overrides config.toml [paths] output_dir.",
+        help=(
+            "Directory where all results, plots, and output files are saved. "
+            "Overrides config.toml [paths] output_dir. "
+            "Created automatically if it does not exist."
+        ),
     )
 
     # ------------------------------------------------------------------
@@ -146,8 +195,12 @@ def main():
         "--mechanism",
         choices=["dist", "seq", "rand"],
         default=None,
-        help="Phosphorylation mechanism: distributive, sequential, or random/cooperative. "
-        "Overrides config.toml [model] mechanism.",
+        help=(
+            "Phosphorylation mechanism for the kinetic model. "
+            "dist = distributive (default), seq = sequential, "
+            "rand = random/cooperative. "
+            "Overrides config.toml [model] mechanism."
+        ),
     )
 
     # ------------------------------------------------------------------
@@ -157,13 +210,22 @@ def main():
         "--n-starts",
         type=int,
         default=None,
-        help="Number of multi-start initialisations. Overrides config.toml.",
+        help=(
+            "Number of multi-start optimization initialisations. "
+            "The run with the lowest total loss is selected as the best result. "
+            "Use --n-starts 1 --max-steps 50 for a quick smoke test. "
+            "Overrides config.toml [optimisation] n_starts."
+        ),
     )
     parser.add_argument(
         "--max-steps",
         type=int,
         default=None,
-        help="Maximum number of optimisation steps per run. Overrides config.toml.",
+        help=(
+            "Maximum number of gradient-based optimization steps per start. "
+            "Larger values improve convergence but increase runtime. "
+            "Overrides config.toml [optimisation] max_steps."
+        ),
     )
 
     # ------------------------------------------------------------------
@@ -177,17 +239,27 @@ def main():
     parser.add_argument(
         "--run-steadystate",
         action="store_true",
-        help="Run post-optimization steady state simulation.",
+        help=(
+            "Run post-optimization steady-state simulation. "
+            "Results are saved to <outdir>/steadystate/."
+        ),
     )
     parser.add_argument(
         "--run-knockouts",
         action="store_true",
-        help="Run systematic in-silico knockout screening.",
+        help=(
+            "Run systematic in-silico kinase knockout screening. "
+            "Each kinase is zeroed out and the dynamics compared to baseline. "
+            "Results are saved to <outdir>/knockouts/."
+        ),
     )
     parser.add_argument(
         "--run-sensitivity",
         action="store_true",
-        help="Run global sensitivity analysis.",
+        help=(
+            "Run global sensitivity analysis (Sobol indices) over the parameter space. "
+            "Results are saved to <outdir>/sensitivity/."
+        ),
     )
 
     # ------------------------------------------------------------------
@@ -203,6 +275,32 @@ def main():
     # PARSE ARGUMENTS & LOAD CONFIG
     # ------------------------------------------------------------------
     args = parser.parse_args()
+
+    # ------------------------------------------------------------------
+    # DEFENSIVE VALIDATION
+    # ------------------------------------------------------------------
+    # Validate input file existence before doing any heavy computation.
+    _missing_files = []
+    for _flag, _path in [
+        ("--data", args.data),
+        ("--ptm-intra", args.ptm_intra),
+        ("--ptm-inter", args.ptm_inter),
+        ("--crosstalk-tsv", args.crosstalk_tsv),
+        ("--rna-data", args.rna_data),
+        ("--tf-net", args.tf_net),
+        ("--kinase-tsv", args.kinase_tsv),
+        ("--kea-ks-table", args.kea_ks_table),
+        ("--unified-graph-pkl", args.unified_graph_pkl),
+    ]:
+        if _path is not None and not os.path.exists(_path):
+            _missing_files.append(f"  {_flag}: {_path}")
+    if _missing_files:
+        print(
+            "ERROR: The following input files do not exist:\n"
+            + "\n".join(_missing_files),
+            flush=True,
+        )
+        raise SystemExit(1)
 
     cfg = load_config(args.config)
 
@@ -220,6 +318,14 @@ def main():
     args.mechanism = mechanism
     args.n_starts = n_starts
     args.max_steps = max_steps
+
+    # Validate numeric settings.
+    if args.n_starts < 1:
+        print(f"ERROR: --n-starts must be >= 1; got {args.n_starts}", flush=True)
+        raise SystemExit(1)
+    if args.max_steps < 1:
+        print(f"ERROR: --max-steps must be >= 1; got {args.max_steps}", flush=True)
+        raise SystemExit(1)
 
     # Pull numeric settings from config
     args.length_scale = cfg.model.length_scale
