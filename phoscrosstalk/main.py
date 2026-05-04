@@ -570,7 +570,13 @@ def main():
 
     # mRNA outputs (only when RNA data was provided)
     if rna_matrix is not None and gene_ids is not None:
-        analysis.save_mrna_outputs(outdir, gene_ids, t_rna, rna_matrix)
+        analysis.save_mrna_outputs(
+            outdir=outdir,
+            gene_ids=gene_ids,
+            t_rna=t_rna,
+            rna_observed=rna_matrix,
+            rna_simulated=R_sim_rna,
+        )
         analysis.plot_mrna_fit(outdir)
 
     if args.run_steadystate:
