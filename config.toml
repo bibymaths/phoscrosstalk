@@ -7,14 +7,14 @@
 # Optional: set to "" or omit the key entirely to disable.
 # ---------------------------------------------------------------------------
 [paths]
-data              = "data_subset/subnetwork_MAPK_GRK_PRKCA/filtered_input1_subset.csv"
+data              = "data_subset/subnetwork_EPHA2_LYN/filtered_input1_subset.csv"
 ptm_intra         = "data_curated/processed/ptm_intra.db"
 ptm_inter         = "data_curated/processed/ptm_inter.db"
 output_dir        = "test_results"
 crosstalk_tsv     = ""
-rna_data          = "data_subset/subnetwork_MAPK_GRK_PRKCA/filtered_input3_subset.csv"
-tf_net            = "data_subset/subnetwork_MAPK_GRK_PRKCA/tf_mrna_subset.csv"
-kinase_tsv        = "data_subset/subnetwork_MAPK_GRK_PRKCA/kinase_sites_subset.tsv"
+rna_data          = "data_subset/subnetwork_EPHA2_LYN/filtered_input3_subset.csv"
+tf_net            = "data_subset/subnetwork_EPHA2_LYN/tf_mrna_subset.csv"
+kinase_tsv        = "data_subset/subnetwork_EPHA2_LYN/kinase_sites_subset.tsv"
 kea_ks_table      = ""
 unified_graph_pkl = "data_curated/processed/unified_kinase_graph.gpickle"
 
