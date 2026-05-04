@@ -153,7 +153,7 @@ def main():
         "--unified-graph-pkl",
         help=(
             "Pickled NetworkX graph of kinase-kinase regulatory relationships. "
-            "Used to build the Laplacian regularizer L_alpha for kinase network coupling. "
+            "Used to build the Laplacian regularizer L_alpha. "
             "Optional; if absent, L_alpha is set to zero. "
             "Example: data_curated/processed/unified_kinase_graph.gpickle"
         ),
@@ -249,7 +249,7 @@ def main():
         action="store_true",
         help=(
             "Run systematic in-silico kinase knockout screening. "
-            "Each kinase is zeroed out and the resulting dynamics compared to baseline. "
+            "Each kinase is zeroed out and the dynamics compared to baseline. "
             "Results are saved to <outdir>/knockouts/."
         ),
     )
@@ -295,9 +295,12 @@ def main():
         if _path is not None and not os.path.exists(_path):
             _missing_files.append(f"  {_flag}: {_path}")
     if _missing_files:
-        parser.error(
-            "The following input files do not exist:\n" + "\n".join(_missing_files)
+        print(
+            "ERROR: The following input files do not exist:\n"
+            + "\n".join(_missing_files),
+            flush=True,
         )
+        raise SystemExit(1)
 
     cfg = load_config(args.config)
 
@@ -318,9 +321,11 @@ def main():
 
     # Validate numeric settings.
     if args.n_starts < 1:
-        parser.error(f"--n-starts must be >= 1; got {args.n_starts}")
+        print(f"ERROR: --n-starts must be >= 1; got {args.n_starts}", flush=True)
+        raise SystemExit(1)
     if args.max_steps < 1:
-        parser.error(f"--max-steps must be >= 1; got {args.max_steps}")
+        print(f"ERROR: --max-steps must be >= 1; got {args.max_steps}", flush=True)
+        raise SystemExit(1)
 
     # Pull numeric settings from config
     args.length_scale = cfg.model.length_scale
