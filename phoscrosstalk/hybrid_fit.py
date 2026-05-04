@@ -1,6 +1,6 @@
 """
 hybrid_fit.py
-Multi-phase hybrid optimisation for the phospho-network model.
+Multi-phase hybrid optimization for the phospho-network model.
 
 Provides a three-phase fitting pipeline:
 
@@ -8,7 +8,7 @@ Provides a three-phase fitting pipeline:
       Quickly explore the parameter space and identify promising seeds.
 
   Phase 1 – evosax global search (Sep-CMA-ES or CMA-ES):
-      Global evolutionary strategy operating in normalised [0,1]^n_var space,
+      Global evolutionary strategy operating in normalized [0,1]^n_var space,
       optionally warm-started from LHS seeds.
 
   Phase 2 – Optimistix Levenberg-Marquardt polish:
@@ -33,6 +33,16 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from evosax.algorithms import CMA_ES, Sep_CMA_ES
+from evosax.core.restart import cma_cond, spread_cond, RestartParams, RestartState
+
+from qdax.core.containers.mapelites_repertoire import (
+    MapElitesRepertoire,
+    compute_cvt_centroids,
+)
+from qdax.core.emitters.mutation_operators import isoline_variation
+from qdax.core.map_elites import MAPElites
+
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.optimization import (
     run_single_optimisation,
@@ -40,37 +50,6 @@ from phoscrosstalk.optimization import (
 from phoscrosstalk.logger import get_logger
 
 logger = get_logger()
-
-# ---------------------------------------------------------------------------
-# Lazy optional imports
-# ---------------------------------------------------------------------------
-
-try:
-    from evosax.algorithms import CMA_ES, Sep_CMA_ES
-
-    _EVOSAX_AVAILABLE = True
-    try:
-        from evosax.restarts.restart_conds import cma_cond, spread_cond
-
-        _EVOSAX_RESTART_CONDS_AVAILABLE = True
-    except ImportError:
-        _EVOSAX_RESTART_CONDS_AVAILABLE = False
-except ImportError:
-    _EVOSAX_AVAILABLE = False
-    _EVOSAX_RESTART_CONDS_AVAILABLE = False
-
-try:
-    from qdax.core.containers.mapelites_repertoire import (
-        MapElitesRepertoire,
-        compute_cvt_centroids,
-    )
-    from qdax.core.emitters.mutation_operators import isoline_variation
-    from qdax.core.map_elites import MAPElites
-
-    _QDAX_AVAILABLE = True
-except ImportError:
-    _QDAX_AVAILABLE = False
-
 
 # ---------------------------------------------------------------------------
 # Result container
@@ -276,18 +255,6 @@ def run_evosax(
         Entire final population un-normalised to original space,
         shape ``(popsize, n_var)``, ``float64``.
     """
-    if not _EVOSAX_AVAILABLE:
-        raise ImportError(
-            "evosax is required for run_evosax. "
-            "Install it with:  pip install 'evosax>=0.1.6'"
-        )
-
-    if n_restarts > 0 and not _EVOSAX_RESTART_CONDS_AVAILABLE:
-        logger.warning(
-            "evosax restart conditions (cma_cond/spread_cond) are not available "
-            "in the installed evosax version; n_restarts will have no effect."
-        )
-
     xl_j = jnp.asarray(xl, dtype=jnp.float32)
     xu_j = jnp.asarray(xu, dtype=jnp.float32)
     span = xu_j - xl_j
@@ -411,16 +378,21 @@ def run_evosax(
             global_best_fitness = current_best
             global_best_solution = state.best_solution
 
-        if restart_count < n_restarts and _EVOSAX_RESTART_CONDS_AVAILABLE:
+        if restart_count < n_restarts:
             # Evaluate last-gen population to check restart conditions
             key, ask_key = jax.random.split(key)
             last_pop, _ = es.ask(ask_key, state, params)
             last_pop = jnp.clip(last_pop, 0.0, 1.0)
             last_losses = normed_fitness(last_pop)
 
-            should_restart = spread_cond(
-                last_pop, last_losses, state, params
-            ) | cma_cond(last_pop, last_losses, state, params)
+            _restart_params = RestartParams()
+
+            _restart_state = RestartState(restart_counter=jnp.int32(restart_count))
+
+            should_restart = bool(
+                spread_cond(last_pop, last_losses, state, params, _restart_state, _restart_params)
+                | cma_cond(last_pop, last_losses, state, params, _restart_state, _restart_params)
+            )
 
             if should_restart:
                 try:
@@ -609,12 +581,6 @@ def run_qdax_mapelites(
     object
         QDax ``MapElitesRepertoire`` after *n_iterations* iterations.
     """
-    if not _QDAX_AVAILABLE:
-        raise ImportError(
-            "qdax is required for run_qdax_mapelites. "
-            "Install it with:  pip install 'qdax>=0.5.0'"
-        )
-
     K = ModelDims.K
     M = ModelDims.M
 
@@ -707,7 +673,7 @@ def run_qdax_mapelites(
             num_centroids=n_centroids,
             minval=min_bd,
             maxval=max_bd,
-            random_key=centroid_key,
+            key=centroid_key,
         )
 
     # ------------------------------------------------------------------
