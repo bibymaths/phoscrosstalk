@@ -391,8 +391,13 @@ def main():
         A_bases, A_amps = np.array([]), np.array([])
 
     # 5. Weights
-    W_data, W_data_prot = build_weight_matrices(
-        t=t, Y=Y, A_data=A_data, scheme=args.weight_scheme
+    W_data, W_data_prot, W_data_mrna = build_weight_matrices(
+        t=t,
+        Y=Y,
+        A_data=A_data,
+        t_mrna=t_rna,
+        rna_data=rna_matrix,
+        scheme=args.weight_scheme,
     )
 
     # 6. Matrices & Graph
@@ -630,7 +635,14 @@ def main():
         k_act_fn=k_act_fn,
         s_prod_fn=s_prod_fn,
         t_rna=t_rna if rna_matrix is not None else None,
+        rna_obs_matched=rna_obs_matched,
+        rna_model_prot_idx=rna_model_prot_idx,
+        rna_obs_idx=rna_obs_idx_raw if len(rna_fit_genes) > 0 else None,
+        rna_fit_genes=rna_fit_genes,
+        loss_weight_rna=args.loss_weight_mrna,
+        R_data0=R_data0,
         rna_relax=cfg.derived_rates.rna_relax,
+        W_data_mrna=W_data_mrna_matched if len(rna_fit_genes) > 0 else None,
     )
 
     # Build RNA-to-model-protein mapping (when RNA data is available)
@@ -650,13 +662,16 @@ def main():
         if len(rna_fit_genes) > 0:
             rna_obs_matched = rna_obs_matched_raw
             rna_model_prot_idx = rna_model_prot_idx_raw
-            # Build full R_rna initial condition vector for all K proteins
+            W_data_mrna_matched = W_data_mrna[rna_obs_idx_raw, :]
+
             R_data0 = data_loader.build_full_R0(K, gene_ids, rna_matrix, proteins)
+
             problem.rna_obs_matched = rna_obs_matched
             problem.rna_model_prot_idx = rna_model_prot_idx
             problem.rna_obs_idx = rna_obs_idx_raw
             problem.rna_fit_genes = rna_fit_genes
             problem.R_data0 = R_data0
+            problem.W_data_mrna = W_data_mrna_matched
             logger.info(
                 f"[*] RNA-to-model mapping: {len(rna_fit_genes)} matched genes/proteins."
             )
@@ -718,12 +733,6 @@ def main():
         kinases=kinases,
     )
 
-    analysis.plot_fitted_simulation(outdir)
-    analysis.print_parameter_summary(outdir, theta_best, proteins, kinases, sites)
-    analysis.print_biological_scores(outdir, X)
-    analysis.plot_biological_scores(outdir, X, F)
-    analysis.plot_goodness_of_fit(f"{outdir}/fit_timeseries.tsv", outdir)
-
     # mRNA outputs (only when RNA data was provided and RNA matched model proteins)
     if rna_matrix is not None and gene_ids is not None and len(rna_fit_genes) > 0:
         # Use full simulation to get R_sim_rna at RNA time points
@@ -738,6 +747,12 @@ def main():
                 rna_data_obs=rna_obs_matched,
                 rna_simulated=R_sim_matched,
             )
+
+    analysis.plot_fitted_simulation(outdir)
+    analysis.print_parameter_summary(outdir, theta_best, proteins, kinases, sites)
+    analysis.print_biological_scores(outdir, X)
+    analysis.plot_biological_scores(outdir, X, F)
+    analysis.plot_goodness_of_fit(f"{outdir}/fit_timeseries.tsv", outdir)
 
     if args.run_steadystate:
         steadystate.run_steadystate_analysis(

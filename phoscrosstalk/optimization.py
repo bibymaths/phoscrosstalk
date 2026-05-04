@@ -135,7 +135,6 @@ def create_bounds(K, M, N):
 # Scalarized JAX loss for Optimistix
 # ---------------------------------------------------------------------------
 
-
 def make_loss_fn(
     t,
     P_data,
@@ -167,7 +166,10 @@ def make_loss_fn(
     rna_data_scaled=None,
     w_mrna=1.0,
     rna_model_prot_idx=None,
+    rna_obs_idx=None,
+    rna_fit_genes=None,
     R_data0=None,
+    W_data_rna=None,
     rna_relax=0.1,
 ):
     """
@@ -256,22 +258,28 @@ def make_loss_fn(
 
     # mRNA arrays (if available)
     has_mrna = (
-        t_mrna is not None
-        and rna_data_scaled is not None
-        and len(t_mrna) > 0
-        and mrna_time_idx is not None
-        and rna_model_prot_idx is not None
-        and len(rna_model_prot_idx) > 0
+            t_mrna is not None
+            and rna_data_scaled is not None
+            and len(t_mrna) > 0
+            and mrna_time_idx is not None
+            and rna_model_prot_idx is not None
+            and len(rna_model_prot_idx) > 0
+            and W_data_rna is not None
+            and rna_obs_idx is not None
+            and rna_fit_genes is not None
     )
+
     if has_mrna:
-        rna_j = jnp.asarray(rna_data_scaled, dtype=jnp.float32)  # (n_match, T_rna)
+        rna_j = jnp.asarray(rna_data_scaled, dtype=jnp.float32)
         mrna_idx_j = jnp.asarray(mrna_time_idx, dtype=jnp.int32)
         rna_prot_idx_j = jnp.asarray(rna_model_prot_idx, dtype=jnp.int32)
+        W_rna_j = jnp.asarray(W_data_rna, dtype=jnp.float32)
         n_rna = max(1, rna_data_scaled.size)
     else:
         rna_j = None
         mrna_idx_j = None
         rna_prot_idx_j = None
+        W_rna_j = None
         n_rna = 1
 
     rhs_fn = make_rhs(
@@ -352,7 +360,7 @@ def make_loss_fn(
             R_sim_rna = jnp.clip(xs_rna[:, :K], 0.0, None).T  # (K, T_rna)
             R_sim_matched = R_sim_rna[rna_prot_idx_j, :]  # (n_match, T_rna)
             diff_R = rna_j - R_sim_matched
-            f4 = jnp.sum(jnp.log1p(diff_R * diff_R)) / n_rna
+            f4 = jnp.sum(jnp.log1p(W_rna_j * diff_R * diff_R)) / n_rna
         else:
             f4 = jnp.float32(0.0)
 
@@ -460,6 +468,7 @@ class NetworkProblem:
         loss_weight_rna=1.0,
         R_data0=None,
         rna_relax=0.1,
+        W_data_mrna=None,
         **kwargs,  # absorb legacy keyword args (elementwise_runner, etc.)
     ):
         self.t = t
@@ -473,6 +482,7 @@ class NetworkProblem:
         self.prot_idx_for_A = prot_idx_for_A
         self.W_data = W_data
         self.W_data_prot = W_data_prot
+        self.W_data_mrna = W_data_mrna
         self.L_alpha = L_alpha
         self.kin_to_prot_idx = kin_to_prot_idx
         self.lambda_net = lambda_net

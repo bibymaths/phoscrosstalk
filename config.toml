@@ -37,10 +37,10 @@ include_tfs_as_proteins = false
 # ---------------------------------------------------------------------------
 [optimisation]
 n_starts  = 3
-max_steps = 500
+max_steps = 5000
 loss_type  = "mse"
-lambda_net = 0.01
-reg_lambda = 0.01
+lambda_net = 0.001
+reg_lambda = 0.0001
 
 # ---------------------------------------------------------------------------
 # [loss_weights]  – relative weight of each objective term
@@ -48,7 +48,7 @@ reg_lambda = 0.01
 [loss_weights]
 phospho   = 1.0
 abundance = 1.0
-mrna      = 1.0
+mrna      = 5.0
 reg       = 1.0
 
 # ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ reg       = 1.0
 [solver]
 rtol      = 1e-6
 atol      = 1e-9
-max_steps = 16384
+max_steps = 32768
 
 # ---------------------------------------------------------------------------
 # [time]  – time-point configuration
@@ -80,7 +80,7 @@ interpolation    = "piecewise_constant"   # piecewise_constant | linear
 s_prod_fn = "softplus"   # softplus | linear
 # mRNA relaxation rate (min^-1).  Controls how fast R(t) tracks k_act(t).
 # At steady state R_ss = k_act.  Smaller values → slower mRNA turnover.
-rna_relax = 0.1
+rna_relax = 0.02
 
 # ---------------------------------------------------------------------------
 # [analysis]  – downstream analyses to run after fitting

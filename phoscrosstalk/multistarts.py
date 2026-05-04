@@ -137,12 +137,18 @@ def run_multi_start_optimization(problem, args, P_scaled):
         w_abundance=w_abundance,
         w_reg=w_reg,
         w_mrna=w_mrna,
+        rtol=getattr(args, "rtol", 1e-6),
+        atol=getattr(args, "atol", 1e-9),
+        max_steps=getattr(args, "solver_max_steps", 16384),
         k_act_fn=getattr(problem, "k_act_fn", None),
         s_prod_fn=getattr(problem, "s_prod_fn", None),
         t_mrna=getattr(problem, "t_rna", None),
         rna_data_scaled=getattr(problem, "rna_obs_matched", None),
         rna_model_prot_idx=getattr(problem, "rna_model_prot_idx", None),
+        rna_obs_idx=getattr(problem, "rna_obs_idx", None),
+        rna_fit_genes=getattr(problem, "rna_fit_genes", None),
         R_data0=getattr(problem, "R_data0", None),
+        W_data_rna=getattr(problem, "W_data_mrna", None),
         rna_relax=getattr(problem, "rna_relax", 0.1),
     )
 

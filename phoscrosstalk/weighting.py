@@ -3,184 +3,317 @@ from __future__ import annotations
 import numpy as np
 
 
-def _compute_site_noise_weights(Y: np.ndarray) -> np.ndarray:
-    """
-    Calculate site-specific weights based on the temporal noise of the signal.
+_EPS = 1e-12
 
-    Estimates noise by calculating the variance of the first differences in log-space.
-    Noisier sites (high variance in step-to-step changes) are assigned lower weights
-    (inverse variance weighting), normalized to a mean of 1.0.
+
+def _as_2d_float_matrix(x: np.ndarray | None, name: str) -> np.ndarray:
+    """
+    Convert input to a finite 2D float matrix.
+
+    Empty or None inputs return shape (0, 0).
+    """
+    if x is None:
+        return np.zeros((0, 0), dtype=float)
+
+    arr = np.asarray(x, dtype=float)
+
+    if arr.size == 0:
+        return np.zeros((0, 0), dtype=float)
+
+    if arr.ndim != 2:
+        raise ValueError(f"{name} must be a 2D matrix; got shape {arr.shape}.")
+
+    if not np.isfinite(arr).all():
+        bad = int((~np.isfinite(arr)).sum())
+        raise ValueError(f"{name} contains {bad} non-finite value(s).")
+
+    return arr
+
+
+def _as_time_vector(t: np.ndarray, name: str) -> np.ndarray:
+    """
+    Convert time points to a finite 1D float vector.
+    """
+    arr = np.asarray(t, dtype=float)
+
+    if arr.ndim != 1:
+        raise ValueError(f"{name} must be a 1D time vector; got shape {arr.shape}.")
+
+    if arr.size < 1:
+        raise ValueError(f"{name} must contain at least one time point.")
+
+    if not np.isfinite(arr).all():
+        bad = int((~np.isfinite(arr)).sum())
+        raise ValueError(f"{name} contains {bad} non-finite value(s).")
+
+    return arr
+
+
+def _normalize_mean_one(w: np.ndarray) -> np.ndarray:
+    """
+    Normalize weights to mean 1.0 while preserving empty arrays.
+    """
+    w = np.asarray(w, dtype=float)
+
+    if w.size == 0:
+        return w
+
+    mean = float(np.mean(w))
+    if not np.isfinite(mean) or abs(mean) < _EPS:
+        return np.ones_like(w, dtype=float)
+
+    return w / mean
+
+
+def _compute_noise_weights(
+    X: np.ndarray | None,
+    *,
+    name: str,
+    min_weight: float = 0.1,
+    max_weight: float = 20.0,
+) -> np.ndarray:
+    """
+    Compute entity-level inverse-noise weights from temporal jaggedness.
+
+    The noise estimate is based on first differences in log1p space. Noisier
+    trajectories receive lower weights. The returned vector is clipped and
+    normalized to mean 1.0.
 
     Args:
-        Y (np.ndarray): Raw phosphosite data matrix (N_sites x T).
+        X:
+            Matrix with shape (n_entities, n_timepoints).
+        name:
+            Name used in error messages.
+        min_weight:
+            Lower clipping bound.
+        max_weight:
+            Upper clipping bound.
 
     Returns:
-        np.ndarray: Vector of weights (N_sites,), clipped and normalized.
+        Weight vector with shape (n_entities,).
     """
-    logY = np.log1p(np.clip(Y, 1e-3, None))
-    diff = np.diff(logY, axis=1)  # (N, T-1)
-    sigma_site = np.sqrt((diff**2).mean(axis=1) + 1e-8)
+    X = _as_2d_float_matrix(X, name)
 
-    w_site = 1.0 / (sigma_site**2 + 1e-4)
-    w_site = np.clip(w_site, 0.1, 20.0)
-    w_site /= w_site.mean()
-    return w_site
-
-
-def _compute_protein_noise_weights(A_data: np.ndarray | None) -> np.ndarray:
-    """
-    Calculate protein-specific weights based on temporal noise.
-
-    Similar to `_compute_site_noise_weights`, this down-weights protein trajectories
-    that exhibit high jaggedness/noise in log-space.
-
-    Args:
-        A_data (np.ndarray | None): Raw protein abundance data matrix (K_obs x T).
-
-    Returns:
-        np.ndarray: Vector of weights (K_obs,), or an empty array if no data is provided.
-    """
-    if A_data is None or A_data.size == 0:
+    if X.size == 0:
         return np.zeros((0,), dtype=float)
 
-    logA = np.log1p(np.clip(A_data, 1e-3, None))
-    diffA = np.diff(logA, axis=1)  # (K_obs, T-1)
-    sigma_prot = np.sqrt((diffA**2).mean(axis=1) + 1e-8)
+    if X.shape[1] < 2:
+        return np.ones((X.shape[0],), dtype=float)
 
-    w_prot = 1.0 / (sigma_prot**2 + 1e-4)
-    w_prot = np.clip(w_prot, 0.1, 20.0)
-    w_prot /= w_prot.mean()
-    return w_prot
+    logX = np.log1p(np.clip(X, 1e-3, None))
+    diff = np.diff(logX, axis=1)
+    sigma = np.sqrt(np.mean(diff * diff, axis=1) + 1e-8)
+
+    w = 1.0 / (sigma * sigma + 1e-4)
+    w = np.clip(w, min_weight, max_weight)
+    return _normalize_mean_one(w)
 
 
 def _time_weights_uniform(t: np.ndarray) -> np.ndarray:
     """
-    Generate uniform temporal weights (all time points weighted equally).
-
-    Args:
-        t (np.ndarray): Time points vector.
-
-    Returns:
-        np.ndarray: Weight vector of ones.
+    Equal temporal weights.
     """
-    w_time = np.ones_like(t, dtype=float)
-    w_time /= max(w_time.mean(), 1e-12)
-    return w_time
+    t = _as_time_vector(t, "t")
+    return np.ones_like(t, dtype=float)
 
 
 def _time_weights_early_emphasis(
-    t: np.ndarray, t_mid: float | None = None, strength: float = 2.0
+    t: np.ndarray,
+    *,
+    t_mid: float | None = None,
+    strength: float = 2.0,
 ) -> np.ndarray:
     """
-    Generate temporal weights that decay over time, emphasizing early kinetics.
+    Early-time emphasis using a smooth exponential decay.
 
-    Useful for signaling data where the initial response (transient phase) is often
-    more information-rich than the late steady state. Uses an exponential decay function.
-
-    Args:
-        t (np.ndarray): Time points vector.
-        t_mid (float, optional): Time point where weighting is reduced. Defaults to median(t).
-        strength (float): Factor determining the steepness of the decay.
-
-    Returns:
-        np.ndarray: Temporal weight vector.
+    Larger ``strength`` gives stronger weighting to early time points.
     """
-    t = np.asarray(t, dtype=float)
+    t = _as_time_vector(t, "t")
+
+    if strength <= 0:
+        raise ValueError(f"strength must be positive; got {strength}.")
+
     if t_mid is None:
         t_mid = float(np.median(t))
 
-    # Smooth logistic decay from ~1 at t << t_mid to ~1/strength at t >> t_mid
-    # Then renormalize to mean 1.
-    eps = 1e-12
-    scale = np.log(strength + eps)
-    # weight(t) ~ exp(-scale * (t / t_mid)) in effect
-    w = np.exp(-scale * (t / (t_mid + eps)))
-    w /= max(w.mean(), eps)
-    return w
+    if not np.isfinite(t_mid) or t_mid <= 0:
+        positive = t[t > 0]
+        t_mid = float(np.median(positive)) if positive.size else 1.0
+
+    scale = np.log(strength + _EPS)
+    w = np.exp(-scale * (t / (t_mid + _EPS)))
+    return _normalize_mean_one(w)
 
 
 def _time_weights_early_emphasis_moderate(t: np.ndarray) -> np.ndarray:
     """
-    A preset for early-emphasis weighting with a milder decay strength (1.5).
-
-    Args:
-        t (np.ndarray): Time points vector.
-
-    Returns:
-        np.ndarray: Temporal weight vector.
+    Moderate early-time emphasis.
     """
     return _time_weights_early_emphasis(t, strength=1.5)
+
+
+def _time_weights_late_emphasis(
+    t: np.ndarray,
+    *,
+    t_mid: float | None = None,
+    strength: float = 2.0,
+) -> np.ndarray:
+    """
+    Late-time emphasis. Useful when long-term convergence matters.
+    """
+    t = _as_time_vector(t, "t")
+
+    if strength <= 0:
+        raise ValueError(f"strength must be positive; got {strength}.")
+
+    if t_mid is None:
+        t_mid = float(np.median(t))
+
+    if not np.isfinite(t_mid) or t_mid <= 0:
+        positive = t[t > 0]
+        t_mid = float(np.median(positive)) if positive.size else 1.0
+
+    scale = np.log(strength + _EPS)
+    w = np.exp(scale * (t / (t_mid + _EPS)))
+    return _normalize_mean_one(w)
+
+
+def _time_weights_by_scheme(t: np.ndarray, scheme: str) -> np.ndarray:
+    """
+    Build temporal weights for a named scheme.
+    """
+    if scheme == "uniform":
+        return _time_weights_uniform(t)
+
+    if scheme == "early_emphasis":
+        return _time_weights_early_emphasis(t, strength=2.0)
+
+    if scheme == "early_emphasis_moderate":
+        return _time_weights_early_emphasis_moderate(t)
+
+    if scheme == "late_emphasis":
+        return _time_weights_late_emphasis(t, strength=2.0)
+
+    if scheme == "flat_no_noise":
+        return np.ones_like(_as_time_vector(t, "t"), dtype=float)
+
+    raise ValueError(
+        "Unknown weighting scheme: "
+        f"{scheme!r}. Expected one of: uniform, early_emphasis, "
+        "early_emphasis_moderate, late_emphasis, flat_no_noise."
+    )
 
 
 def build_weight_matrices(
     t: np.ndarray,
     Y: np.ndarray,
     A_data: np.ndarray | None = None,
+    *,
+    t_mrna: np.ndarray | None = None,
+    rna_data: np.ndarray | None = None,
     scheme: str = "uniform",
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Construct full weight matrices for the loss function based on the selected scheme.
-
-    Combines entity-level weights (based on signal noise) and temporal weights (based on
-    the selected scheme) via an outer product. This results in specific weights for every
-    data point in the time-series.
-
-    Schemes:
-    - **uniform**: Time points equal; noisy sites down-weighted.
-    - **early_emphasis**: Early time points weighted higher; noisy sites down-weighted.
-    - **flat_no_noise**: All weights set to 1.0 (noise ignored).
+    Build phosphosite, protein-abundance, and mRNA loss weight matrices.
 
     Args:
-        t (np.ndarray): Time points.
-        Y (np.ndarray): Phosphosite data matrix.
-        A_data (np.ndarray | None): Protein data matrix.
-        scheme (str): Weighting strategy identifier.
+        t:
+            Protein/phosphosite time points, shape (T,).
+        Y:
+            Phosphosite data matrix, shape (N_sites, T).
+        A_data:
+            Optional protein abundance matrix, shape (K_obs, T).
+        t_mrna:
+            Optional mRNA time points, shape (T_rna,).
+        rna_data:
+            Optional mRNA matrix, shape (G_or_matched, T_rna).
+        scheme:
+            Weighting scheme:
+                - ``uniform``
+                - ``early_emphasis``
+                - ``early_emphasis_moderate``
+                - ``late_emphasis``
+                - ``flat_no_noise``
 
     Returns:
         tuple:
-            - W_data (np.ndarray): Weight matrix for phosphosites (N_sites x T).
-            - W_data_prot (np.ndarray): Weight matrix for proteins (K_obs x T).
+            - W_data: phosphosite weights, shape (N_sites, T)
+            - W_data_prot: protein weights, shape (K_obs, T), or (0, T)
+            - W_data_mrna: mRNA weights, shape (G_or_matched, T_rna), or (0, T_rna)
+
+    Notes:
+        ``flat_no_noise`` disables entity-level noise weighting and returns all
+        ones for available modalities.
     """
+    t = _as_time_vector(t, "t")
+    Y = _as_2d_float_matrix(Y, "Y")
 
-    t = np.asarray(t, dtype=float)
-    Y = np.asarray(Y, dtype=float)
+    if Y.shape[1] != t.shape[0]:
+        raise ValueError(
+            f"Y has {Y.shape[1]} columns but t has {t.shape[0]} time points."
+        )
 
-    # --- base per-site and per-protein weights from noise ---
-    w_site = _compute_site_noise_weights(Y)
-    w_prot = _compute_protein_noise_weights(A_data)
+    A = _as_2d_float_matrix(A_data, "A_data")
+    if A.size > 0 and A.shape[1] != t.shape[0]:
+        raise ValueError(
+            f"A_data has {A.shape[1]} columns but t has {t.shape[0]} time points."
+        )
 
-    # --- time weights according to scheme ---
-    if scheme == "uniform":
-        w_time = _time_weights_uniform(t)
-
-    elif scheme == "early_emphasis":
-        w_time = _time_weights_early_emphasis(t, strength=2.0)
-
-    elif scheme == "early_emphasis_moderate":
-        w_time = _time_weights_early_emphasis_moderate(t)
-
-    elif scheme == "flat_no_noise":
-        # ignore noise, everything = 1
-        w_site = np.ones(Y.shape[0], dtype=float)
-        if A_data is not None and A_data.size > 0:
-            w_prot = np.ones(A_data.shape[0], dtype=float)
-        w_time = np.ones_like(t, dtype=float)
-
+    if t_mrna is None:
+        if rna_data is not None and np.asarray(rna_data).size > 0:
+            raise ValueError("rna_data was provided but t_mrna is None.")
+        t_mrna_arr = np.zeros((0,), dtype=float)
     else:
-        raise ValueError(f"Unknown weighting scheme: {scheme}")
+        t_mrna_arr = _as_time_vector(t_mrna, "t_mrna")
 
-    # Normalize to mean ~1 to keep overall scale consistent
-    w_site /= max(w_site.mean(), 1e-12)
-    if w_prot.size > 0:
-        w_prot /= max(w_prot.mean(), 1e-12)
-    w_time /= max(w_time.mean(), 1e-12)
+    RNA = _as_2d_float_matrix(rna_data, "rna_data")
+    if RNA.size > 0 and RNA.shape[1] != t_mrna_arr.shape[0]:
+        raise ValueError(
+            f"rna_data has {RNA.shape[1]} columns but t_mrna has "
+            f"{t_mrna_arr.shape[0]} time points."
+        )
 
-    # --- outer products to full matrices ---
-    W_data = np.outer(w_site, w_time)  # (N_sites, T)
+    # Time weights
+    w_time = _time_weights_by_scheme(t, scheme)
+    w_time = _normalize_mean_one(w_time)
 
-    if A_data is not None and A_data.size > 0:
-        W_data_prot = np.outer(w_prot, w_time)  # (K_obs, T)
+    if t_mrna_arr.size > 0:
+        w_time_mrna = _time_weights_by_scheme(t_mrna_arr, scheme)
+        w_time_mrna = _normalize_mean_one(w_time_mrna)
+    else:
+        w_time_mrna = np.zeros((0,), dtype=float)
+
+    # Entity weights
+    if scheme == "flat_no_noise":
+        w_site = np.ones((Y.shape[0],), dtype=float)
+        w_prot = np.ones((A.shape[0],), dtype=float) if A.size > 0 else np.zeros((0,))
+        w_mrna = (
+            np.ones((RNA.shape[0],), dtype=float) if RNA.size > 0 else np.zeros((0,))
+        )
+    else:
+        w_site = _compute_noise_weights(Y, name="Y")
+        w_prot = _compute_noise_weights(A, name="A_data") if A.size > 0 else np.zeros((0,))
+        w_mrna = (
+            _compute_noise_weights(RNA, name="rna_data")
+            if RNA.size > 0
+            else np.zeros((0,))
+        )
+
+    w_site = _normalize_mean_one(w_site)
+    w_prot = _normalize_mean_one(w_prot)
+    w_mrna = _normalize_mean_one(w_mrna)
+
+    # Full matrices
+    W_data = np.outer(w_site, w_time)
+
+    if A.size > 0:
+        W_data_prot = np.outer(w_prot, w_time)
     else:
         W_data_prot = np.zeros((0, t.shape[0]), dtype=float)
 
-    return W_data, W_data_prot
+    if RNA.size > 0:
+        W_data_mrna = np.outer(w_mrna, w_time_mrna)
+    else:
+        W_data_mrna = np.zeros((0, t_mrna_arr.shape[0]), dtype=float)
+
+    return W_data, W_data_prot, W_data_mrna
