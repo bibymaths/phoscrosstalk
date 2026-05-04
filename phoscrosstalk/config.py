@@ -88,7 +88,7 @@ _DEFAULTS = {
         "n_starts": 3,
         "max_steps": 500,
         "solver": "levenberg_marquardt",
-        "verbose": False,
+        "verbose": True,
         "rtol": 1e-8,
         "atol": 1e-8,
         "loss_type": "mse",

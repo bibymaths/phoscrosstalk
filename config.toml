@@ -30,7 +30,7 @@ receptors               = []         # proteins receiving external stimulus u(t)
 receptor_kinases        = []         # kinases receiving external stimulus u(t)
 # Set to true to include TF source/target proteins even without kinase-site priors.
 # Requires rna_data and tf_net.  Pass full (unfiltered) time-series files.
-include_tfs_as_proteins = false
+include_tfs_as_proteins = true
 
 # ---------------------------------------------------------------------------
 # [optimisation]  – multi-start gradient fitting
@@ -48,7 +48,7 @@ reg_lambda = 0.0001
 [loss_weights]
 phospho   = 1.0
 abundance = 1.0
-mrna      = 5.0
+mrna      = 1.0
 reg       = 1.0
 
 # ---------------------------------------------------------------------------
