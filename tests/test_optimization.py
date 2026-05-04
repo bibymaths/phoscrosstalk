@@ -440,6 +440,6 @@ def test_config_optimisation_defaults():
     assert o.solver == "levenberg_marquardt", (
         f"Default solver should be 'levenberg_marquardt', got {o.solver!r}"
     )
-    assert o.verbose == False, f"Default verbose should be False, got {o.verbose}"
+    assert o.verbose is False, f"Default verbose should be False, got {o.verbose}"
     assert o.rtol > 0, f"Default rtol should be positive, got {o.rtol}"
     assert o.atol > 0, f"Default atol should be positive, got {o.atol}"

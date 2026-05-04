@@ -43,9 +43,18 @@ from phoscrosstalk.jax_mechanisms import (
 from phoscrosstalk.simulation import build_full_A0, simulate_ode
 
 # ---------------------------------------------------------------------------
-# Numba helper kept for non-differentiable analysis paths
-# (bio_score used for post-fit reporting in analysis.py)
+# Module-level constants
 # ---------------------------------------------------------------------------
+
+# Upper bound for clipping R_rna (fold-change scale).
+# RNA fold-change values >20 are biologically implausible and risk float32 overflow.
+# This bound is a soft cap that still allows the optimizer to distinguish signals.
+_RNA_CLIP_UPPER: float = 20.0
+
+# Per-element penalty value returned when the ODE solve fails or produces non-finite
+# states.  This is large enough to guide the optimizer away from bad regions
+# but small enough to remain representable in float32 (~3.4e38 max).
+_FAILED_SOLVE_PENALTY: float = 1e3
 
 
 @njit(cache=True)
@@ -378,7 +387,7 @@ def make_loss_fn(
         # Use raw MSE (not log1p) to avoid overflow to inf when R_sim is far from obs.
         if has_mrna:
             xs_rna = xs[mrna_idx_j, :]
-            R_sim_rna = jnp.clip(xs_rna[:, :K], 0.0, 20.0).T  # (K, T_rna); clip to prevent float32 overflow
+            R_sim_rna = jnp.clip(xs_rna[:, :K], 0.0, _RNA_CLIP_UPPER).T  # (K, T_rna); clip to prevent float32 overflow
             R_sim_matched = R_sim_rna[rna_prot_idx_j, :]  # (n_match, T_rna)
             diff_R = rna_j - R_sim_matched
             f4 = jnp.sum(W_rna_j * diff_R * diff_R) / n_rna
@@ -596,7 +605,7 @@ def make_residuals_fn(
     n_reg_res = n_var + (M if has_net_reg else 0)
     total_res_size = n_phospho_res + n_abund_res + n_rna_res + n_reg_res
 
-    PENALTY = jnp.float32(1e3)  # per-element penalty value for failed solves
+    PENALTY = jnp.float32(_FAILED_SOLVE_PENALTY)
 
     def residuals_fn(theta, _args):
         """
@@ -668,7 +677,7 @@ def make_residuals_fn(
         if has_mrna:
             xs_rna = xs[mrna_idx_j, :]
             # Clip to prevent float32 overflow; R_rna is on fold-change scale (~0-20)
-            R_sim_rna = jnp.clip(xs_rna[:, :K], 0.0, 20.0).T  # (K, T_rna)
+            R_sim_rna = jnp.clip(xs_rna[:, :K], 0.0, _RNA_CLIP_UPPER).T  # (K, T_rna)
             R_sim_matched = R_sim_rna[rna_prot_idx_j, :]  # (n_match, T_rna)
             diff_R = R_sim_matched - rna_j  # (n_match, T_rna)
             r_rna = (sqrt_wr * diff_R).ravel()
