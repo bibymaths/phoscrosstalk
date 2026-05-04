@@ -49,8 +49,15 @@ try:
     from evosax.algorithms import CMA_ES, Sep_CMA_ES
 
     _EVOSAX_AVAILABLE = True
+    try:
+        from evosax.restarts.restart_conds import cma_cond, spread_cond
+
+        _EVOSAX_RESTART_CONDS_AVAILABLE = True
+    except ImportError:
+        _EVOSAX_RESTART_CONDS_AVAILABLE = False
 except ImportError:
     _EVOSAX_AVAILABLE = False
+    _EVOSAX_RESTART_CONDS_AVAILABLE = False
 
 try:
     from qdax.core.containers.mapelites_repertoire import (
@@ -218,13 +225,16 @@ def run_evosax(
     seed: int = 0,
     warm_start_pop: np.ndarray | None = None,
     verbose: bool = False,
+    n_restarts: int = 3,
+    chunk_size: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Phase 1: evosax evolutionary strategy global search.
 
     Operates internally in a normalised ``[0, 1]^n_var`` space and maps back
     to original parameter space for loss evaluation.  Optionally warm-starts
-    the initial population from LHS seeds.
+    the initial population from LHS seeds.  Supports BIPOP restarts and uses
+    ``jax.lax.scan`` for the inner generation loop to reduce Python overhead.
 
     Parameters
     ----------
@@ -241,16 +251,22 @@ def run_evosax(
     popsize : int
         Population size.  Default: 64.
     n_generations : int
-        Number of generations to run.  Default: 200.
+        Total number of generations to run.  Default: 200.
     sigma_init : float
         Initial step-size / mutation strength.  Default: 0.3.
     seed : int
         JAX random seed.  Default: 0.
     warm_start_pop : np.ndarray or None
         Seed population in original parameter space, shape ``(P, n_var)``.
-        The first ``min(P, popsize)`` rows replace the initial population.
+        The first ``min(P, popsize)`` rows are injected via one manual
+        ask→tell step before the scan loop begins.
     verbose : bool
         If ``True``, log progress every 50 generations.
+    n_restarts : int
+        BIPOP restart budget.  ``0`` disables restarts entirely.  Default: 3.
+    chunk_size : int or None
+        Number of generations per ``jax.lax.scan`` chunk.  ``None`` selects
+        ``max(1, n_generations // (n_restarts + 1))`` automatically.
 
     Returns
     -------
@@ -266,6 +282,12 @@ def run_evosax(
             "Install it with:  pip install 'evosax>=0.1.6'"
         )
 
+    if n_restarts > 0 and not _EVOSAX_RESTART_CONDS_AVAILABLE:
+        logger.warning(
+            "evosax restart conditions (cma_cond/spread_cond) are not available "
+            "in the installed evosax version; n_restarts will have no effect."
+        )
+
     xl_j = jnp.asarray(xl, dtype=jnp.float32)
     xu_j = jnp.asarray(xu, dtype=jnp.float32)
     span = xu_j - xl_j
@@ -278,6 +300,8 @@ def run_evosax(
         """Map [xl, xu] → [0,1]^n_var (clipped)."""
         return jnp.clip((jnp.asarray(theta, dtype=jnp.float32) - xl_j) / span, 0.0, 1.0)
 
+    # normed_fitness must be defined before the scan so it is captured as a
+    # closed-over constant and never retraced inside lax.scan.
     @jax.jit
     def normed_fitness(pop_norm: jnp.ndarray) -> jnp.ndarray:
         """Evaluate loss for a normalised population batch."""
@@ -285,77 +309,150 @@ def run_evosax(
         losses, _ = jax.vmap(lambda theta: loss_fn(theta, None))(pop_orig)
         return losses
 
-    # Instantiate strategy
+    # metrics_fn for best-fitness tracking inside the scan
+    def metrics_fn(key, population, fitness, state, params):  # noqa: ARG001
+        return {"best_fitness": state.best_fitness}
+
+    # Instantiate strategy (with metrics_fn if the installed version supports it)
     solution_init = jnp.zeros(n_var, dtype=jnp.float32)
     if algo == "cma_es":
-        strategy = CMA_ES(population_size=popsize, solution=solution_init)
+        try:
+            es = CMA_ES(
+                population_size=popsize,
+                solution=solution_init,
+                metrics_fn=metrics_fn,
+            )
+        except TypeError:
+            es = CMA_ES(population_size=popsize, solution=solution_init)
     else:
         # sep_cma_es is the default; 'de' and any unknown algo fall back to Sep_CMA_ES
-        strategy = Sep_CMA_ES(population_size=popsize, solution=solution_init)
+        try:
+            es = Sep_CMA_ES(
+                population_size=popsize,
+                solution=solution_init,
+                metrics_fn=metrics_fn,
+            )
+        except TypeError:
+            es = Sep_CMA_ES(population_size=popsize, solution=solution_init)
 
     mean_init = jnp.full(n_var, 0.5, dtype=jnp.float32)  # centre of [0,1] space
 
     # Start from default params; try to override sigma_init if the field exists.
-    es_params = strategy.default_params
+    params = es.default_params
     if sigma_init is not None:
-        if hasattr(es_params, "replace"):
+        if hasattr(params, "replace"):
             try:
-                es_params = es_params.replace(sigma_init=sigma_init)
+                params = params.replace(sigma_init=sigma_init)
             except TypeError:
                 logger.warning(
-                    f"evosax Params {type(es_params)} has no field 'sigma_init'; "
-                    "using default strategy.default_params."
+                    f"evosax Params {type(params)} has no field 'sigma_init'; "
+                    "using default es.default_params."
                 )
-        elif hasattr(es_params, "_replace"):
+        elif hasattr(params, "_replace"):
             try:
-                es_params = es_params._replace(sigma_init=sigma_init)
+                params = params._replace(sigma_init=sigma_init)
             except TypeError:
                 logger.warning(
-                    f"evosax Params {type(es_params)} has no field 'sigma_init'; "
-                    "using default strategy.default_params."
+                    f"evosax Params {type(params)} has no field 'sigma_init'; "
+                    "using default es.default_params."
                 )
         else:
             logger.warning(
-                f"evosax Params type {type(es_params)} does not support replace/_replace; "
-                "using default strategy.default_params."
+                f"evosax Params type {type(params)} does not support replace/_replace; "
+                "using default es.default_params."
             )
 
     key = jax.random.PRNGKey(seed)
     key, init_key = jax.random.split(key)
-    state = strategy.init(init_key, mean_init, es_params)
+    state = es.init(init_key, mean_init, params)
 
-    for gen in range(n_generations):
+    # Warm-start: inject LHS seeds in one manual ask→tell step before the scan
+    if warm_start_pop is not None:
         key, ask_key, tell_key = jax.random.split(key, 3)
-        pop, state = strategy.ask(ask_key, state, es_params)
-
-        # Warm-start: inject LHS seeds into first generation
-        if gen == 0 and warm_start_pop is not None:
-            n_inject = min(len(warm_start_pop), popsize)
-            warm_norm = to_normalized(warm_start_pop[:n_inject])
-            pop = pop.at[:n_inject].set(warm_norm)
-
-        # Clip population to [0, 1]
+        pop, state = es.ask(ask_key, state, params)
+        n_inject = min(len(warm_start_pop), popsize)
+        warm_norm = to_normalized(warm_start_pop[:n_inject])
+        pop = pop.at[:n_inject].set(warm_norm)
         pop = jnp.clip(pop, 0.0, 1.0)
-
         losses = normed_fitness(pop)
-        state, _ = strategy.tell(tell_key, pop, losses, state, es_params)
+        state, _ = es.tell(tell_key, pop, losses, state, params)
 
-        if verbose and (gen % 50 == 0 or gen == n_generations - 1):
+    # Scan step: one generation of ask → clip → evaluate → tell
+    def step(carry, scan_key):
+        state, params = carry
+        key_ask, key_tell = jax.random.split(scan_key, 2)
+        population, state = es.ask(key_ask, state, params)
+        population = jnp.clip(population, 0.0, 1.0)
+        losses = normed_fitness(population)
+        state, metrics = es.tell(key_tell, population, losses, state, params)
+        return (state, params), metrics
+
+    # BIPOP outer loop: each iteration runs one chunk via lax.scan
+    chunk = chunk_size or max(1, n_generations // (n_restarts + 1))
+    total_gen = 0
+    restart_count = 0
+    global_best_fitness = float("inf")
+    global_best_solution = None
+
+    while total_gen < n_generations:
+        remaining = n_generations - total_gen
+        this_chunk = min(chunk, remaining)
+
+        chunk_keys = jax.random.split(key, this_chunk + 1)
+        key = chunk_keys[0]
+        scan_keys = chunk_keys[1:]
+
+        (state, _), _metrics_log = jax.lax.scan(step, (state, params), scan_keys)
+        total_gen += this_chunk
+
+        # Track global best across restarts (es.init resets state.best_*)
+        current_best = float(state.best_fitness)
+        if current_best < global_best_fitness:
+            global_best_fitness = current_best
+            global_best_solution = state.best_solution
+
+        if restart_count < n_restarts and _EVOSAX_RESTART_CONDS_AVAILABLE:
+            # Evaluate last-gen population to check restart conditions
+            key, ask_key = jax.random.split(key)
+            last_pop, _ = es.ask(ask_key, state, params)
+            last_pop = jnp.clip(last_pop, 0.0, 1.0)
+            last_losses = normed_fitness(last_pop)
+
+            should_restart = spread_cond(
+                last_pop, last_losses, state, params
+            ) | cma_cond(last_pop, last_losses, state, params)
+
+            if should_restart:
+                try:
+                    mean = es.get_mean(state)
+                except AttributeError:
+                    mean = state.mean
+                key, subkey = jax.random.split(key)
+                state = es.init(subkey, mean, params)
+                restart_count += 1
+                if verbose:
+                    logger.info(
+                        f"[evosax restart #{restart_count}] gen={total_gen}",
+                        flush=True,
+                    )
+
+        if verbose and total_gen % 50 == 0:
             logger.info(
-                f"[evosax gen {gen:4d}] best={float(state.best_fitness):.6f}",
+                f"[evosax gen {total_gen}] best={float(state.best_fitness):.6f}",
                 flush=True,
             )
 
-    # Extract best individual and full final population
-    key, ask_key = jax.random.split(key)
-    final_pop, _ = strategy.ask(ask_key, state, es_params)
-    final_pop = jnp.clip(final_pop, 0.0, 1.0)
-
-    # Best individual (from strategy state)
-    best_norm = state.best_solution  # shape (n_var,)
+    # Extract best individual: prefer the global best tracked across all restarts
+    if global_best_solution is not None:
+        best_norm = global_best_solution
+    else:
+        best_norm = state.best_solution
     best_orig = np.asarray(to_original(best_norm), dtype=np.float64)
 
-    # Full population in original space
+    # Full final population in original space
+    key, ask_key = jax.random.split(key)
+    final_pop, _ = es.ask(ask_key, state, params)
+    final_pop = jnp.clip(final_pop, 0.0, 1.0)
     final_pop_orig = np.asarray(jax.vmap(to_original)(final_pop), dtype=np.float64)
 
     return best_orig, final_pop_orig
@@ -594,14 +691,24 @@ def run_qdax_mapelites(
     min_bd = jnp.array([_bd_min, _bd_min], dtype=jnp.float32)
     max_bd = jnp.array([_bd_max, _bd_max], dtype=jnp.float32)
 
-    centroids, _ = compute_cvt_centroids(
-        num_descriptors=2,
-        num_init_cvt_samples=n_centroids * 10,
-        num_centroids=n_centroids,
-        minval=min_bd,
-        maxval=max_bd,
-        random_key=centroid_key,
-    )
+    try:
+        centroids, _ = compute_cvt_centroids(
+            num_descriptors=2,
+            num_init_cvt_samples=n_centroids * 10,
+            num_centroids=n_centroids,
+            minval=min_bd,
+            maxval=max_bd,
+            key=centroid_key,
+        )
+    except TypeError:
+        centroids, _ = compute_cvt_centroids(
+            num_descriptors=2,
+            num_init_cvt_samples=n_centroids * 10,
+            num_centroids=n_centroids,
+            minval=min_bd,
+            maxval=max_bd,
+            random_key=centroid_key,
+        )
 
     # ------------------------------------------------------------------
     # Initial population: perturb theta_seed
@@ -653,23 +760,19 @@ def run_qdax_mapelites(
     logger.header("[*] QDax MAP-Elites exploration")
 
     # ------------------------------------------------------------------
-    # MAP-Elites loop (manual ask/tell using isoline variation)
+    # MAP-Elites loop: JIT-compiled step to avoid retracing per iteration
     # ------------------------------------------------------------------
-    for it in range(n_iterations):
-        key, sample_key, var_key, score_key = jax.random.split(key, 4)
-
-        # Sample parents from repertoire
+    @jax.jit
+    def mapelites_step(repertoire, key):
+        key, sample_key, var_key = jax.random.split(key, 3)
         parents = repertoire.sample(sample_key, batch_size)
-
-        # Generate offspring via isoline variation
         offspring = variation_fn(parents, repertoire, var_key)
-
-        # Score offspring
         off_fit, off_desc, _ = scoring_fn(offspring)
-
-        # Add to repertoire
         repertoire = repertoire.add(offspring, off_desc, off_fit)
+        return repertoire, key
 
+    for it in range(n_iterations):
+        repertoire, key = mapelites_step(repertoire, key)
         if verbose and (it % 500 == 0 or it == n_iterations - 1):
             valid_mask = repertoire.fitnesses > -jnp.inf
             n_filled = int(valid_mask.sum())
