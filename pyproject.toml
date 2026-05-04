@@ -12,7 +12,6 @@ requires-python = ">=3.11,<3.12"
 dependencies = [
   "numpy==2.2.2",
   "pandas>=2.2,<2.3",
-  "jax>=0.4.30",
   "jaxlib>=0.4.30",
   "diffrax>=0.6.0",
   "optimistix>=0.0.8",

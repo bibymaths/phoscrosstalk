@@ -358,134 +358,288 @@ def build_kinase_site_from_kea(ks_psite_table_path, sites):
     row_sums[row_sums == 0.0] = 1.0
     return K_site_kin / row_sums, kinases
 
+RNA_TIMEPOINTS_9 = np.array(
+    [4, 8, 15, 30, 60, 120, 240, 480, 960],
+    dtype=float,
+)
 
-_MAX_WARNING_ITEMS = 10
+_MAX_WARNING_ITEMS = 20
 
-def load_rna_data(path):
+
+def load_rna_data(path, timepoints=None):
     """
     Load mRNA time-series data from a CSV file.
 
-    Expected format: rows = genes, columns = time points (labelled numerically
-    or with any prefix).  The first column whose name cannot be parsed as a
-    float is treated as the gene-ID index.
+    Expected format for current data:
 
-    Args:
-        path (str): Path to the CSV file.
+        GeneID,x1,x2,x3,x4,x5,x6,x7,x8,x9
+        SMAD7,...
 
-    Returns:
-        tuple:
-            - gene_ids (list[str]): Gene identifiers (row labels).
-            - t_rna (np.ndarray): Time points parsed from the column headers.
-            - rna_matrix (np.ndarray): Fold-change matrix (n_genes × T_rna).
+    The columns x1..x9 are mapped to mRNA time points:
 
-    Raises:
-        FileNotFoundError: If *path* does not exist.
-        ValueError: If required columns are missing, NaNs found in data, or
-                    fewer than two numeric columns are present.
+        [4, 8, 15, 30, 60, 120, 240, 480, 960]
+
+    Parameters
+    ----------
+    path : str
+        Path to the mRNA CSV file.
+
+    timepoints : array-like | None
+        Optional explicit time points. If None and columns are x1..x9,
+        RNA_TIMEPOINTS_9 is used.
+
+    Returns
+    -------
+    tuple
+        gene_ids : list[str]
+        t_rna : np.ndarray
+        rna_matrix : np.ndarray
     """
+
     if not os.path.exists(path):
         raise FileNotFoundError(f"mRNA data file not found: {path}")
 
-    df = pd.read_csv(path, sep=None, engine="python")
+    df = pd.read_csv(path)
 
-    # Identify the gene-ID column (first non-numeric column) and time columns
-    time_cols = []
-    id_col = None
-    for col in df.columns:
-        try:
-            float(col)
-            time_cols.append(col)
-        except (ValueError, TypeError):
-            if id_col is None:
-                id_col = col
+    if df.empty:
+        raise ValueError(f"mRNA data file is empty: {path}")
 
-    if len(time_cols) < 2:
-        raise ValueError(
-            f"mRNA data file '{path}' must have at least 2 numeric time-point "
-            f"columns; found {len(time_cols)}."
-        )
-
-    if id_col is None:
-        # No string column found – use row index as gene IDs
-        gene_ids = [str(i) for i in range(len(df))]
+    # Prefer explicit GeneID for your current file.
+    if "GeneID" in df.columns:
+        id_col = "GeneID"
     else:
-        if df[id_col].isna().any():
+        # Fallback: first non-numeric / non-time-like column.
+        id_col = None
+        for col in df.columns:
+            col_str = str(col).strip()
+            if not _is_time_column(col_str):
+                id_col = col
+                break
+
+        if id_col is None:
             raise ValueError(
-                f"mRNA data file '{path}': gene-ID column '{id_col}' contains NaN."
+                f"mRNA data file '{path}' must contain a gene identifier column, "
+                "for example 'GeneID'."
             )
-        gene_ids = df[id_col].astype(str).tolist()
 
-    matrix = df[time_cols].values.astype(float)
-
-    nan_mask = np.isnan(matrix)
-    if nan_mask.any():
+    if df[id_col].isna().any():
         raise ValueError(
-            f"mRNA data file '{path}': {int(nan_mask.sum())} NaN value(s) found "
-            "in expression matrix. Fill or remove them before proceeding."
+            f"mRNA data file '{path}': gene-ID column '{id_col}' contains NaN."
         )
 
-    t_rna = np.array([float(c) for c in time_cols], dtype=float)
+    gene_ids = df[id_col].astype(str).str.strip().tolist()
 
-    return gene_ids, t_rna, matrix
+    if len(set(gene_ids)) != len(gene_ids):
+        duplicated = pd.Series(gene_ids)[pd.Series(gene_ids).duplicated()].unique()
+        raise ValueError(
+            f"mRNA data file '{path}' contains duplicated gene IDs: "
+            + ", ".join(map(str, duplicated[:_MAX_WARNING_ITEMS]))
+        )
+
+    data_cols = [c for c in df.columns if c != id_col]
+
+    if len(data_cols) < 2:
+        raise ValueError(
+            f"mRNA data file '{path}' must contain at least 2 time-series columns; "
+            f"found {len(data_cols)}."
+        )
+
+    # Current expected format: x1..x9
+    x_cols = [c for c in data_cols if re.fullmatch(r"x\d+", str(c).strip(), flags=re.I)]
+
+    if len(x_cols) == len(data_cols):
+        x_cols = sorted(x_cols, key=lambda c: int(re.findall(r"\d+", str(c))[0]))
+
+        if timepoints is None:
+            if len(x_cols) != len(RNA_TIMEPOINTS_9):
+                raise ValueError(
+                    f"mRNA data file '{path}' has {len(x_cols)} x-columns, but the "
+                    f"default RNA time vector has {len(RNA_TIMEPOINTS_9)} values. "
+                    "Pass explicit timepoints or fix the input file."
+                )
+            t_rna = RNA_TIMEPOINTS_9.copy()
+        else:
+            t_rna = np.asarray(timepoints, dtype=float)
+            if len(t_rna) != len(x_cols):
+                raise ValueError(
+                    f"Provided {len(t_rna)} RNA time points but found "
+                    f"{len(x_cols)} expression columns."
+                )
+
+        time_cols = x_cols
+
+    else:
+        # Fallback: parse numeric column names directly.
+        numeric_cols = []
+        numeric_times = []
+
+        for col in data_cols:
+            try:
+                numeric_times.append(float(str(col).strip()))
+                numeric_cols.append(col)
+            except ValueError:
+                continue
+
+        if len(numeric_cols) < 2:
+            raise ValueError(
+                f"mRNA data file '{path}' must either use x1..x9 columns or numeric "
+                f"time-point column names. Found columns: {list(df.columns)}"
+            )
+
+        order = np.argsort(numeric_times)
+        time_cols = [numeric_cols[i] for i in order]
+        t_rna = np.asarray([numeric_times[i] for i in order], dtype=float)
+
+    try:
+        rna_matrix = df[time_cols].to_numpy(dtype=float)
+    except ValueError as exc:
+        raise ValueError(
+            f"mRNA data file '{path}' contains non-numeric expression values "
+            f"in columns {time_cols}."
+        ) from exc
+
+    if not np.isfinite(rna_matrix).all():
+        bad = int((~np.isfinite(rna_matrix)).sum())
+        raise ValueError(
+            f"mRNA data file '{path}' contains {bad} non-finite value(s) "
+            "in the expression matrix."
+        )
+
+    if len(t_rna) != rna_matrix.shape[1]:
+        raise ValueError(
+            f"Internal RNA shape mismatch: {len(t_rna)} time points but "
+            f"RNA matrix has {rna_matrix.shape[1]} columns."
+        )
+
+    return gene_ids, t_rna, rna_matrix
+
+
+def _is_time_column(col):
+    """
+    Return True for numeric columns or x1/x2/... style time columns.
+    """
+    col = str(col).strip()
+
+    if re.fullmatch(r"x\d+", col, flags=re.I):
+        return True
+
+    try:
+        float(col)
+        return True
+    except ValueError:
+        return False
 
 
 def load_tf_network(path, gene_ids=None):
     """
-    Load a TF–mRNA interaction network from a CSV file.
+    Load a TF-mRNA interaction network from a CSV file.
 
-    Expected columns:
-        ``source`` – TF gene name
-        ``target`` – target mRNA gene name
-        ``weight`` – interaction weight (optional; defaults to 1.0)
+    Expected current format:
 
-    Args:
-        path (str): Path to the CSV file.
-        gene_ids (list[str] | None): Known gene IDs (from mRNA data).  Used to
-            warn about TF names that do not appear in the mRNA dataset.
+        Source,Target,Weight
+        AR,CLK3,0.827...
 
-    Returns:
-        pd.DataFrame: Validated edge table with columns
-            ``['source', 'target', 'weight']``.
+    Column names are accepted case-insensitively and normalized to:
 
-    Raises:
-        FileNotFoundError: If *path* does not exist.
-        ValueError: If required columns are missing or NaN values are found in
-                    the ``source`` or ``target`` columns.
+        source, target, weight
+
+    Parameters
+    ----------
+    path : str
+        Path to the TF-mRNA CSV file.
+
+    gene_ids : list[str] | None
+        Optional mRNA gene IDs from the RNA file. Used for warnings only.
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: source, target, weight
     """
+
     if not os.path.exists(path):
-        raise FileNotFoundError(f"TF–mRNA network file not found: {path}")
+        raise FileNotFoundError(f"TF-mRNA network file not found: {path}")
 
-    df = pd.read_csv(path, sep=None, engine="python")
+    df = pd.read_csv(path)
 
-    for col in ("source", "target"):
-        if col not in df.columns:
+    if df.empty:
+        raise ValueError(f"TF-mRNA network file is empty: {path}")
+
+    # Normalize column names case-insensitively.
+    col_map = {str(c).strip().lower(): c for c in df.columns}
+
+    required = {
+        "source": None,
+        "target": None,
+    }
+
+    for key in required:
+        if key not in col_map:
             raise ValueError(
-                f"TF network file '{path}' is missing required column '{col}'."
+                f"TF network file '{path}' is missing required column '{key}'. "
+                f"Found columns: {list(df.columns)}"
             )
-        if df[col].isna().any():
-            raise ValueError(
-                f"TF network file '{path}': column '{col}' contains NaN values."
-            )
+        required[key] = col_map[key]
 
-    if "weight" not in df.columns:
-        df = df.copy()
-        df["weight"] = 1.0
+    source_col = required["source"]
+    target_col = required["target"]
+    weight_col = col_map.get("weight", None)
+
+    out = pd.DataFrame()
+    out["source"] = df[source_col].astype(str).str.strip()
+    out["target"] = df[target_col].astype(str).str.strip()
+
+    if out["source"].eq("").any():
+        raise ValueError(f"TF network file '{path}': empty source values found.")
+
+    if out["target"].eq("").any():
+        raise ValueError(f"TF network file '{path}': empty target values found.")
+
+    if df[source_col].isna().any():
+        raise ValueError(f"TF network file '{path}': source column contains NaN.")
+
+    if df[target_col].isna().any():
+        raise ValueError(f"TF network file '{path}': target column contains NaN.")
+
+    if weight_col is None:
+        out["weight"] = 1.0
     else:
-        df = df.copy()
-        df["weight"] = df["weight"].fillna(1.0).astype(float)
+        out["weight"] = pd.to_numeric(df[weight_col], errors="coerce").fillna(1.0)
+
+    if not np.isfinite(out["weight"].to_numpy(dtype=float)).all():
+        raise ValueError(
+            f"TF network file '{path}': weight column contains non-finite values."
+        )
+
+    # Collapse duplicate edges by summing weights.
+    out = (
+        out.groupby(["source", "target"], as_index=False, sort=False)["weight"]
+        .sum()
+    )
 
     if gene_ids is not None:
-        gene_set = set(gene_ids)
-        tf_names = set(df["source"].astype(str).unique())
-        unknown = tf_names - gene_set
-        if unknown:
+        gene_set = {str(g).strip() for g in gene_ids}
+
+        unknown_targets = sorted(set(out["target"]) - gene_set)
+        if unknown_targets:
             logger.warning(
-                f"[!] {len(unknown)} TF name(s) in '{path}' not found in mRNA data: "
-                + ", ".join(sorted(unknown)[:_MAX_WARNING_ITEMS])
-                + ("..." if len(unknown) > _MAX_WARNING_ITEMS else "")
+                f"[!] {len(unknown_targets)} TF target(s) in '{path}' not found "
+                "in mRNA data: "
+                + ", ".join(unknown_targets[:_MAX_WARNING_ITEMS])
+                + ("..." if len(unknown_targets) > _MAX_WARNING_ITEMS else "")
             )
 
-    return df[["source", "target", "weight"]].copy()
+        unknown_sources = sorted(set(out["source"]) - gene_set)
+        if unknown_sources:
+            logger.warning(
+                f"[!] {len(unknown_sources)} TF source(s) in '{path}' not found "
+                "in mRNA data. This is allowed if TF activity is inferred from "
+                "protein/kinase data: "
+                + ", ".join(unknown_sources[:_MAX_WARNING_ITEMS])
+                + ("..." if len(unknown_sources) > _MAX_WARNING_ITEMS else "")
+            )
+
+    return out[["source", "target", "weight"]].copy()
 
 
 def build_tf_prot_weights(tf_net_df, gene_ids, proteins):
