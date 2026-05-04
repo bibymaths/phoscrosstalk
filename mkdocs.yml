@@ -81,6 +81,20 @@ markdown_extensions:
 plugins:
   - search
   - tags
+  - mkdocstrings:
+      handlers:
+        python:
+          paths:
+            - .
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            show_signature_annotations: true
+            separate_signature: true
+            members_order: source
+            heading_level: 2
 
 nav:
   - Home: index.md
@@ -93,6 +107,18 @@ nav:
   - Dashboard: dashboard.md
   - Troubleshooting: troubleshooting.md
   - Developer Guide: developer.md
+  - API:
+      - Overview: api/index.md
+      - Simulation: api/simulation.md
+      - Optimisation: api/optimization.md
+      - Hybrid Fitting: api/hybrid_fit.md
+      - Data Loading: api/data_loader.md
+      - Derived Rates: api/derived_rates.md
+      - Weighting: api/weighting.md
+      - Analysis: api/analysis.md
+      - Sensitivity: api/sensitivity.md
+      - Post-processing: api/post_processing.md
+      - Full Reference: api/reference.md
 
 extra:
   social:
@@ -102,6 +128,9 @@ extra:
     - icon: fontawesome/solid/globe
       link: https://bibymaths.github.io
       name: Website
+    - icon: fontawesome/solid/envelope
+      link: mailto:mishraabhinav36@gmail.com
+      name: Email
 
 extra_css:
   - assets/stylesheets/extra.css
