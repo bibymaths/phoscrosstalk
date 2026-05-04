@@ -70,6 +70,7 @@ _DEFAULTS = {
         "scale_mode": "none",
         "length_scale": 50.0,
         "weight_scheme": "uniform",
+        "include_tfs_as_proteins": False,
     },
     "optimisation": {
         "n_starts": 3,
