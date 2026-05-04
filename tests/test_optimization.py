@@ -21,7 +21,6 @@ import pytest
 
 from phoscrosstalk.config import ModelDims
 
-
 # ---------------------------------------------------------------------------
 # Shared fixture
 # ---------------------------------------------------------------------------
@@ -133,14 +132,10 @@ def test_run_single_optimisation_uses_least_squares():
     """
     import inspect
 
-    import optimistix as optx
-
     from phoscrosstalk.optimization import run_single_optimisation
 
     src = inspect.getsource(run_single_optimisation)
-    assert "least_squares" in src, (
-        "run_single_optimisation must use optx.least_squares"
-    )
+    assert "least_squares" in src, "run_single_optimisation must use optx.least_squares"
     assert "LevenbergMarquardt" in src, (
         "run_single_optimisation must use LevenbergMarquardt"
     )
@@ -186,7 +181,9 @@ def test_residuals_finite_tiny_model():
     r, (f1, f2, f3, f4) = residuals_fn(theta0, None)
 
     r_np = np.asarray(r)
-    assert np.all(np.isfinite(r_np)), f"Residual vector has non-finite values: {r_np[~np.isfinite(r_np)]}"
+    assert np.all(np.isfinite(r_np)), (
+        f"Residual vector has non-finite values: {r_np[~np.isfinite(r_np)]}"
+    )
     assert np.isfinite(float(f1)), f"f1 is not finite: {f1}"
     assert np.isfinite(float(f4)), f"f4 is not finite: {f4}"
 
@@ -295,7 +292,9 @@ def test_rna_disabled_gives_f4_zero():
     r, (f1, f2, f3, f4) = residuals_fn(theta0, None)
 
     assert float(f4) == 0.0, f"f4 must be 0.0 when RNA is disabled, got {float(f4)}"
-    assert np.all(np.isfinite(np.asarray(r))), "Residuals must be finite with RNA disabled"
+    assert np.all(np.isfinite(np.asarray(r))), (
+        "Residuals must be finite with RNA disabled"
+    )
 
 
 # ---------------------------------------------------------------------------

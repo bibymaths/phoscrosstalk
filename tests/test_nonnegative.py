@@ -24,14 +24,11 @@ Test coverage
 
 from __future__ import annotations
 
-import os
-
 import numpy as np
 import pandas as pd
 import pytest
 
 from phoscrosstalk.config import ModelDims, load_config
-
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -54,7 +51,9 @@ def _make_tiny(K=2, M=3, N=4, T=5, seed=0):
     t = np.linspace(0.0, 30.0, T)
     P_data = rng.uniform(0.1, 0.9, (N, T))
     A_data = rng.uniform(0.5, 2.0, (K, T))
-    theta = rng.uniform(-2.0, 0.0, dim)  # log-scale parameter values; exp() gives the rates
+    theta = rng.uniform(
+        -2.0, 0.0, dim
+    )  # log-scale parameter values; exp() gives the rates
 
     Cg = np.eye(N) * 0.1
     Cl = np.eye(N) * 0.05
@@ -69,11 +68,20 @@ def _make_tiny(K=2, M=3, N=4, T=5, seed=0):
     rm_kin = np.zeros(M, dtype=int)
 
     return dict(
-        K=K, M=M, N=N, T=T, t=t,
-        P_data=P_data, A_data=A_data, theta=theta,
-        Cg=Cg, Cl=Cl,
+        K=K,
+        M=M,
+        N=N,
+        T=T,
+        t=t,
+        P_data=P_data,
+        A_data=A_data,
+        theta=theta,
+        Cg=Cg,
+        Cl=Cl,
         site_prot_idx=site_prot_idx,
-        K_site_kin=K_site_kin, R=R, L_alpha=L_alpha,
+        K_site_kin=K_site_kin,
+        R=R,
+        L_alpha=L_alpha,
         kin_to_prot_idx=kin2prot,
         receptor_mask_prot=rm_prot,
         receptor_mask_kin=rm_kin,
@@ -88,8 +96,9 @@ def _make_tiny(K=2, M=3, N=4, T=5, seed=0):
 
 def test_decoded_rate_params_positive():
     """k_deact, d_deg, beta_g, beta_l, alpha, kK_act, kK_deact, k_off > 0."""
-    from phoscrosstalk.jax_mechanisms import decode_theta_jax
     import jax.numpy as jnp
+
+    from phoscrosstalk.jax_mechanisms import decode_theta_jax
 
     K, M, N = 3, 4, 6
     dim = 2 * K + 2 + 3 * M + N + 4
@@ -98,12 +107,16 @@ def test_decoded_rate_params_positive():
     for _ in range(10):
         theta = rng.uniform(-5.0, 5.0, dim)
         theta_j = jnp.asarray(theta, dtype=jnp.float32)
-        (k_deact, d_deg, beta_g, beta_l, alpha, kK_act, kK_deact, k_off,
-         _, _, _, _) = decode_theta_jax(theta_j, K, M, N)
+        (k_deact, d_deg, beta_g, beta_l, alpha, kK_act, kK_deact, k_off, _, _, _, _) = (
+            decode_theta_jax(theta_j, K, M, N)
+        )
 
         for name, val in [
-            ("k_deact", k_deact), ("d_deg", d_deg),
-            ("alpha", alpha), ("kK_act", kK_act), ("kK_deact", kK_deact),
+            ("k_deact", k_deact),
+            ("d_deg", d_deg),
+            ("alpha", alpha),
+            ("kK_act", kK_act),
+            ("kK_deact", kK_deact),
             ("k_off", k_off),
         ]:
             arr = np.asarray(val)
@@ -121,8 +134,9 @@ def test_decoded_rate_params_positive():
 
 def test_gamma_params_can_be_negative():
     """Gamma parameters must NOT be forced to non-negative values."""
-    from phoscrosstalk.jax_mechanisms import decode_theta_jax
     import jax.numpy as jnp
+
+    from phoscrosstalk.jax_mechanisms import decode_theta_jax
 
     K, M, N = 2, 2, 3
     dim = 2 * K + 2 + 3 * M + N + 4
@@ -134,12 +148,10 @@ def test_gamma_params_can_be_negative():
     theta_neg = np.zeros(dim)
     theta_neg[-4:] = -10.0  # raw_gamma → tanh(-10) ≈ -1 → decoded gamma < 0
 
-    (_, _, _, _, _, _, _, _,
-     gsp_pos, gas_pos, gap_pos, gkn_pos) = decode_theta_jax(
+    (_, _, _, _, _, _, _, _, gsp_pos, gas_pos, gap_pos, gkn_pos) = decode_theta_jax(
         jnp.asarray(theta_pos, dtype=jnp.float32), K, M, N
     )
-    (_, _, _, _, _, _, _, _,
-     gsp_neg, gas_neg, gap_neg, gkn_neg) = decode_theta_jax(
+    (_, _, _, _, _, _, _, _, gsp_neg, gas_neg, gap_neg, gkn_neg) = decode_theta_jax(
         jnp.asarray(theta_neg, dtype=jnp.float32), K, M, N
     )
 
@@ -160,6 +172,7 @@ def test_gamma_params_can_be_negative():
 def test_rhs_finite_for_nonneg_states():
     """RHS must return finite derivatives when fed valid non-negative states."""
     import jax.numpy as jnp
+
     from phoscrosstalk.jax_mechanisms import compute_prev_site_idx, make_rhs
 
     K, M, N = 2, 3, 4
@@ -171,11 +184,11 @@ def test_rhs_finite_for_nonneg_states():
 
     # Valid non-negative state: R_rna ≥ 0, S ∈ [0,1], A ≥ 0, Kdyn ∈ [0,1], p ∈ [0,1]
     y = jnp.zeros(3 * K + M + N, dtype=jnp.float32)
-    y = y.at[:K].set(1.0)   # R_rna = 1
-    y = y.at[K:2*K].set(0.5)  # S = 0.5
-    y = y.at[2*K:3*K].set(1.0)  # A = 1
-    y = y.at[3*K:3*K+M].set(0.3)  # Kdyn = 0.3
-    y = y.at[3*K+M:].set(0.2)  # p = 0.2
+    y = y.at[:K].set(1.0)  # R_rna = 1
+    y = y.at[K : 2 * K].set(0.5)  # S = 0.5
+    y = y.at[2 * K : 3 * K].set(1.0)  # A = 1
+    y = y.at[3 * K : 3 * K + M].set(0.3)  # Kdyn = 0.3
+    y = y.at[3 * K + M :].set(0.2)  # p = 0.2
 
     spi = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
     K_sk = jnp.ones((N, M), dtype=jnp.float32) / M
@@ -205,6 +218,7 @@ def test_rhs_finite_for_nonneg_states():
 def test_rhs_boundary_guard_lower_bound():
     """At lower bound (state=0), the derivative must not be negative."""
     import jax.numpy as jnp
+
     from phoscrosstalk.jax_mechanisms import compute_prev_site_idx, make_rhs
 
     K, M, N = 2, 2, 3
@@ -241,15 +255,11 @@ def test_rhs_boundary_guard_lower_bound():
 
     # S at lower bound (0): derivative must be ≥ 0
     dS = dy[K : 2 * K]
-    assert np.all(dS >= -1e-7), (
-        f"S derivative is negative at lower bound: {dS}"
-    )
+    assert np.all(dS >= -1e-7), f"S derivative is negative at lower bound: {dS}"
 
     # A at lower bound (0): derivative must be ≥ 0 (s_eff ≥ 0)
     dA = dy[2 * K : 3 * K]
-    assert np.all(dA >= -1e-7), (
-        f"A derivative is negative at lower bound: {dA}"
-    )
+    assert np.all(dA >= -1e-7), f"A derivative is negative at lower bound: {dA}"
 
     # Kdyn at lower bound (0): derivative must be ≥ 0
     dKdyn = dy[3 * K : 3 * K + M]
@@ -259,9 +269,7 @@ def test_rhs_boundary_guard_lower_bound():
 
     # p at lower bound (0): derivative must be ≥ 0
     dp = dy[3 * K + M :]
-    assert np.all(dp >= -1e-7), (
-        f"p derivative is negative at lower bound: {dp}"
-    )
+    assert np.all(dp >= -1e-7), f"p derivative is negative at lower bound: {dp}"
 
 
 # ---------------------------------------------------------------------------
@@ -276,10 +284,19 @@ def test_simulate_ode_nonneg_outputs():
     m = _make_tiny(K=2, M=3, N=4, T=6)
 
     result = simulate_ode(
-        m["t"], m["P_data"], m["A_data"], m["theta"],
-        m["Cg"], m["Cl"], m["site_prot_idx"], m["K_site_kin"],
-        m["R"], m["L_alpha"], m["kin_to_prot_idx"],
-        m["receptor_mask_prot"], m["receptor_mask_kin"],
+        m["t"],
+        m["P_data"],
+        m["A_data"],
+        m["theta"],
+        m["Cg"],
+        m["Cl"],
+        m["site_prot_idx"],
+        m["K_site_kin"],
+        m["R"],
+        m["L_alpha"],
+        m["kin_to_prot_idx"],
+        m["receptor_mask_prot"],
+        m["receptor_mask_kin"],
         mechanism="dist",
         return_full=True,
     )
@@ -305,7 +322,8 @@ def test_residuals_no_negative_model_outputs():
     the loss is consistent with clipped outputs.
     """
     import jax.numpy as jnp
-    from phoscrosstalk.optimization import make_residuals_fn, create_bounds
+
+    from phoscrosstalk.optimization import create_bounds, make_residuals_fn
 
     m = _make_tiny(K=2, M=3, N=4, T=5)
     K, M, N = m["K"], m["M"], m["N"]
@@ -313,18 +331,24 @@ def test_residuals_no_negative_model_outputs():
     theta_mid = jnp.asarray(0.5 * (xl + xu), dtype=jnp.float32)
 
     residuals_fn = make_residuals_fn(
-        t=m["t"], P_data=m["P_data"],
+        t=m["t"],
+        P_data=m["P_data"],
         A_scaled=np.zeros((0, m["T"])),
         prot_idx_for_A=np.array([], dtype=int),
         W_data=np.ones((N, m["T"])),
         W_data_prot=np.zeros((0, m["T"])),
-        Cg=m["Cg"], Cl=m["Cl"],
+        Cg=m["Cg"],
+        Cl=m["Cl"],
         site_prot_idx=m["site_prot_idx"],
-        K_site_kin=m["K_site_kin"], R=m["R"], L_alpha=m["L_alpha"],
+        K_site_kin=m["K_site_kin"],
+        R=m["R"],
+        L_alpha=m["L_alpha"],
         kin_to_prot_idx=m["kin_to_prot_idx"],
         receptor_mask_prot=m["receptor_mask_prot"],
         receptor_mask_kin=m["receptor_mask_kin"],
-        mechanism="dist", lambda_net=1e-4, reg_lambda=1e-4,
+        mechanism="dist",
+        lambda_net=1e-4,
+        reg_lambda=1e-4,
     )
 
     r, (f1, f2, f3, f4) = residuals_fn(theta_mid, None)
@@ -371,7 +395,6 @@ def test_mrna_fit_timeseries_nonneg(tmp_path):
 def test_fit_timeseries_nonneg(tmp_path):
     """fit_timeseries.tsv sim_t* columns must not contain negative values."""
     from phoscrosstalk.analysis import save_fitted_simulation
-    from phoscrosstalk.simulation import build_full_A0
 
     m = _make_tiny(K=2, M=3, N=4, T=5)
     K, M, N, T = m["K"], m["M"], m["N"], m["T"]

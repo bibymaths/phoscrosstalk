@@ -96,26 +96,26 @@ _DEFAULTS = {
         "reg_lambda": 0.0001,
     },
     "hybrid": {
-        "lhs_n_samples":   512,
-        "lhs_top_p":        16,
-        "skip_lhs":        False,
-        "es_algo":    "sep_cma_es",
-        "es_popsize":       64,
+        "lhs_n_samples": 512,
+        "lhs_top_p": 16,
+        "skip_lhs": False,
+        "es_algo": "sep_cma_es",
+        "es_popsize": 64,
         "es_n_generations": 200,
-        "es_sigma_init":    0.3,
-        "es_top_k":          5,
-        "lm_max_steps":    500,
-        "lm_rtol":         1e-8,
-        "lm_atol":         1e-8,
-        "seed":              0,
-        "verbose":         False,
+        "es_sigma_init": 0.3,
+        "es_top_k": 5,
+        "lm_max_steps": 500,
+        "lm_rtol": 1e-8,
+        "lm_atol": 1e-8,
+        "seed": 0,
+        "verbose": False,
     },
     "qdax": {
-        "n_centroids":  1024,
-        "batch_size":    256,
+        "n_centroids": 1024,
+        "batch_size": 256,
         "n_iterations": 2000,
-        "iso_sigma":    0.005,
-        "line_sigma":   0.05,
+        "iso_sigma": 0.005,
+        "line_sigma": 0.05,
     },
     "loss_weights": {
         "phospho": 1.0,
@@ -424,15 +424,18 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
     bounds_cfg = getattr(cfg, "bounds", None)
     if bounds_cfg is not None:
         _positive_bound_fields = [
-            "rate_min", "rate_max", "protein_degradation_max",
-            "kinase_rate_max", "phosphatase_rate_max",
-            "gamma_abs_max", "rna_max", "abundance_max",
+            "rate_min",
+            "rate_max",
+            "protein_degradation_max",
+            "kinase_rate_max",
+            "phosphatase_rate_max",
+            "gamma_abs_max",
+            "rna_max",
+            "abundance_max",
         ]
         for field in _positive_bound_fields:
             val = getattr(bounds_cfg, field, None)
-            if val is not None and (
-                not isinstance(val, (int, float)) or val <= 0
-            ):
+            if val is not None and (not isinstance(val, (int, float)) or val <= 0):
                 errors.append(
                     f"  [bounds] {field} = {val!r} must be a positive number."
                 )

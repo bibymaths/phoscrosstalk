@@ -212,7 +212,7 @@ def main():
     parser.add_argument(
         "--solver",
         choices=["lm", "hybrid"],
-        default="lm",
+        default=None,
         help=(
             "Solver backend.  "
             "lm: existing run_single_optimisation (default).  "
@@ -357,6 +357,31 @@ def main():
         max_steps=cfg.optimisation.max_steps,
         lambda_net=cfg.optimisation.lambda_net,
         reg_lambda=cfg.optimisation.reg_lambda,
+        # solver backend + hybrid settings
+        solver=getattr(cfg.optimisation, "solver", "lm"),
+        es_algo=getattr(
+            getattr(cfg, "hybrid", SimpleNamespace()), "es_algo", "sep_cma_es"
+        ),
+        es_popsize=getattr(getattr(cfg, "hybrid", SimpleNamespace()), "es_popsize", 64),
+        es_generations=getattr(
+            getattr(cfg, "hybrid", SimpleNamespace()), "es_n_generations", 200
+        ),
+        es_top_k=getattr(getattr(cfg, "hybrid", SimpleNamespace()), "es_top_k", 5),
+        lhs_samples=getattr(
+            getattr(cfg, "hybrid", SimpleNamespace()), "lhs_n_samples", 512
+        ),
+        skip_lhs=getattr(getattr(cfg, "hybrid", SimpleNamespace()), "skip_lhs", False),
+        qdax_centroids=getattr(
+            getattr(cfg, "qdax", SimpleNamespace()), "n_centroids", 1024
+        ),
+        qdax_iterations=getattr(
+            getattr(cfg, "qdax", SimpleNamespace()), "n_iterations", 2000
+        ),
+        qdax_batch=getattr(getattr(cfg, "qdax", SimpleNamespace()), "batch_size", 256),
+        hybrid_seed=getattr(getattr(cfg, "hybrid", SimpleNamespace()), "seed", 0),
+        hybrid_verbose=getattr(
+            getattr(cfg, "hybrid", SimpleNamespace()), "verbose", False
+        ),
         # Optimistix solver settings (separate from ODE solver tolerances)
         opt_rtol=getattr(cfg.optimisation, "rtol", 1e-8),
         opt_atol=getattr(cfg.optimisation, "atol", 1e-8),
@@ -883,7 +908,9 @@ def main():
 
     else:
         # Default: multi-start LM via run_multi_start_optimization
-        res, best_idx, total_losses = run_multi_start_optimization(problem, args, P_scaled)
+        res, best_idx, total_losses = run_multi_start_optimization(
+            problem, args, P_scaled
+        )
 
         F, X = res.F, res.X
         theta_best = X[best_idx]

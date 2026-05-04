@@ -10,7 +10,7 @@
 data              = "data_timeseries/filtered_input1.csv"
 ptm_intra         = "data_curated/processed/ptm_intra.db"
 ptm_inter         = "data_curated/processed/ptm_inter.db"
-output_dir        = "results"
+output_dir        = "test_results"
 crosstalk_tsv     = ""
 rna_data          = "data_timeseries/filtered_input3.csv"
 tf_net            = "data_interactions/tf_mrna.csv"
@@ -36,7 +36,7 @@ include_tfs_as_proteins = false
 # solver = "hybrid" → run_hybrid_fit (Phase 0 LHS + Phase 1 evosax + Phase 2 LM + QDax)
 # ---------------------------------------------------------------------------
 [optimisation]
-n_starts   = 3
+n_starts   = 1
 max_steps  = 300          # LM iteration cap when solver = "lm"
 solver     = "hybrid"      # lm | hybrid
 verbose    = false

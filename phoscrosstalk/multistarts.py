@@ -34,7 +34,10 @@ import numpy as np
 
 from phoscrosstalk.fretchet import frechet_distance
 from phoscrosstalk.logger import get_logger
-from phoscrosstalk.optimization import make_loss_fn, make_residuals_fn, run_single_optimisation
+from phoscrosstalk.optimization import (
+    make_residuals_fn,
+    run_single_optimisation,
+)
 
 logger = get_logger()
 
@@ -163,13 +166,15 @@ def run_multi_start_optimization(problem, args, P_scaled):
 
     logger.header("[*] Starting Multi-Start Optimistix Optimisation")
     logger.info(f"    Optimizer: Optimistix LevenbergMarquardt(verbose={opt_verbose})")
-    logger.info(f"    ODE solver: Diffrax Tsit5 + PIDController + DirectAdjoint")
+    logger.info("    ODE solver: Diffrax Tsit5 + PIDController + DirectAdjoint")
     logger.info(f"    {len(starts)} starting points, max_steps={max_steps} each")
     logger.info(
         f"    weights: phospho={w_phospho}, abundance={w_abundance}, reg={w_reg}, mrna={w_mrna}"
     )
     logger.info(f"    Optimistix rtol={opt_rtol}, atol={opt_atol}")
-    logger.info(f"    ODE rtol={getattr(args, 'rtol', 1e-6)}, atol={getattr(args, 'atol', 1e-9)}, max_steps={getattr(args, 'solver_max_steps', 16384)}")
+    logger.info(
+        f"    ODE rtol={getattr(args, 'rtol', 1e-6)}, atol={getattr(args, 'atol', 1e-9)}, max_steps={getattr(args, 'solver_max_steps', 16384)}"
+    )
 
     all_X, all_F, all_total = [], [], []
 

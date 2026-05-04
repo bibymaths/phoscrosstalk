@@ -156,6 +156,7 @@ def create_bounds(K, M, N):
 # Scalarized JAX loss for Optimistix
 # ---------------------------------------------------------------------------
 
+
 def make_loss_fn(
     t,
     P_data,
@@ -282,12 +283,12 @@ def make_loss_fn(
     # W_data_rna, rna_obs_idx, and rna_fit_genes are optional metadata; when
     # W_data_rna is absent a uniform (all-ones) weight matrix is used.
     has_mrna = (
-            t_mrna is not None
-            and rna_data_scaled is not None
-            and len(t_mrna) > 0
-            and mrna_time_idx is not None
-            and rna_model_prot_idx is not None
-            and len(rna_model_prot_idx) > 0
+        t_mrna is not None
+        and rna_data_scaled is not None
+        and len(t_mrna) > 0
+        and mrna_time_idx is not None
+        and rna_model_prot_idx is not None
+        and len(rna_model_prot_idx) > 0
     )
 
     if has_mrna:
@@ -387,7 +388,9 @@ def make_loss_fn(
         # Use raw MSE (not log1p) to avoid overflow to inf when R_sim is far from obs.
         if has_mrna:
             xs_rna = xs[mrna_idx_j, :]
-            R_sim_rna = jnp.clip(xs_rna[:, :K], 0.0, _RNA_CLIP_UPPER).T  # (K, T_rna); clip to prevent float32 overflow
+            R_sim_rna = jnp.clip(
+                xs_rna[:, :K], 0.0, _RNA_CLIP_UPPER
+            ).T  # (K, T_rna); clip to prevent float32 overflow
             R_sim_matched = R_sim_rna[rna_prot_idx_j, :]  # (n_match, T_rna)
             diff_R = rna_j - R_sim_matched
             f4 = jnp.sum(W_rna_j * diff_R * diff_R) / n_rna
@@ -547,7 +550,9 @@ def make_residuals_fn(
 
     # Convert weight arrays to JAX for use inside the JIT-traced residuals_fn
     W_data_j_diag = jnp.asarray(W_data, dtype=jnp.float32)
-    W_prot_j_diag = jnp.asarray(W_data_prot, dtype=jnp.float32) if has_abundance else None
+    W_prot_j_diag = (
+        jnp.asarray(W_data_prot, dtype=jnp.float32) if has_abundance else None
+    )
 
     # mRNA arrays
     has_mrna = (
@@ -713,9 +718,7 @@ def make_residuals_fn(
 
         # --- Replace non-finite residuals with finite penalty ---
         # This handles ODE solve failures gracefully without crashing the optimizer.
-        finite_residuals = jnp.where(
-            jnp.isfinite(residuals), residuals, PENALTY
-        )
+        finite_residuals = jnp.where(jnp.isfinite(residuals), residuals, PENALTY)
         finite_residuals = jnp.where(
             solve_ok, finite_residuals, jnp.full_like(finite_residuals, PENALTY)
         )
@@ -786,7 +789,6 @@ def run_single_optimisation(
     f1, f2, f3, f4 = float(f1), float(f2), float(f3), float(f4)
     total_loss = f1 + f2 + f3 + f4  # diagnostic sum; modality weights are in residuals
     return theta_opt, total_loss, f1, f2, f3, f4
-
 
 
 # ---------------------------------------------------------------------------
@@ -901,8 +903,7 @@ def validate_problem_shapes(problem):
 
     if errors:
         raise ValueError(
-            "validate_problem_shapes found errors:\n  "
-            + "\n  ".join(errors)
+            "validate_problem_shapes found errors:\n  " + "\n  ".join(errors)
         )
 
 
@@ -1003,19 +1004,33 @@ def validate_biological_inputs(
         from phoscrosstalk.core_mechanisms import decode_theta
 
         (
-            k_deact, d_deg, beta_g, beta_l, alpha,
-            kK_act, kK_deact, k_off,
-            gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net,
+            k_deact,
+            d_deg,
+            beta_g,
+            beta_l,
+            alpha,
+            kK_act,
+            kK_deact,
+            k_off,
+            gamma_S_p,
+            gamma_A_S,
+            gamma_A_p,
+            gamma_K_net,
         ) = decode_theta(np.asarray(theta, dtype=np.float64), K, M, N)
 
         for pname, parr in [
-            ("k_deact", k_deact), ("d_deg", d_deg),
-            ("alpha", alpha), ("kK_act", kK_act), ("kK_deact", kK_deact),
+            ("k_deact", k_deact),
+            ("d_deg", d_deg),
+            ("alpha", alpha),
+            ("kK_act", kK_act),
+            ("kK_deact", kK_deact),
             ("k_off", k_off),
         ]:
             parr_np = np.asarray(parr, dtype=float)
             if not np.all(np.isfinite(parr_np)):
-                errors.append(f"Decoded parameter '{pname}' contains non-finite values.")
+                errors.append(
+                    f"Decoded parameter '{pname}' contains non-finite values."
+                )
             elif float(parr_np.min()) < 1e-15:
                 errors.append(
                     f"Decoded parameter '{pname}' has non-positive value(s) "
@@ -1023,21 +1038,20 @@ def validate_biological_inputs(
                 )
 
         for sname, sval in [
-            ("beta_g", beta_g), ("beta_l", beta_l),
-            ("gamma_S_p", gamma_S_p), ("gamma_A_S", gamma_A_S),
-            ("gamma_A_p", gamma_A_p), ("gamma_K_net", gamma_K_net),
+            ("beta_g", beta_g),
+            ("beta_l", beta_l),
+            ("gamma_S_p", gamma_S_p),
+            ("gamma_A_S", gamma_A_S),
+            ("gamma_A_p", gamma_A_p),
+            ("gamma_K_net", gamma_K_net),
         ]:
             if not np.isfinite(float(sval)):
                 errors.append(f"Decoded parameter '{sname}' is non-finite.")
 
     if errors:
         raise ValueError(
-            "validate_biological_inputs found issues:\n  "
-            + "\n  ".join(errors)
+            "validate_biological_inputs found issues:\n  " + "\n  ".join(errors)
         )
-
-
-
 
 
 class NetworkProblem:

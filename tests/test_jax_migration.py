@@ -385,10 +385,10 @@ class TestOptimistixOptimisation:
         )
 
         theta0 = 0.5 * (xl + xu)
-        r, (f1, f2, f3, f4) = residuals_fn(
-            jnp.asarray(theta0, dtype=jnp.float32), None
+        r, (f1, f2, f3, f4) = residuals_fn(jnp.asarray(theta0, dtype=jnp.float32), None)
+        assert np.all(np.isfinite(np.asarray(r))), (
+            "residual vector contains non-finite values"
         )
-        assert np.all(np.isfinite(np.asarray(r))), "residual vector contains non-finite values"
         assert np.isfinite(float(f1)), "f1 is not finite"
         assert np.isfinite(float(f4)), "f4 is not finite"
 
