@@ -369,7 +369,9 @@ def make_rhs(
         dS = jnp.where((S <= 0.0) & (dS < 0.0), 0.0, dS)
         dS = jnp.where((S >= 1.0) & (dS > 0.0), 0.0, dS)
 
-        # A: lower bound only (upper bound is a soft cap, not a hard physiological limit)
+        # A: lower bound only.  The state is clipped to [0, abundance_max] above
+        # for solver stability, but the derivative guard only enforces the lower
+        # bound so that the ODE can still drive A toward abundance_max naturally.
         dA = jnp.where((A <= 0.0) & (dA < 0.0), 0.0, dA)
 
         # Kdyn: lower and upper bound [0, 1]

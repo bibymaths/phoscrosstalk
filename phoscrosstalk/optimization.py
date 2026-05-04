@@ -1016,7 +1016,7 @@ def validate_biological_inputs(
             parr_np = np.asarray(parr, dtype=float)
             if not np.all(np.isfinite(parr_np)):
                 errors.append(f"Decoded parameter '{pname}' contains non-finite values.")
-            elif float(parr_np.min()) <= 0.0:
+            elif float(parr_np.min()) < 1e-15:
                 errors.append(
                     f"Decoded parameter '{pname}' has non-positive value(s) "
                     f"(min={float(parr_np.min()):.3g}). Rate parameters must be > 0."

@@ -54,7 +54,7 @@ def _make_tiny(K=2, M=3, N=4, T=5, seed=0):
     t = np.linspace(0.0, 30.0, T)
     P_data = rng.uniform(0.1, 0.9, (N, T))
     A_data = rng.uniform(0.5, 2.0, (K, T))
-    theta = rng.uniform(-2.0, 0.0, dim)  # random in log-space
+    theta = rng.uniform(-2.0, 0.0, dim)  # log-scale parameter values; exp() gives the rates
 
     Cg = np.eye(N) * 0.1
     Cl = np.eye(N) * 0.05
@@ -127,11 +127,12 @@ def test_gamma_params_can_be_negative():
     K, M, N = 2, 2, 3
     dim = 2 * K + 2 + 3 * M + N + 4
 
-    # Use large positive raw_gamma to get tanh(x) → +1, and large negative to get -1
+    # Use large positive raw_gamma values: tanh(10) ≈ +1, gamma_scale (2.0) × 1 → +2
     theta_pos = np.zeros(dim)
-    theta_pos[-4:] = 10.0  # raw_gamma → tanh → +1, gamma_scale * 1 > 0
+    theta_pos[-4:] = 10.0  # raw_gamma → tanh(10) ≈ +1 → decoded gamma > 0
+    # Use large negative raw_gamma values: tanh(-10) ≈ -1 → decoded gamma < 0
     theta_neg = np.zeros(dim)
-    theta_neg[-4:] = -10.0  # raw_gamma → tanh → -1, gamma_scale * (-1) < 0
+    theta_neg[-4:] = -10.0  # raw_gamma → tanh(-10) ≈ -1 → decoded gamma < 0
 
     (_, _, _, _, _, _, _, _,
      gsp_pos, gas_pos, gap_pos, gkn_pos) = decode_theta_jax(
