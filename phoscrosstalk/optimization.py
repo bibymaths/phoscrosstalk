@@ -257,6 +257,9 @@ def make_loss_fn(
     prot_idx_solver = jnp.asarray(prot_time_idx, dtype=jnp.int32)
 
     # mRNA arrays (if available)
+    # Only t_mrna, rna_data_scaled, and rna_model_prot_idx are strictly required.
+    # W_data_rna, rna_obs_idx, and rna_fit_genes are optional metadata; when
+    # W_data_rna is absent a uniform (all-ones) weight matrix is used.
     has_mrna = (
             t_mrna is not None
             and rna_data_scaled is not None
@@ -264,16 +267,21 @@ def make_loss_fn(
             and mrna_time_idx is not None
             and rna_model_prot_idx is not None
             and len(rna_model_prot_idx) > 0
-            and W_data_rna is not None
-            and rna_obs_idx is not None
-            and rna_fit_genes is not None
     )
 
     if has_mrna:
+        # All of t_mrna, rna_data_scaled, rna_model_prot_idx are guaranteed non-None
+        # and non-empty here by the has_mrna gate above.
+        assert t_mrna is not None  # type checker hint
         rna_j = jnp.asarray(rna_data_scaled, dtype=jnp.float32)
         mrna_idx_j = jnp.asarray(mrna_time_idx, dtype=jnp.int32)
         rna_prot_idx_j = jnp.asarray(rna_model_prot_idx, dtype=jnp.int32)
-        W_rna_j = jnp.asarray(W_data_rna, dtype=jnp.float32)
+        n_matched = len(rna_model_prot_idx)
+        T_rna = len(t_mrna)
+        if W_data_rna is not None:
+            W_rna_j = jnp.asarray(W_data_rna, dtype=jnp.float32)
+        else:
+            W_rna_j = jnp.ones((n_matched, T_rna), dtype=jnp.float32)
         n_rna = max(1, rna_data_scaled.size)
     else:
         rna_j = None
