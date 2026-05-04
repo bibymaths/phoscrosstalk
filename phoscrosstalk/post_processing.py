@@ -58,7 +58,7 @@ def export_network_for_cytoscape(
     # Decode parameters to get alpha (Kinase strength)
     # theta structure: [Prot params]...[Beta]...[Alpha]...
     K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
-    (_, _, _, _, _, _, alpha, kK_act, _, _, _, _, _, _) = decode_theta(
+    (_, _, _, _, alpha, kK_act, _, _, _, _, _, _) = decode_theta(
         theta_opt, K, M, N
     )
 
