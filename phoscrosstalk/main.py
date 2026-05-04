@@ -866,6 +866,7 @@ def main():
         k_act_fn=k_act_fn,
         s_prod_fn=s_prod_fn,
         R_data0=R_data0,
+        kinases=kinases,
     )
 
     analysis.plot_fitted_simulation(outdir)

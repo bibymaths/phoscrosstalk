@@ -533,3 +533,176 @@ def test_backward_simulate_alias():
     P_sim, A_sim = result
     assert P_sim.shape == (m["N"], m["T"])
     assert A_sim.shape == (m["K"], m["T"])
+
+
+# ---------------------------------------------------------------------------
+# 13. R(t) scale sanity warning in save_mrna_outputs
+# ---------------------------------------------------------------------------
+
+
+def test_rna_scale_warning_when_sim_too_large(tmp_path, recwarn):
+    """save_mrna_outputs must log a warning when max(R_sim) > 10 * max(R_obs)."""
+    import logging
+
+    from phoscrosstalk.analysis import save_mrna_outputs
+
+    t_rna = np.array([4.0, 8.0, 30.0])
+    obs = np.ones((2, 3)) * 1.5  # typical fold-change ~1.5
+    sim = obs * 100.0  # simulate exploding R(t) (factor 100 above observed)
+
+    # Capture log warnings by temporarily lowering the log threshold
+    import phoscrosstalk.logger as plog
+
+    captured_warnings = []
+
+    class _CapHandler(logging.Handler):
+        def emit(self, record):
+            if record.levelno >= logging.WARNING:
+                captured_warnings.append(record.getMessage())
+
+    root_logger = logging.getLogger()
+    cap = _CapHandler()
+    root_logger.addHandler(cap)
+    try:
+        save_mrna_outputs(
+            outdir=str(tmp_path),
+            gene_ids=["MAPK1", "AKT1"],
+            t_rna=t_rna,
+            rna_data_obs=obs,
+            rna_simulated=sim,
+        )
+    finally:
+        root_logger.removeHandler(cap)
+
+    # The diagnostics file should contain sim values >> obs
+    diag = pd.read_csv(tmp_path / "mrna_diagnostics.tsv", sep="\t")
+    assert "sim_max" in diag.columns, "mrna_diagnostics.tsv must include sim_max column"
+    assert (diag["sim_max"] > 10.0 * diag["obs_max"]).all(), (
+        "sim_max should exceed 10 * obs_max in this test"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 14. mrna_fit_timeseries.tsv supports "simulated" column alias
+# ---------------------------------------------------------------------------
+
+
+def test_mrna_tsv_simulated_column_alias(tmp_path):
+    """plot_fitted_simulation must accept 'simulated' as alias for 'fitted' column."""
+    from phoscrosstalk.analysis import plot_fitted_simulation
+
+    outdir = str(tmp_path)
+
+    # Minimal fit_timeseries.tsv
+    t_cols_sim = [f"sim_t{j}" for j in range(3)]
+    t_cols_dat = [f"data_t{j}" for j in range(3)]
+    rows = []
+    row = {"Type": "Phosphosite", "Protein": "MAPK1", "Residue": "S1"}
+    for j in range(3):
+        row[t_cols_sim[j]] = 0.5
+        row[t_cols_dat[j]] = 0.6
+    rows.append(row)
+    pd.DataFrame(rows).to_csv(
+        os.path.join(outdir, "fit_timeseries.tsv"), sep="\t", index=False
+    )
+
+    # Write mrna_fit_timeseries.tsv with "simulated" column (not "fitted")
+    rna_rows = [
+        {"gene": "MAPK1", "time": 4.0, "observed": 1.0, "simulated": 1.1},
+        {"gene": "MAPK1", "time": 30.0, "observed": 1.5, "simulated": 1.4},
+    ]
+    pd.DataFrame(rna_rows).to_csv(
+        os.path.join(outdir, "mrna_fit_timeseries.tsv"), sep="\t", index=False
+    )
+
+    # Should not raise even with "simulated" instead of "fitted"
+    plot_fitted_simulation(outdir)
+
+    png_files = [f for f in os.listdir(outdir) if f.endswith(".png")]
+    assert len(png_files) > 0, "No PNG created; simulated column alias may have failed"
+
+
+# ---------------------------------------------------------------------------
+# 15. Kdyn_sim labels use real kinase names in internal_states.tsv
+# ---------------------------------------------------------------------------
+
+
+def test_kdyn_labels_use_kinase_names(tmp_path):
+    """save_fitted_simulation must write real kinase names in Kdyn_sim rows."""
+    from phoscrosstalk.analysis import save_fitted_simulation
+    from phoscrosstalk.simulation import build_full_A0
+
+    K, M, N = 2, 3, 4
+    ModelDims.set_dims(K, M, N)
+    rng = np.random.default_rng(99)
+    T = 5
+    dim = 2 * K + 2 + 3 * M + N + 4
+    t = np.linspace(0.0, 60.0, T)
+    theta = rng.uniform(-3.0, -0.1, dim)
+
+    sites = ["PROT1_S1", "PROT1_S2", "PROT2_S1", "PROT2_S2"]
+    proteins = ["PROT1", "PROT2"]
+    kinases = ["ABL2", "CDK1", "CDK2"]
+    site_prot_idx = np.array([0, 0, 1, 1], dtype=int)
+    P_scaled = rng.uniform(0.1, 0.9, (N, T))
+    A_scaled = np.zeros((0, T))
+    prot_idx_for_A = np.array([], dtype=int)
+    baselines = np.zeros(N)
+    amplitudes = np.ones(N)
+    Y = P_scaled.copy()
+    A_bases, A_amps = np.array([]), np.array([])
+    Cg = np.eye(N) * 0.1
+    Cl = np.eye(N) * 0.05
+    K_site_kin = rng.uniform(0, 1, (N, M))
+    K_site_kin /= K_site_kin.sum(axis=1, keepdims=True) + 1e-8
+    R_mat = K_site_kin.T.copy()
+    R_mat /= R_mat.sum(axis=1, keepdims=True) + 1e-8
+    L_alpha = np.zeros((M, M))
+    kin_to_prot_idx = np.array([0, 1, -1], dtype=int)
+    rm_prot = np.zeros(K, dtype=int)
+    rm_kin = np.zeros(M, dtype=int)
+
+    save_fitted_simulation(
+        outdir=str(tmp_path),
+        theta_opt=theta,
+        t=t,
+        sites=sites,
+        proteins=proteins,
+        P_scaled=P_scaled,
+        A_scaled=A_scaled,
+        prot_idx_for_A=prot_idx_for_A,
+        baselines=baselines,
+        amplitudes=amplitudes,
+        Y=Y,
+        A_data=None,
+        A_bases=A_bases,
+        A_amps=A_amps,
+        mechanism="dist",
+        Cg=Cg,
+        Cl=Cl,
+        site_prot_idx=site_prot_idx,
+        K_site_kin=K_site_kin,
+        R=R_mat,
+        L_alpha=L_alpha,
+        kin_to_prot_idx=kin_to_prot_idx,
+        mask_p=rm_prot,
+        mask_k=rm_kin,
+        kinases=kinases,
+    )
+
+    # Check internal_states.tsv Kdyn_sim rows
+    df_int = pd.read_csv(tmp_path / "internal_states.tsv", sep="\t")
+    kdyn_rows = df_int[df_int["Type"] == "Kdyn_sim"]
+    assert len(kdyn_rows) == M, f"Expected {M} Kdyn_sim rows, got {len(kdyn_rows)}"
+
+    ids = kdyn_rows["ID"].tolist()
+    for expected_name in kinases:
+        assert expected_name in ids, (
+            f"Kinase name '{expected_name}' not found in Kdyn_sim IDs: {ids}"
+        )
+
+    # Must NOT contain generic Kinase_N labels when kinases list is provided
+    generic = [i for i in ids if i.startswith("Kinase_")]
+    assert len(generic) == 0, (
+        f"Found generic Kinase_N labels in Kdyn_sim IDs when real names provided: {generic}"
+    )

@@ -282,9 +282,15 @@ def make_rhs(K: int, M: int, N: int, mechanism: str, k_act_fn=None, s_prod_fn=No
         mc = num_c / safe_den
 
         # --- 0. mRNA state (R_rna) -----------------------------------------------
-        # dR/dt = k_act(t) - d_deg * R
-        # k_act drives mRNA transcription; d_deg controls RNA decay.
-        dR_rna = k_act - d_deg * R_rna
+        # Relaxation ODE: dR/dt = RNA_RELAX * (k_act(t) - R)
+        #
+        # k_act(t) is the TF-derived mRNA drive signal on the fold-change scale
+        # (~1.0 for most genes).  Using a first-order relaxation instead of
+        # "k_act - d_deg * R" prevents R from accumulating to k_act / d_deg >> 1
+        # when d_deg is a small protein degradation rate.  At steady state
+        # R_ss = k_act(t), which matches the observed fold-change scale.
+        RNA_RELAX = jnp.float32(0.1)  # fixed mRNA turnover rate (min^-1)
+        dR_rna = RNA_RELAX * (k_act - R_rna)
 
         # --- 1. Protein signalling state (S) ------------------------------------
         D_S = 1.0 + gamma_S_p * mp + mc + receptor_mask_prot * u
