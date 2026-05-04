@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 optimization.py
 Optimistix-based objective functions and parameter fitting for the phospho-network.
@@ -27,8 +28,14 @@ Residual vector structure (for optx.least_squares):
 State layout: y = [R_rna, S, A, Kdyn, p]  (dim = 3*K + M + N)
 """
 
+import os
+import pathlib
+from typing import Callable, Sequence
+
 import diffrax
+import jax
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import numpy as np
 import optimistix as optx
 from numba import njit
@@ -150,6 +157,71 @@ def create_bounds(K, M, N):
     xu[idx : idx + 4] = 3.0
     idx += 4
     return xl, xu, dim
+
+
+def build_parameter_labels(K: int, M: int, N: int) -> list[str]:
+    """
+    Return human-readable labels for every element of the flattened theta vector.
+
+    The theta vector layout (length ``2*K + 2 + 3*M + N + 4``) is:
+
+    ============  =====================  ============================
+    Slice         Length                 Content
+    ============  =====================  ============================
+    [0 : K)       K                      log_k_deact[0..K-1]
+    [K : 2K)      K                      log_d_deg[0..K-1]
+    [2K : 2K+1)   1                      log_beta_g
+    [2K+1 : 2K+2) 1                      log_beta_l
+    [2K+2 : ...)  M                      log_alpha[0..M-1]
+    [... : ...)   M                      log_kK_act[0..M-1]
+    [... : ...)   M                      log_kK_deact[0..M-1]
+    [... : ...)   N                      log_k_off[0..N-1]
+    [... : end)   4                      gamma_raw[0..3]
+    ============  =====================  ============================
+
+    Parameters
+    ----------
+    K : int
+        Number of model proteins.
+    M : int
+        Number of model kinases.
+    N : int
+        Number of phosphosites.
+
+    Returns
+    -------
+    list[str]
+        Parameter labels in the exact order they appear in theta.
+        Length is ``2*K + 2 + 3*M + N + 4``.
+
+    Notes
+    -----
+    These labels are intended for use with :func:`compute_second_order_sensitivities`
+    to annotate Hessian rows/columns.
+    """
+    labels: list[str] = []
+    # log-rate protein kinetics
+    for k in range(K):
+        labels.append(f"log_k_deact[{k}]")
+    for k in range(K):
+        labels.append(f"log_d_deg[{k}]")
+    # coupling
+    labels.append("log_beta_g")
+    labels.append("log_beta_l")
+    # kinase kinetics
+    for m in range(M):
+        labels.append(f"log_alpha[{m}]")
+    for m in range(M):
+        labels.append(f"log_kK_act[{m}]")
+    for m in range(M):
+        labels.append(f"log_kK_deact[{m}]")
+    # site off-rates
+    for n in range(N):
+        labels.append(f"log_k_off[{n}]")
+    # gamma raw coefficients
+    for i in range(4):
+        labels.append(f"gamma_raw[{i}]")
+    return labels
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +388,10 @@ def make_loss_fn(
         K, M, N, mechanism, k_act_fn=k_act_fn, s_prod_fn=s_prod_fn, rna_relax=rna_relax
     )
     term = diffrax.ODETerm(rhs_fn)
-    solver = diffrax.Tsit5()
+    # scan_kind="bounded" is required for compatibility with jax.hessian /
+    # higher-order autodiff through Diffrax (unbounded scan cannot be unrolled
+    # by second-order AD).
+    solver = diffrax.Tsit5(scan_kind="bounded")
     sctrl = diffrax.PIDController(rtol=rtol, atol=atol)
     saveat = diffrax.SaveAt(ts=t_eval)
 
@@ -1289,3 +1364,131 @@ class NetworkProblem:
 # Legacy alias so that any remaining code that imports NetworkOptimizationProblem
 # still works without crashing.
 NetworkOptimizationProblem = NetworkProblem
+
+
+# ---------------------------------------------------------------------------
+# Second-order (Hessian) sensitivity analysis
+# ---------------------------------------------------------------------------
+
+
+def compute_second_order_sensitivities(
+    theta: np.ndarray,
+    loss_fn: Callable[[jnp.ndarray, object], tuple],
+    param_labels: Sequence[str],
+    out_dir: str | os.PathLike,
+    prefix: str = "loss_hessian",
+    jit: bool = True,
+) -> np.ndarray:
+    """
+    Compute and save the Hessian of the scalarised loss w.r.t. the parameter vector.
+
+    Uses ``jax.hessian`` applied to the scalar output of *loss_fn*.  The loss
+    function must have been built with :func:`make_loss_fn` (which uses
+    ``Tsit5(scan_kind="bounded")`` to support higher-order autodiff through
+    Diffrax).
+
+    Parameters
+    ----------
+    theta : np.ndarray
+        Flattened parameter vector at which to evaluate the Hessian
+        (e.g. the optimised point).  Shape ``(n,)``.
+    loss_fn : Callable[[jnp.ndarray, Any], tuple]
+        Scalar loss function with signature ``loss_fn(theta, args) ->
+        (total_loss, aux)``, as returned by :func:`make_loss_fn`.
+    param_labels : Sequence[str]
+        Human-readable labels for each element of *theta*, e.g. as
+        returned by :func:`build_parameter_labels`.  Must have the same
+        length as *theta*.
+    out_dir : str or os.PathLike
+        Directory where output files are written.  Created if absent.
+    prefix : str, optional
+        Base name (without extension) for all output files.
+        Default ``"loss_hessian"``.
+    jit : bool, optional
+        When ``True`` (default) the Hessian function is wrapped with
+        ``jax.jit`` before evaluation, which is faster for repeated calls.
+
+    Returns
+    -------
+    np.ndarray
+        Hessian matrix as a float64 NumPy array of shape
+        ``(len(param_labels), len(param_labels))``.
+
+    Outputs
+    -------
+    ``<out_dir>/<prefix>.npy``
+        NumPy binary containing the Hessian matrix.
+    ``<out_dir>/<prefix>.tsv``
+        Tab-separated matrix with parameter-label row/column headers and
+        values formatted as ``{val:.6e}``.
+    ``<out_dir>/<prefix>_heatmap.png``
+        Heatmap visualisation saved at 200 dpi.
+
+    Notes
+    -----
+    * Higher-order autodiff through Diffrax requires the solver to use
+      ``scan_kind="bounded"`` (i.e. ``Tsit5(scan_kind="bounded")``).
+      :func:`make_loss_fn` already sets this; other solver paths (residuals,
+      LM) are **not** modified.
+    * The Hessian is computed in float32 (matching JAX's default) and
+      immediately up-cast to float64 for numerical consistency.
+    * For ``n > 40`` parameter labels the heatmap omits dense tick labels
+      to remain readable.
+    """
+    theta_j = jnp.asarray(theta, dtype=jnp.float32)
+    n = len(param_labels)
+
+    def _loss_only(th):
+        total, _aux = loss_fn(th, None)
+        return total
+
+    hess_fn = jax.hessian(_loss_only)
+    if jit:
+        hess_fn = jax.jit(hess_fn)
+
+    H_raw = hess_fn(theta_j)
+    H = np.asarray(H_raw, dtype=np.float64)
+
+    if H.shape != (n, n):
+        raise ValueError(
+            f"Hessian shape {H.shape} does not match "
+            f"len(param_labels)={n}.  Ensure theta and param_labels "
+            "have the same length."
+        )
+
+    out_path = pathlib.Path(out_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    # --- .npy ---
+    np.save(out_path / f"{prefix}.npy", H)
+
+    # --- .tsv ---
+    tsv_path = out_path / f"{prefix}.tsv"
+    with tsv_path.open("w") as fh:
+        # Header row: tab + tab-separated column labels
+        fh.write("\t" + "\t".join(param_labels) + "\n")
+        for i, row_label in enumerate(param_labels):
+            row_vals = "\t".join(f"{v:.6e}" for v in H[i])
+            fh.write(f"{row_label}\t{row_vals}\n")
+
+    # --- heatmap ---
+    fig, ax = plt.subplots(figsize=(max(6, n // 4), max(5, n // 4)))
+    im = ax.imshow(H, aspect="auto")
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label("∂² loss / ∂θ_i ∂θ_j")
+    ax.set_title("Hessian of scalarised loss wrt parameters")
+    ax.set_xlabel("parameters")
+    ax.set_ylabel("parameters")
+    if n <= 40:
+        ax.set_xticks(range(n))
+        ax.set_xticklabels(param_labels, rotation=90, fontsize=6)
+        ax.set_yticks(range(n))
+        ax.set_yticklabels(param_labels, fontsize=6)
+    else:
+        ax.set_xticks([])
+        ax.set_yticks([])
+    plt.tight_layout()
+    fig.savefig(out_path / f"{prefix}_heatmap.png", dpi=200)
+    plt.close(fig)
+
+    return H
