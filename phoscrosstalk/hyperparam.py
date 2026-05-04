@@ -18,7 +18,7 @@ from phoscrosstalk.logger import get_logger
 from phoscrosstalk.optimization import (
     NetworkProblem,
     create_bounds,
-    make_loss_fn,
+    make_residuals_fn,
     run_single_optimisation,
 )
 
@@ -114,10 +114,9 @@ def run_hyperparameter_scan(
                     d = abs(positions[r] - positions[c])
                     Cl_new[r, c] = np.exp(-d / ls)
         Cl_new = data_loader.row_normalize(Cl_new)
-
-        # Build loss function for this combo
+        # Build objective functions for this combo
         try:
-            loss_fn = make_loss_fn(
+            residuals_fn = make_residuals_fn(
                 t=t,
                 P_data=P_scaled,
                 A_scaled=A_scaled,
@@ -141,42 +140,44 @@ def run_hyperparameter_scan(
             rng = np.random.default_rng(1)
             theta0 = xl + rng.random(dim) * (xu - xl)
 
-            theta_best, _, _, _, _ = run_single_optimisation(
-                loss_fn, theta0, max_steps=40
+            theta_best, *_ = run_single_optimisation(
+                residuals_fn,
+                theta0,
+                max_steps=40,
             )
-
-            # Evaluate Fréchet distance
-            problem_tmp = NetworkProblem(
-                t=t,
-                P_data=P_scaled,
-                Cg=Cg,
-                Cl=Cl_new,
-                site_prot_idx=site_prot_idx,
-                K_site_kin=K_site_kin,
-                R=R,
-                A_scaled=A_scaled,
-                prot_idx_for_A=prot_idx_for_A,
-                W_data=W_data,
-                W_data_prot=W_data_prot,
-                L_alpha=L_alpha,
-                kin_to_prot_idx=kin_to_prot_idx,
-                lambda_net=ln,
-                reg_lambda=rl,
-                receptor_mask_prot=receptor_mask_prot,
-                receptor_mask_kin=receptor_mask_kin,
-                mechanism=mechanism,
-                xl=xl,
-                xu=xu,
-            )
-
-            P_pred = problem_tmp.simulate(theta_best)
-            true_c = np.ascontiguousarray(P_scaled, dtype=np.float64)
-            pred_c = np.ascontiguousarray(P_pred, dtype=np.float64)
-            score = frechet_distance(true_c, pred_c)
 
         except Exception as e:
             logger.warning(f"    -> Combo failed: {e}")
-            score = np.inf
+            return np.inf
+
+        # Evaluate Fréchet distance
+        problem_tmp = NetworkProblem(
+            t=t,
+            P_data=P_scaled,
+            Cg=Cg,
+            Cl=Cl_new,
+            site_prot_idx=site_prot_idx,
+            K_site_kin=K_site_kin,
+            R=R,
+            A_scaled=A_scaled,
+            prot_idx_for_A=prot_idx_for_A,
+            W_data=W_data,
+            W_data_prot=W_data_prot,
+            L_alpha=L_alpha,
+            kin_to_prot_idx=kin_to_prot_idx,
+            lambda_net=ln,
+            reg_lambda=rl,
+            receptor_mask_prot=receptor_mask_prot,
+            receptor_mask_kin=receptor_mask_kin,
+            mechanism=mechanism,
+            xl=xl,
+            xu=xu,
+        )
+
+        P_pred = problem_tmp.simulate(theta_best)
+        true_c = np.ascontiguousarray(P_scaled, dtype=np.float64)
+        pred_c = np.ascontiguousarray(P_pred, dtype=np.float64)
+        score = frechet_distance(true_c, pred_c)
 
         logger.info(f"    -> Fréchet Score: {score:.4f}")
         combo["score"] = score

@@ -260,8 +260,6 @@ def make_loss_fn(
     rna_data_scaled=None,
     w_mrna=1.0,
     rna_model_prot_idx=None,
-    rna_obs_idx=None,
-    rna_fit_genes=None,
     R_data0=None,
     W_data_rna=None,
     rna_relax=0.1,
@@ -323,8 +321,8 @@ def make_loss_fn(
     a0 = np.nan_to_num(A0_full[:, 0], nan=1.0, posinf=5.0, neginf=0.0)
     x0[2 * K : 3 * K] = np.clip(a0, 0.0, 5.0)
     # p initial condition
-    p0 = np.nan_to_num(P_data[:, 0], nan=0.0, posinf=1.0, neginf=0.0)
-    x0[3 * K + M :] = np.clip(p0, 0.0, 1.0)
+    p0 = np.nan_to_num(P_data[:, 0], nan=0.0, posinf=10.0, neginf=0.0)
+    x0[3 * K + M:] = np.clip(p0, 0.0, None)
 
     # JAX static arrays
     Cg_j = jnp.asarray(Cg, dtype=jnp.float32)
@@ -436,7 +434,7 @@ def make_loss_fn(
         # Sample at protein time indices
         xs_prot = xs[prot_idx_solver, :]
         # New slicing: [R_rna, S, A, Kdyn, p]
-        P_sim = jnp.clip(xs_prot[:, 3 * K + M :], 0.0, 1.0).T  # (N, T_prot)
+        P_sim = jnp.clip(xs_prot[:, 3 * K + M :], 0.0, None).T  # (N, T_prot)
         A_sim = jnp.clip(xs_prot[:, 2 * K : 3 * K], 0.0, 5.0).T  # (K, T_prot)
 
         f1, f2, f3 = compute_objectives_jax(
@@ -587,8 +585,8 @@ def make_residuals_fn(
         x0[:K] = 1.0
     a0 = np.nan_to_num(A0_full[:, 0], nan=1.0, posinf=5.0, neginf=0.0)
     x0[2 * K : 3 * K] = np.clip(a0, 0.0, 5.0)
-    p0 = np.nan_to_num(P_data[:, 0], nan=0.0, posinf=1.0, neginf=0.0)
-    x0[3 * K + M :] = np.clip(p0, 0.0, 1.0)
+    p0 = np.nan_to_num(P_data[:, 0], nan=0.0, posinf=10.0, neginf=0.0)
+    x0[3 * K + M :] = np.clip(p0, 0.0, None)
 
     # JAX static arrays
     Cg_j = jnp.asarray(Cg, dtype=jnp.float32)
@@ -734,7 +732,7 @@ def make_residuals_fn(
 
         # Sample at protein time indices (new layout: [R_rna, S, A, Kdyn, p])
         xs_prot = xs[prot_idx_solver, :]
-        P_sim = jnp.clip(xs_prot[:, 3 * K + M :], 0.0, 1.0).T  # (N, T_prot)
+        P_sim = jnp.clip(xs_prot[:, 3 * K + M :], 0.0, None).T  # (N, T_prot)
         A_sim = jnp.clip(xs_prot[:, 2 * K : 3 * K], 0.0, 5.0).T  # (K, T_prot)
 
         # --- Phosphosite residuals ---
