@@ -28,20 +28,21 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from types import SimpleNamespace
+from dataclasses import fields, is_dataclass, replace
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
 from evosax.algorithms import CMA_ES, Sep_CMA_ES
-from evosax.core.restart import cma_cond, spread_cond, RestartParams, RestartState
+from evosax.core.restart import RestartParams, RestartState, cma_cond, spread_cond
 
 from qdax.core.containers.mapelites_repertoire import (
     MapElitesRepertoire,
     compute_cvt_centroids,
 )
 from qdax.core.emitters.mutation_operators import isoline_variation
-from qdax.core.map_elites import MAPElites
 
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.optimization import (
@@ -94,7 +95,7 @@ class HybridFitResult:
     f2: float
     f3: float
     f4: float
-    qdax_repertoire: object
+    qdax_repertoire: MapElitesRepertoire
     qdax_descriptors: np.ndarray
     qdax_fitnesses: np.ndarray
     qdax_genotypes: np.ndarray
@@ -108,7 +109,36 @@ class HybridFitResult:
         yield self.f3
         yield self.f4
 
+def make_restart_params():
+    """
+    Create restart-condition parameters in a way that works across evosax versions.
 
+    Some evosax releases expose RestartParams as a frozen dataclass, so assigning
+    attributes after construction raises FrozenInstanceError. Some versions also
+    provide an empty RestartParams while spread_cond / cma_cond still access
+    these attributes dynamically.
+    """
+    values = {
+        "fitness_spread_threshold": 1e-12,
+        "tol_x": 1e-12,
+        "tol_x_up": 1e4,
+        "tol_condition_C": 1e14,
+    }
+
+    try:
+        rp = RestartParams()
+
+        if is_dataclass(rp):
+            field_names = {f.name for f in fields(rp)}
+            valid_values = {k: v for k, v in values.items() if k in field_names}
+
+            if valid_values:
+                return replace(rp, **valid_values)
+
+        return SimpleNamespace(**values)
+
+    except Exception:
+        return SimpleNamespace(**values)
 # ---------------------------------------------------------------------------
 # Phase 0 – Latin Hypercube Sampling screen
 # ---------------------------------------------------------------------------
@@ -304,31 +334,8 @@ def run_evosax(
 
     mean_init = jnp.full(n_var, 0.5, dtype=jnp.float32)  # centre of [0,1] space
 
-    # Start from default params; try to override sigma_init if the field exists.
+    # Start from default params
     params = es.default_params
-    if sigma_init is not None:
-        if hasattr(params, "replace"):
-            try:
-                params = params.replace(sigma_init=sigma_init)
-            except TypeError:
-                logger.warning(
-                    f"evosax Params {type(params)} has no field 'sigma_init'; "
-                    "using default es.default_params."
-                )
-        elif hasattr(params, "_replace"):
-            try:
-                params = params._replace(sigma_init=sigma_init)
-            except TypeError:
-                logger.warning(
-                    f"evosax Params {type(params)} has no field 'sigma_init'; "
-                    "using default es.default_params."
-                )
-        else:
-            logger.warning(
-                f"evosax Params type {type(params)} does not support replace/_replace; "
-                "using default es.default_params."
-            )
-
     key = jax.random.PRNGKey(seed)
     key, init_key = jax.random.split(key)
     state = es.init(init_key, mean_init, params)
@@ -361,6 +368,9 @@ def run_evosax(
     global_best_fitness = float("inf")
     global_best_solution = None
 
+    # Version-safe restart parameter object.
+    _restart_params = make_restart_params()
+
     while total_gen < n_generations:
         remaining = n_generations - total_gen
         this_chunk = min(chunk, remaining)
@@ -379,34 +389,32 @@ def run_evosax(
             global_best_solution = state.best_solution
 
         if restart_count < n_restarts:
-            # Evaluate last-gen population to check restart conditions
             key, ask_key = jax.random.split(key)
             last_pop, _ = es.ask(ask_key, state, params)
             last_pop = jnp.clip(last_pop, 0.0, 1.0)
             last_losses = normed_fitness(last_pop)
 
-            _restart_params = RestartParams()
-
             _restart_state = RestartState(restart_counter=jnp.int32(restart_count))
 
-            should_restart = bool(
-                spread_cond(last_pop, last_losses, state, params, _restart_state, _restart_params)
-                | cma_cond(last_pop, last_losses, state, params, _restart_state, _restart_params)
+            _spread = spread_cond(
+                last_pop, last_losses, state, params, _restart_state, _restart_params
             )
+            # cma_cond accesses state.C / B / D (full covariance) — Sep_CMA_ES is
+            # diagonal-only and does not carry those fields; skip for sep_cma_es.
+            _cma = (
+                cma_cond(last_pop, last_losses, state, params, _restart_state, _restart_params)
+                if algo == "cma_es"
+                else jnp.bool_(False)
+            )
+            should_restart = bool(_spread | _cma)
 
             if should_restart:
-                try:
-                    mean = es.get_mean(state)
-                except AttributeError:
-                    mean = state.mean
+                mean = es.get_mean(state)
                 key, subkey = jax.random.split(key)
                 state = es.init(subkey, mean, params)
                 restart_count += 1
                 if verbose:
-                    logger.info(
-                        f"[evosax restart #{restart_count}] gen={total_gen}",
-                        flush=True,
-                    )
+                    logger.info(f"[evosax restart #{restart_count}] gen={total_gen}")
 
         if verbose and total_gen % 50 == 0:
             logger.info(
@@ -511,7 +519,41 @@ def run_lm_polish(
 # ---------------------------------------------------------------------------
 # QDax MAP-Elites extension
 # ---------------------------------------------------------------------------
+def compute_cvt_centroids_compat(
+    *,
+    num_descriptors: int,
+    num_init_cvt_samples: int,
+    num_centroids: int,
+    minval,
+    maxval,
+    key,
+):
+    """
+    Version-safe wrapper for qdax.compute_cvt_centroids.
 
+    Some QDax versions return:
+        centroids
+
+    Other versions return:
+        centroids, key
+    """
+    out = compute_cvt_centroids(
+        num_descriptors=num_descriptors,
+        num_init_cvt_samples=num_init_cvt_samples,
+        num_centroids=num_centroids,
+        minval=minval,
+        maxval=maxval,
+        key=key,
+    )
+
+    if isinstance(out, tuple):
+        centroids = out[0]
+        new_key = out[1] if len(out) > 1 else key
+    else:
+        centroids = out
+        new_key = key
+
+    return centroids, new_key
 
 def run_qdax_mapelites(
     loss_fn,
@@ -527,7 +569,7 @@ def run_qdax_mapelites(
     line_sigma: float = 0.05,
     seed: int = 0,
     verbose: bool = False,
-) -> object:
+) -> MapElitesRepertoire:
     """
     QDax MAP-Elites quality-diversity archive exploration.
 
@@ -657,24 +699,14 @@ def run_qdax_mapelites(
     min_bd = jnp.array([_bd_min, _bd_min], dtype=jnp.float32)
     max_bd = jnp.array([_bd_max, _bd_max], dtype=jnp.float32)
 
-    try:
-        centroids, _ = compute_cvt_centroids(
-            num_descriptors=2,
-            num_init_cvt_samples=n_centroids * 10,
-            num_centroids=n_centroids,
-            minval=min_bd,
-            maxval=max_bd,
-            key=centroid_key,
-        )
-    except TypeError:
-        centroids, _ = compute_cvt_centroids(
-            num_descriptors=2,
-            num_init_cvt_samples=n_centroids * 10,
-            num_centroids=n_centroids,
-            minval=min_bd,
-            maxval=max_bd,
-            key=centroid_key,
-        )
+    centroids, centroid_key = compute_cvt_centroids_compat(
+        num_descriptors=2,
+        num_init_cvt_samples=n_centroids * 10,
+        num_centroids=n_centroids,
+        minval=min_bd,
+        maxval=max_bd,
+        key=centroid_key,
+    )
 
     # ------------------------------------------------------------------
     # Initial population: perturb theta_seed
@@ -691,28 +723,33 @@ def run_qdax_mapelites(
     # ------------------------------------------------------------------
     # Emitter: isoline variation
     # ------------------------------------------------------------------
-    def variation_fn(x: jnp.ndarray, repertoire, isoline_key: jax.Array) -> jnp.ndarray:
-        """Apply isoline variation and clip to parameter bounds."""
-        offspring, _ = isoline_variation(
-            x,
-            repertoire,
+    def variation_fn(x1: jnp.ndarray, x2: jnp.ndarray, isoline_key: jax.Array) -> jnp.ndarray:
+        """
+        Apply QDax isoline variation and clip to parameter bounds.
+
+        This QDax version expects two genotype batches:
+            isoline_variation(x1, x2, key, ...)
+        not:
+            isoline_variation(x, repertoire, key, ...)
+        """
+        out = isoline_variation(
+            x1,
+            x2,
             isoline_key,
             iso_sigma=iso_sigma,
             line_sigma=line_sigma,
-            minval=xl_j,
-            maxval=xu_j,
         )
-        return offspring
+
+        if isinstance(out, tuple):
+            offspring = out[0]
+        else:
+            offspring = out
+
+        return jnp.clip(offspring, xl_j, xu_j)
 
     # ------------------------------------------------------------------
     # Build MAP-Elites instance and initialise repertoire
     # ------------------------------------------------------------------
-    map_elites = MAPElites(
-        scoring_function=scoring_fn,
-        emitter=None,  # we run the loop manually using variation_fn
-        metrics_function=None,
-    )
-
     key, score_key = jax.random.split(key)
     init_fitnesses, init_descriptors, _ = scoring_fn(init_genotypes)
 
@@ -723,33 +760,94 @@ def run_qdax_mapelites(
         centroids=centroids,
     )
 
-    logger.header("[*] QDax MAP-Elites exploration")
+    # ------------------------------------------------------------------
+    # MAP-Elites loop
+    # ------------------------------------------------------------------
 
-    # ------------------------------------------------------------------
-    # MAP-Elites loop: JIT-compiled step to avoid retracing per iteration
-    # ------------------------------------------------------------------
     @jax.jit
+    def sample_repertoire_genotypes(repertoire, sample_key):
+        """
+        Sample parent genotypes from filled MAP-Elites niches.
+
+        This avoids relying on QDax's version-dependent repertoire.sample(...) API.
+        """
+        valid_mask = repertoire.fitnesses > -jnp.inf
+
+        valid_indices = jnp.where(
+            valid_mask,
+            size=repertoire.fitnesses.shape[0],
+            fill_value=0,
+        )[0]
+
+        n_valid = jnp.sum(valid_mask)
+        safe_n_valid = jnp.maximum(n_valid, 1)
+
+        sampled_positions = jax.random.randint(
+            sample_key,
+            shape=(batch_size,),
+            minval=0,
+            maxval=safe_n_valid,
+        )
+
+        sampled_indices = valid_indices[sampled_positions]
+        return repertoire.genotypes[sampled_indices]
+
     def mapelites_step(repertoire, key):
+        """
+        One MAP-Elites update step.
+
+        Do not jit this function for now because QDax repertoire.add(...)
+        has version-dependent Python-object behavior.
+        """
         key, sample_key, var_key = jax.random.split(key, 3)
-        parents = repertoire.sample(sample_key, batch_size)
-        offspring = variation_fn(parents, repertoire, var_key)
+
+        parents_1 = sample_repertoire_genotypes(repertoire, sample_key)
+
+        key_pair, var_key = jax.random.split(var_key)
+        parents_2 = sample_repertoire_genotypes(repertoire, key_pair)
+
+        offspring = variation_fn(parents_1, parents_2, var_key)
         off_fit, off_desc, _ = scoring_fn(offspring)
-        repertoire = repertoire.add(offspring, off_desc, off_fit)
-        return repertoire, key
+
+        add_out = repertoire.add(offspring, off_desc, off_fit)
+
+        # QDax compatibility:
+        # - some versions return updated repertoire
+        # - some versions return tuple(repertoire, ...)
+        # - some versions mutate in place and return None
+        if add_out is None:
+            updated_repertoire = repertoire
+        elif isinstance(add_out, tuple):
+            updated_repertoire = add_out[0]
+        else:
+            updated_repertoire = add_out
+
+        if updated_repertoire is None:
+            raise RuntimeError(
+                "QDax repertoire.add(...) returned None and did not preserve "
+                "a usable MapElitesRepertoire."
+            )
+
+        return updated_repertoire, key
 
     for it in range(n_iterations):
         repertoire, key = mapelites_step(repertoire, key)
+
         if verbose and (it % 500 == 0 or it == n_iterations - 1):
             valid_mask = repertoire.fitnesses > -jnp.inf
-            n_filled = int(valid_mask.sum())
-            best_fit = float(jnp.max(repertoire.fitnesses[valid_mask]))
+            n_filled = int(jnp.sum(valid_mask))
+
+            if n_filled > 0:
+                best_fit = float(jnp.max(repertoire.fitnesses[valid_mask]))
+            else:
+                best_fit = float("-inf")
+
             logger.info(
                 f"[QDax iter {it:5d}] filled={n_filled} best_fit={best_fit:.6f}",
                 flush=True,
             )
 
     return repertoire
-
 
 # ---------------------------------------------------------------------------
 # Top-level orchestrator
@@ -911,7 +1009,7 @@ def run_hybrid_fit(
 
     # ------------------------------------------------------------------ QDax
     if verbose:
-        logger.info("[hybrid_fit] QDax MAP-Elites …", flush=True)
+        logger.header("[*] QDax MAP-Elites exploration")
     repertoire = run_qdax_mapelites(
         loss_fn,
         xl,
@@ -928,10 +1026,26 @@ def run_hybrid_fit(
     )
 
     # Extract filled niches
+    if repertoire is None:
+        raise RuntimeError(
+            "run_qdax_mapelites returned None. "
+            "The QDax MAP-Elites loop did not return a valid repertoire."
+        )
+
     valid_mask = np.asarray(repertoire.fitnesses > -jnp.inf)
-    qdax_fitnesses = np.asarray(repertoire.fitnesses[valid_mask], dtype=np.float64)
-    qdax_descriptors = np.asarray(repertoire.descriptors[valid_mask], dtype=np.float64)
-    qdax_genotypes = np.asarray(repertoire.genotypes[valid_mask], dtype=np.float64)
+
+    qdax_fitnesses = np.asarray(
+        repertoire.fitnesses[valid_mask],
+        dtype=np.float64,
+    )
+    qdax_descriptors = np.asarray(
+        repertoire.descriptors[valid_mask],
+        dtype=np.float64,
+    )
+    qdax_genotypes = np.asarray(
+        repertoire.genotypes[valid_mask],
+        dtype=np.float64,
+    )
 
     return HybridFitResult(
         theta_opt=theta_opt,
