@@ -4,43 +4,47 @@
 # ---------------------------------------------------------------------------
 # [paths]  – input files and output directory
 # Required: data, ptm_intra, ptm_inter
-# Optional: set to "" (empty string) or omit the key entirely to disable.
+# Optional: set to "" or omit the key entirely to disable.
 # ---------------------------------------------------------------------------
 [paths]
-data            = "data_timeseries/filtered_input1.csv"
-ptm_intra       = "data_curated/processed/ptm_intra.db"
-ptm_inter       = "data_curated/processed/ptm_inter.db"
-output_dir      = "results"
-# crosstalk_tsv   = ""          # optional PTM-pair filter TSV
-rna_data        = "data_timeseries/filtered_input3.csv"          # optional mRNA time-series CSV
-tf_net          = "data_interactions/tf_mrna.csv"          # optional TF→mRNA network CSV
-kinase_tsv      = "data_interactions/kinase_sites.tsv"   # kinase-site prior
-# kea_ks_table    = ""          # alternative KEA/KS table
-unified_graph_pkl = "data_curated/processed/unified_kinase_graph.gpickle"        # kinase-kinase graph for Laplacian regularizer
+data              = "data_timeseries/filtered_input1.csv"
+ptm_intra         = "data_curated/processed/ptm_intra.db"
+ptm_inter         = "data_curated/processed/ptm_inter.db"
+output_dir        = "results"
+crosstalk_tsv     = ""
+rna_data          = "data_timeseries/filtered_input3.csv"
+tf_net            = "data_interactions/tf_mrna.csv"
+kinase_tsv        = "data_interactions/kinase_sites.tsv"
+kea_ks_table      = ""
+unified_graph_pkl = "data_curated/processed/unified_kinase_graph.gpickle"
 
 # ---------------------------------------------------------------------------
 # [model]  – ODE model settings
 # ---------------------------------------------------------------------------
 [model]
-mechanism               = "rand"     # dist | seq | rand
-scale_mode              = "none"
+mechanism               = "seq"      # dist | seq | rand
+scale_mode              = "none"     # none | minmax | zscore
 length_scale            = 100.0
-weight_scheme           = "uniform"
-receptors               = []         # proteins receiving external stimulus u(t)
-receptor_kinases        = []         # kinases receiving external stimulus u(t)
-# Set to true to include TF source/target proteins even without kinase-site priors.
-# Requires rna_data and tf_net.  Pass full (unfiltered) time-series files.
-include_tfs_as_proteins = true
+weight_scheme           = "uniform"  # uniform | inverse_variance | time_weighted
+receptors               = []
+receptor_kinases        = []
+include_tfs_as_proteins = false
 
 # ---------------------------------------------------------------------------
-# [optimisation]  – multi-start gradient fitting
+# [optimisation]  – multi-start fitting control
+# solver = "lm"     → run_single_optimisation only (classic path)
+# solver = "hybrid" → run_hybrid_fit (Phase 0 LHS + Phase 1 evosax + Phase 2 LM + QDax)
 # ---------------------------------------------------------------------------
 [optimisation]
-n_starts  = 10
-max_steps = 500
+n_starts   = 3
+max_steps  = 300          # LM iteration cap when solver = "lm"
+solver     = "hybrid"      # lm | hybrid
+verbose    = false
 loss_type  = "mse"
 lambda_net = 0.001
 reg_lambda = 0.0001
+rtol       = 1e-8          # Optimistix convergence rtol
+atol       = 1e-8          # Optimistix convergence atol
 
 # ---------------------------------------------------------------------------
 # [loss_weights]  – relative weight of each objective term
@@ -52,11 +56,68 @@ mrna      = 1.0
 reg       = 1.0
 
 # ---------------------------------------------------------------------------
-# [bounds]  – optional per-parameter bound overrides (leave empty for defaults)
+# [hybrid]  – settings used only when [optimisation] solver = "hybrid"
+#
+# Phase 0:  Latin Hypercube Sampling warm-start screen
+# Phase 1:  evosax global search (CMA-ES family)
+# Phase 2:  Optimistix LM polish on top-K evosax candidates
+# Phase 3:  QDax MAP-Elites behavioural repertoire (always runs)
+# ---------------------------------------------------------------------------
+[hybrid]
+
+# ── Phase 0: LHS screen ────────────────────────────────────────────────────
+# skip_lhs = true bypasses Phase 0; evosax starts from a random population.
+lhs_n_samples = 512    # total LHS draw size
+lhs_top_p     = 16     # top-P seeds forwarded to evosax as warm-start
+skip_lhs      = false
+
+# ── Phase 1: evosax global search ──────────────────────────────────────────
+# es_algo choices:
+#   sep_cma_es  – O(n) per step, preferred for dim 50-500  (default)
+#   cma_es      – full covariance, preferred for dim ≤ 100
+#   de          – Differential Evolution, robust when ODE solve fails often
+es_algo          = "sep_cma_es"
+es_popsize       = 64
+es_n_generations = 200
+es_sigma_init    = 0.3    # initial step size in normalised [0,1] space
+es_top_k         = 5      # number of LM seeds drawn from final evosax population
+
+# ── Phase 2: LM polish ─────────────────────────────────────────────────────
+# These override [optimisation] max_steps / rtol / atol for the hybrid path.
+lm_max_steps = 300
+lm_rtol      = 1e-8
+lm_atol      = 1e-8
+
+# ── General ────────────────────────────────────────────────────────────────
+seed    = 0      # master RNG seed (covers LHS, evosax, QDax init)
+verbose = false  # per-generation / per-seed progress logging
+
+# ---------------------------------------------------------------------------
+# [qdax]  – MAP-Elites behavioural repertoire
+# Runs after Phase 2; builds a 2-D grid of parameter sets
+# (BD axes: log10 median kinase half-life, log10 median protein half-life).
+# Output saved to {output_dir}/{run_prefix}_qdax_repertoire.npz
+# ---------------------------------------------------------------------------
+[qdax]
+n_centroids  = 1024    # Voronoi CVT centroids (grid resolution)
+batch_size   = 256     # number of variants evaluated per MAP-Elites iteration
+n_iterations = 2000    # total MAP-Elites iterations
+iso_sigma    = 0.005   # isoline mutation – perturbation magnitude
+line_sigma   = 0.05    # isoline mutation – line interpolation spread
+
+# ---------------------------------------------------------------------------
+# [bounds]  – per-parameter rate bounds (used by create_bounds())
+# All values must be positive.
 # ---------------------------------------------------------------------------
 [bounds]
-# lower = [...]
-# upper = [...]
+rate_min                = 1e-5
+rate_max                = 10.0
+protein_degradation_max = 0.5
+kinase_rate_max         = 3.0
+phosphatase_rate_max    = 5.0
+gamma_abs_max           = 2.0
+rna_max                 = 10.0
+abundance_max           = 5.0
 
 # ---------------------------------------------------------------------------
 # [solver]  – Diffrax ODE solver tolerances
@@ -78,15 +139,13 @@ interpolation    = "piecewise_constant"   # piecewise_constant | linear
 # ---------------------------------------------------------------------------
 [derived_rates]
 s_prod_fn = "softplus"   # softplus | linear
-# mRNA relaxation rate (min^-1).  Controls how fast R(t) tracks k_act(t).
-# At steady state R_ss = k_act.  Smaller values → slower mRNA turnover.
 rna_relax = 0.02
 
 # ---------------------------------------------------------------------------
 # [analysis]  – downstream analyses to run after fitting
 # ---------------------------------------------------------------------------
 [analysis]
-tune            = false   # run hyperparameter scan before optimisation
-run_steadystate = false   # run post-optimisation steady-state simulation
-run_knockouts   = false   # run in-silico kinase knockout screening
-run_sensitivity = false   # run global Sobol sensitivity analysis
+tune            = false
+run_steadystate = false
+run_knockouts   = false
+run_sensitivity = false
