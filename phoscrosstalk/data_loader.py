@@ -807,3 +807,145 @@ def build_full_R0(K, gene_ids, rna_matrix, proteins, default=1.0):
                 R0[k] = np.clip(val, 0.0, 20.0)
 
     return R0
+
+
+def build_protein_entity_masks(
+    proteins,
+    sites,
+    site_prot_idx,
+    K_site_kin,
+    tf_net_df,
+    tf_prot_weights,
+    gene_ids,
+    include_tfs_as_proteins,
+):
+    """
+    Build boolean metadata masks describing each modeled protein's prior support.
+
+    Parameters
+    ----------
+    proteins : list[str]
+        Ordered list of model protein names (length K).
+    sites : list[str]
+        Ordered list of phosphosite labels (length N).
+    site_prot_idx : np.ndarray, shape (N,)
+        Maps each site to its protein index in *proteins*.
+    K_site_kin : np.ndarray, shape (N, M)
+        Kinase-substrate weight matrix.  Non-zero entries indicate a kinase prior.
+    tf_net_df : pd.DataFrame or None
+        TF network table with columns ``source``, ``target``, ``weight``.
+    tf_prot_weights : np.ndarray or None, shape (K, n_genes)
+        Pre-built weight matrix from :func:`build_tf_prot_weights`.
+    gene_ids : list[str] or None
+        Gene identifiers from the mRNA dataset.
+    include_tfs_as_proteins : bool
+        Whether the extended TF-as-protein mode is active.
+
+    Returns
+    -------
+    dict with keys:
+        protein_has_tf_input   : np.ndarray[bool], shape (K,)
+        protein_is_tf_source   : np.ndarray[bool], shape (K,)
+        protein_is_tf_target   : np.ndarray[bool], shape (K,)
+        protein_has_kinase_prior : np.ndarray[bool], shape (K,)
+        site_has_kinase_prior  : np.ndarray[bool], shape (N,)
+        protein_has_rna        : np.ndarray[bool], shape (K,)
+        included_by_extended_mode : np.ndarray[bool], shape (K,)
+        protein_self_rna_idx   : np.ndarray[int], shape (K,)  (-1 = no self-RNA)
+        n_tf_sources           : int
+        n_tf_targets           : int
+        n_sources_in_rna       : int
+        n_targets_in_rna       : int
+        n_sources_in_proteins  : int
+        n_targets_in_proteins  : int
+        n_included_by_extended : int
+    """
+    K = len(proteins)
+    N = len(sites)
+    prot_idx_map = {p: i for i, p in enumerate(proteins)}
+
+    # --- TF network membership ---
+    protein_is_tf_source = np.zeros(K, dtype=bool)
+    protein_is_tf_target = np.zeros(K, dtype=bool)
+    tf_sources_all = set()
+    tf_targets_all = set()
+
+    if tf_net_df is not None:
+        tf_sources_all = set(tf_net_df["source"].astype(str))
+        tf_targets_all = set(tf_net_df["target"].astype(str))
+        for p_name, p_idx in prot_idx_map.items():
+            if p_name in tf_sources_all:
+                protein_is_tf_source[p_idx] = True
+            if p_name in tf_targets_all:
+                protein_is_tf_target[p_idx] = True
+
+    # --- TF-driven activation presence ---
+    protein_has_tf_input = np.zeros(K, dtype=bool)
+    if tf_prot_weights is not None:
+        for p_idx in range(K):
+            if float(tf_prot_weights[p_idx].sum()) > 0.0:
+                protein_has_tf_input[p_idx] = True
+
+    # --- Kinase priors ---
+    site_has_kinase_prior = np.array(
+        [float(K_site_kin[i, :].sum()) > 0.0 for i in range(N)], dtype=bool
+    )
+    protein_has_kinase_prior = np.zeros(K, dtype=bool)
+    for i, p_idx in enumerate(site_prot_idx):
+        if site_has_kinase_prior[i]:
+            protein_has_kinase_prior[p_idx] = True
+
+    # --- RNA availability ---
+    gene_set = set()
+    gene_idx_map = {}
+    if gene_ids is not None:
+        gene_set = {str(g).strip() for g in gene_ids}
+        gene_idx_map = {str(g).strip(): i for i, g in enumerate(gene_ids)}
+
+    protein_has_rna = np.zeros(K, dtype=bool)
+    for p_name, p_idx in prot_idx_map.items():
+        if p_name in gene_set:
+            protein_has_rna[p_idx] = True
+
+    # --- Self-RNA index for fallback in extended mode ---
+    protein_self_rna_idx = np.full(K, -1, dtype=int)
+    if include_tfs_as_proteins:
+        for p_name, p_idx in prot_idx_map.items():
+            if not protein_has_tf_input[p_idx] and p_name in gene_idx_map:
+                protein_self_rna_idx[p_idx] = gene_idx_map[p_name]
+
+    # --- Included only because of extended mode ---
+    included_by_extended_mode = np.zeros(K, dtype=bool)
+    if include_tfs_as_proteins:
+        for p_idx in range(K):
+            if (
+                not protein_has_kinase_prior[p_idx]
+                and not protein_has_tf_input[p_idx]
+                and (protein_is_tf_source[p_idx] or protein_is_tf_target[p_idx])
+            ):
+                included_by_extended_mode[p_idx] = True
+
+    # --- Overlap counts for logging ---
+    n_sources_in_rna = len(tf_sources_all & gene_set)
+    n_targets_in_rna = len(tf_targets_all & gene_set)
+    n_sources_in_proteins = int(protein_is_tf_source.sum())
+    n_targets_in_proteins = int(protein_is_tf_target.sum())
+    n_included_by_extended = int(included_by_extended_mode.sum())
+
+    return {
+        "protein_has_tf_input": protein_has_tf_input,
+        "protein_is_tf_source": protein_is_tf_source,
+        "protein_is_tf_target": protein_is_tf_target,
+        "protein_has_kinase_prior": protein_has_kinase_prior,
+        "site_has_kinase_prior": site_has_kinase_prior,
+        "protein_has_rna": protein_has_rna,
+        "included_by_extended_mode": included_by_extended_mode,
+        "protein_self_rna_idx": protein_self_rna_idx,
+        "n_tf_sources": len(tf_sources_all),
+        "n_tf_targets": len(tf_targets_all),
+        "n_sources_in_rna": n_sources_in_rna,
+        "n_targets_in_rna": n_targets_in_rna,
+        "n_sources_in_proteins": n_sources_in_proteins,
+        "n_targets_in_proteins": n_targets_in_proteins,
+        "n_included_by_extended": n_included_by_extended,
+    }

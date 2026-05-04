@@ -35,6 +35,78 @@ from phoscrosstalk.weighting import build_weight_matrices
 logger = get_logger()
 
 
+def _save_model_entities_table(
+    outdir, proteins, sites, site_prot_idx, entity_masks, gene_ids, A_proteins
+):
+    """
+    Save a model_entities.tsv file recording each protein's prior support and
+    inclusion reason.
+
+    Args:
+        outdir (str): Output directory.
+        proteins (list[str]): Model protein names (length K).
+        sites (list[str]): Phosphosite labels (length N).
+        site_prot_idx (np.ndarray): Maps each site to its protein index.
+        entity_masks (dict): Output of ``build_protein_entity_masks()``.
+        gene_ids (list[str] or None): Gene IDs in the mRNA dataset.
+        A_proteins (np.ndarray or None): Protein names with abundance data.
+    """
+    K = len(proteins)
+    # Count phosphosites per protein
+    n_psites = np.zeros(K, dtype=int)
+    for p_idx in site_prot_idx:
+        n_psites[p_idx] += 1
+
+    # Which proteins have abundance observations
+    prot_has_abundance = np.zeros(K, dtype=bool)
+    if A_proteins is not None:
+        prot_idx_map = {p: i for i, p in enumerate(proteins)}
+        for pname in A_proteins:
+            if pname in prot_idx_map:
+                prot_has_abundance[prot_idx_map[pname]] = True
+
+    rows = []
+    for p_idx, p_name in enumerate(proteins):
+        rows.append(
+            {
+                "protein": p_name,
+                "has_rna_observation": bool(entity_masks["protein_has_rna"][p_idx]),
+                "has_protein_observation": bool(prot_has_abundance[p_idx]),
+                "n_phosphosites": int(n_psites[p_idx]),
+                "is_tf_source": bool(entity_masks["protein_is_tf_source"][p_idx]),
+                "is_tf_target": bool(entity_masks["protein_is_tf_target"][p_idx]),
+                "has_tf_input": bool(entity_masks["protein_has_tf_input"][p_idx]),
+                "has_kinase_prior": bool(
+                    entity_masks["protein_has_kinase_prior"][p_idx]
+                ),
+                "included_by_extended_mode": bool(
+                    entity_masks["included_by_extended_mode"][p_idx]
+                ),
+            }
+        )
+
+    df = pd.DataFrame(rows)
+    path = os.path.join(outdir, "model_entities.tsv")
+    df.to_csv(path, sep="\t", index=False)
+
+    # Also save masks to preopt_snapshot/
+    snap_dir = os.path.join(outdir, "preopt_snapshot")
+    os.makedirs(snap_dir, exist_ok=True)
+    df.to_csv(os.path.join(snap_dir, "model_entities.tsv"), sep="\t", index=False)
+
+    # Save site-level kinase prior mask
+    site_mask_rows = [
+        {
+            "site": s,
+            "has_kinase_prior": bool(entity_masks["site_has_kinase_prior"][i]),
+        }
+        for i, s in enumerate(sites)
+    ]
+    pd.DataFrame(site_mask_rows).to_csv(
+        os.path.join(snap_dir, "site_kinase_prior_mask.tsv"), sep="\t", index=False
+    )
+
+
 def main():
     """
     Command-line interface for running the global phospho-network model fitting
@@ -262,6 +334,23 @@ def main():
             "Results are saved to <outdir>/sensitivity/."
         ),
     )
+    parser.add_argument(
+        "--include-tfs-as-proteins",
+        action="store_true",
+        default=False,
+        dest="include_tfs_as_proteins",
+        help=(
+            "Extended mode: include TF source and target proteins as modeled entities "
+            "even when they lack kinase-site priors or upstream TF regulators in the "
+            "TF→mRNA network. "
+            "Requires --rna-data and --tf-net to be provided. "
+            "Pass full (unfiltered) time-series files when this flag is set; "
+            "filtered files may exclude TF proteins before modeling. "
+            "Can also be set via config.toml [model] include_tfs_as_proteins = true. "
+            "In this mode, proteins without TF upstream edges use their own RNA "
+            "trajectory as activation signal, or constant 1.0 if RNA is absent."
+        ),
+    )
 
     # ------------------------------------------------------------------
     # META OPTIONS
@@ -313,6 +402,11 @@ def main():
         args.max_steps if args.max_steps is not None else cfg.optimisation.max_steps
     )
 
+    # Merge include_tfs_as_proteins: CLI flag wins over config
+    cfg_flag = getattr(cfg.model, "include_tfs_as_proteins", False)
+    include_tfs_as_proteins = args.include_tfs_as_proteins or bool(cfg_flag)
+    args.include_tfs_as_proteins = include_tfs_as_proteins
+
     # Expose merged values back on args namespace for compatibility with
     # run_multi_start_optimization which reads from args
     args.outdir = outdir
@@ -327,6 +421,29 @@ def main():
     if args.max_steps < 1:
         print(f"ERROR: --max-steps must be >= 1; got {args.max_steps}", flush=True)
         raise SystemExit(1)
+
+    # Validate extended-mode requirements.
+    if include_tfs_as_proteins:
+        if not args.rna_data:
+            print(
+                "ERROR: --include-tfs-as-proteins requires --rna-data to be provided.",
+                flush=True,
+            )
+            raise SystemExit(1)
+        if not args.tf_net:
+            print(
+                "ERROR: --include-tfs-as-proteins requires --tf-net to be provided.",
+                flush=True,
+            )
+            raise SystemExit(1)
+        # Warn if filenames suggest filtered inputs
+        for _path in [args.data, args.rna_data]:
+            if _path and "filtered" in os.path.basename(_path).lower():
+                logger.warning(
+                    "[!] --include-tfs-as-proteins expects full time-series files. "
+                    f"You passed a file containing 'filtered' in the name ({_path}). "
+                    "This may remove TF proteins before modeling."
+                )
 
     # Pull numeric settings from config
     args.length_scale = cfg.model.length_scale
@@ -358,6 +475,7 @@ def main():
     t_rna = None
     rna_matrix = None
     tf_prot_weights = None
+    tf_net_df = None
 
     if args.rna_data:
         gene_ids, t_rna, rna_matrix = data_loader.load_rna_data(args.rna_data)
@@ -486,6 +604,52 @@ def main():
             "[!] No Receptors defined. External stimulus u(t) will be ignored."
         )
 
+    # 7b. Build entity metadata masks (prior support, TF membership, RNA presence)
+    entity_masks = data_loader.build_protein_entity_masks(
+        proteins=proteins,
+        sites=sites,
+        site_prot_idx=site_prot_idx,
+        K_site_kin=K_site_kin,
+        tf_net_df=tf_net_df,
+        tf_prot_weights=tf_prot_weights,
+        gene_ids=gene_ids,
+        include_tfs_as_proteins=include_tfs_as_proteins,
+    )
+
+    # Log TF network overlap counts
+    logger.info(
+        f"[*] TF network: {entity_masks['n_tf_sources']} sources, "
+        f"{entity_masks['n_tf_targets']} targets. "
+        f"Sources in RNA: {entity_masks['n_sources_in_rna']}, "
+        f"Targets in RNA: {entity_masks['n_targets_in_rna']}. "
+        f"Sources in model proteins: {entity_masks['n_sources_in_proteins']}, "
+        f"Targets in model proteins: {entity_masks['n_targets_in_proteins']}."
+    )
+    n_no_kinase = int((~entity_masks["protein_has_kinase_prior"]).sum())
+    n_no_tf = int((~entity_masks["protein_has_tf_input"]).sum())
+    _n_proteins = len(proteins)
+    logger.info(
+        f"[*] Proteins without kinase priors: {n_no_kinase}/{_n_proteins}; "
+        f"without TF upstream: {n_no_tf}/{_n_proteins}."
+    )
+    if include_tfs_as_proteins:
+        n_ext = entity_masks["n_included_by_extended"]
+        logger.info(
+            f"[*] Extended mode: {n_ext} protein(s) included only due to "
+            "--include-tfs-as-proteins."
+        )
+
+    # Save model_entities.tsv
+    _save_model_entities_table(
+        outdir=outdir,
+        proteins=proteins,
+        sites=sites,
+        site_prot_idx=site_prot_idx,
+        entity_masks=entity_masks,
+        gene_ids=gene_ids,
+        A_proteins=A_proteins,
+    )
+
     # 8. Build derived rate functions (k_act_fn, s_prod_fn)
     K = len(proteins)
     M = len(kinases)
@@ -496,6 +660,7 @@ def main():
         tf_prot_weights=tf_prot_weights,
         K=K,
         interp_mode=interp_mode,
+        protein_self_rna_idx=entity_masks["protein_self_rna_idx"],
     )
 
     s_prod_fn = make_s_prod_fn(
