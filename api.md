@@ -124,8 +124,8 @@ that match the exact theta layout:
 |--------------|-----------------------------------------------|
 | `[0 : K)`    | `log_k_deact[0]` … `log_k_deact[K-1]`        |
 | `[K : 2K)`   | `log_d_deg[0]` … `log_d_deg[K-1]`            |
-| `[2K]`       | `log_beta_g`                                  |
-| `[2K+1]`     | `log_beta_l`                                  |
+| `[2K : 2K+1)`   | `log_beta_g`                                  |
+| `[2K+1 : 2K+2)` | `log_beta_l`                                  |
 | `[2K+2 : …)` | `log_alpha[0]` … `log_alpha[M-1]`             |
 | `[… : …)`    | `log_kK_act[0]` … `log_kK_act[M-1]`          |
 | `[… : …)`    | `log_kK_deact[0]` … `log_kK_deact[M-1]`      |
