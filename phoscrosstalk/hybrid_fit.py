@@ -36,7 +36,6 @@ from scipy.stats import qmc
 
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.optimization import (
-    bio_score_nb,
     run_single_optimisation,
 )
 
@@ -312,9 +311,7 @@ def run_evosax(
     best_orig = np.asarray(to_original(best_norm), dtype=np.float64)
 
     # Full population in original space
-    final_pop_orig = np.asarray(
-        jax.vmap(to_original)(final_pop), dtype=np.float64
-    )
+    final_pop_orig = np.asarray(jax.vmap(to_original)(final_pop), dtype=np.float64)
 
     return best_orig, final_pop_orig
 
@@ -774,7 +771,9 @@ def run_hybrid_fit(
 
     # Always include best_theta as seed 0; avoid exact duplicates
     best_theta_row = best_theta[None, :]
-    is_dup = np.all(np.isclose(top_k_seeds, best_theta_row, rtol=1e-9, atol=1e-12), axis=1)
+    is_dup = np.all(
+        np.isclose(top_k_seeds, best_theta_row, rtol=1e-9, atol=1e-12), axis=1
+    )
     unique_top_k = top_k_seeds[~is_dup]
     lm_seeds = np.concatenate([best_theta_row, unique_top_k], axis=0)
 
@@ -814,12 +813,8 @@ def run_hybrid_fit(
     # Extract filled niches
     valid_mask = np.asarray(repertoire.fitnesses > -jnp.inf)
     qdax_fitnesses = np.asarray(repertoire.fitnesses[valid_mask], dtype=np.float64)
-    qdax_descriptors = np.asarray(
-        repertoire.descriptors[valid_mask], dtype=np.float64
-    )
-    qdax_genotypes = np.asarray(
-        repertoire.genotypes[valid_mask], dtype=np.float64
-    )
+    qdax_descriptors = np.asarray(repertoire.descriptors[valid_mask], dtype=np.float64)
+    qdax_genotypes = np.asarray(repertoire.genotypes[valid_mask], dtype=np.float64)
 
     return HybridFitResult(
         theta_opt=theta_opt,

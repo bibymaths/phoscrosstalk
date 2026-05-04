@@ -273,7 +273,9 @@ def make_rhs(
         # New state layout: y = [R_rna, S, A, Kdyn, p]  (dim = 3*K + M + N)
         R_rna = jnp.clip(y[:K], 0.0, None)  # mRNA state [0, ∞)
         S = jnp.clip(y[K : 2 * K], 0.0, 1.0)  # protein signalling [0, 1]
-        A = jnp.clip(y[2 * K : 3 * K], 0.0, abundance_max)  # protein abundance [0, abundance_max]
+        A = jnp.clip(
+            y[2 * K : 3 * K], 0.0, abundance_max
+        )  # protein abundance [0, abundance_max]
         Kdyn = jnp.clip(y[3 * K : 3 * K + M], 0.0, 1.0)  # kinase activity [0, 1]
         p = jnp.clip(y[3 * K + M :], 0.0, 1.0)  # phosphosite occupancy [0, 1]
 

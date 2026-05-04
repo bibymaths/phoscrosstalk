@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 
-
 _EPS = 1e-12
 
 
@@ -292,7 +291,9 @@ def build_weight_matrices(
         )
     else:
         w_site = _compute_noise_weights(Y, name="Y")
-        w_prot = _compute_noise_weights(A, name="A_data") if A.size > 0 else np.zeros((0,))
+        w_prot = (
+            _compute_noise_weights(A, name="A_data") if A.size > 0 else np.zeros((0,))
+        )
         w_mrna = (
             _compute_noise_weights(RNA, name="rna_data")
             if RNA.size > 0
