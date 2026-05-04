@@ -39,6 +39,11 @@ dev = [
   "ruff",
   "ipython",
 ]
+docs = [
+  "mkdocs",
+  "mkdocs-material",
+  "pymdown-extensions",
+]
 
 [project.scripts]
 phoscrosstalk = "phoscrosstalk.main:cli"
@@ -51,6 +56,18 @@ issues = "https://github.com/bibymaths/phoscrosstalk/issues"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers --strict-config --cov=phoscrosstalk --cov-report=term-missing --cov-report=xml"
