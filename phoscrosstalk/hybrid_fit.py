@@ -32,7 +32,6 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 import numpy as np
-from scipy.stats import qmc
 
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.optimization import (
@@ -128,7 +127,6 @@ class HybridFitResult:
 # Phase 0 – Latin Hypercube Sampling screen
 # ---------------------------------------------------------------------------
 
-
 def lhs_screen(
     loss_fn,
     xl: np.ndarray,
@@ -136,19 +134,20 @@ def lhs_screen(
     n_samples: int = 512,
     top_p: int = 16,
     seed: int = 0,
+    batch_size: int = 64,
 ) -> np.ndarray:
     """
     Phase 0: Latin Hypercube Sampling screen over the parameter space.
 
-    Generates *n_samples* parameter vectors using a space-filling LHS design,
-    evaluates the loss for all of them in a single batched ``jax.vmap`` call,
-    and returns the *top_p* parameter vectors with the lowest loss.
+    Generates *n_samples* parameter vectors using a space-filling LHS design
+    implemented in pure NumPy (no scipy dependency), evaluates the loss in
+    JIT-compiled batches, and returns the *top_p* lowest-loss candidates.
 
     Parameters
     ----------
     loss_fn : callable (theta, args) -> (scalar_loss, aux)
-        JAX-compatible scalarised loss function as returned by
-        ``make_loss_fn``.  Must support ``jax.vmap``.
+        JAX-compatible scalarised loss function as returned by ``make_loss_fn``.
+        Should be JIT-compiled (``jax.jit``) before being passed in.
     xl : np.ndarray
         Lower bounds for each parameter, shape ``(n_var,)``.
     xu : np.ndarray
@@ -158,32 +157,48 @@ def lhs_screen(
     top_p : int
         Number of top candidates to return.  Default: 16.
     seed : int
-        Random seed for the LHS sampler.  Default: 0.
+        Random seed for the NumPy LHS sampler.  Default: 0.
+    batch_size : int
+        Number of samples to evaluate per JIT-compiled vmap call.  Smaller
+        batches reduce peak memory and JIT compile time.  Default: 64.
 
     Returns
     -------
     np.ndarray
-        Top-*p* parameter vectors in original (un-normalised) space,
-        sorted ascending by loss.  Shape ``(top_p, n_var)``, ``float64``.
+        Top-*p* parameter vectors in original (un-normalised) space, sorted
+        ascending by loss.  Shape ``(top_p, n_var)``, ``float64``.
     """
     n_var = len(xl)
-    sampler = qmc.LatinHypercube(d=n_var, seed=seed)
-    unit_samples = sampler.random(n_samples)  # (n_samples, n_var) in [0,1]
+    rng = np.random.default_rng(seed)
+
+    # ----- Pure-NumPy Latin Hypercube Sampling -----
+    # Divide [0,1] into n_samples equal strata per dimension;
+    # draw one point uniformly from each stratum, then shuffle columns.
+    strata_width = 1.0 / n_samples
+    lower_edges = np.arange(n_samples, dtype=np.float64) * strata_width   # (n_samples,)
+    unit_samples = np.empty((n_samples, n_var), dtype=np.float64)
+    for d in range(n_var):
+        perm = rng.permutation(n_samples)
+        unit_samples[:, d] = lower_edges[perm] + rng.uniform(0.0, strata_width, n_samples)
 
     # Un-normalise to [xl, xu]
     span = xu - xl
-    samples = xl + unit_samples * span  # (n_samples, n_var) float64
+    samples = xl + unit_samples * span   # (n_samples, n_var) float64
 
-    # Evaluate loss in one batched vmap call (use float32 internally)
+    # ----- JIT-compiled batched loss evaluation -----
+    @jax.jit
+    def eval_batch(batch_theta: jnp.ndarray) -> jnp.ndarray:
+        return jax.vmap(lambda th: loss_fn(th, None)[0])(batch_theta)
+
     samples_f32 = jnp.asarray(samples, dtype=jnp.float32)
-    batched_loss = jax.vmap(lambda theta: loss_fn(theta, None)[0])
-    losses = batched_loss(samples_f32)  # (n_samples,)
-    losses_np = np.asarray(losses, dtype=np.float64)
+    loss_pieces = []
+    for i in range(0, n_samples, batch_size):
+        loss_pieces.append(eval_batch(samples_f32[i : i + batch_size]))
+    losses_np = np.asarray(jnp.concatenate(loss_pieces), dtype=np.float64)
 
-    # Sort ascending and take top_p
+    # Return top_p seeds sorted ascending by loss
     order = np.argsort(losses_np)[:top_p]
     return samples[order].astype(np.float64)
-
 
 # ---------------------------------------------------------------------------
 # Phase 1 – evosax global search
@@ -310,7 +325,7 @@ def run_evosax(
     state = strategy.init(init_key, mean_init, es_params)
 
     for gen in range(n_generations):
-        key, ask_key = jax.random.split(key)
+        key, ask_key, tell_key = jax.random.split(key, 3)
         pop, state = strategy.ask(ask_key, state, es_params)
 
         # Warm-start: inject LHS seeds into first generation
@@ -323,7 +338,7 @@ def run_evosax(
         pop = jnp.clip(pop, 0.0, 1.0)
 
         losses = normed_fitness(pop)
-        state, _ = strategy.tell(pop, losses, state, es_params)
+        state, _ = strategy.tell(tell_key, pop, losses, state, es_params)
 
         if verbose and (gen % 50 == 0 or gen == n_generations - 1):
             logger.info(
@@ -635,6 +650,8 @@ def run_qdax_mapelites(
         centroids=centroids,
     )
 
+    logger.header("[*] QDax MAP-Elites exploration")
+
     # ------------------------------------------------------------------
     # MAP-Elites loop (manual ask/tell using isoline variation)
     # ------------------------------------------------------------------
@@ -769,6 +786,7 @@ def run_hybrid_fit(
     warm_seeds: np.ndarray | None = None
     if not skip_lhs:
         if verbose:
+            logger.header("[*] Hybrid fitting pipeline: LHS → evosax → LM")
             logger.info("[hybrid_fit] Phase 0: LHS screen …", flush=True)
         warm_seeds = lhs_screen(
             loss_fn, xl, xu, n_samples=lhs_n_samples, top_p=lhs_top_p, seed=seed
