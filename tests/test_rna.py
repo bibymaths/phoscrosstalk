@@ -545,7 +545,7 @@ def test_backward_simulate_alias():
 # ---------------------------------------------------------------------------
 
 
-def test_rna_scale_warning_when_sim_too_large(tmp_path, recwarn):
+def test_rna_scale_warning_when_sim_too_large(tmp_path):
     """save_mrna_outputs must log a warning when max(R_sim) > 10 * max(R_obs)."""
     import logging
 

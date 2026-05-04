@@ -171,6 +171,12 @@ _VALID_WEIGHT = {"uniform", "inverse_variance", "time_weighted"}
 _VALID_SPROD = {"softplus", "linear"}
 
 
+def _opt(val: str) -> str | None:
+    """Return *val* stripped, or ``None`` if it is empty/absent."""
+    v = (val or "").strip()
+    return v if v else None
+
+
 def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> None:
     """
     Validate all required fields in *cfg* and fail fast with clear error messages.
@@ -201,11 +207,6 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
     # -------------------------------------------------------------------
     # Required paths
     # -------------------------------------------------------------------
-    def _opt(val: str) -> str | None:
-        """Return None when value is empty/absent, else the stripped value."""
-        v = (val or "").strip()
-        return v if v else None
-
     data = _opt(cfg.paths.data)
     ptm_intra = _opt(cfg.paths.ptm_intra)
     ptm_inter = _opt(cfg.paths.ptm_inter)

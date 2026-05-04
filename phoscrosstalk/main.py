@@ -13,7 +13,7 @@ import pandas as pd
 
 from phoscrosstalk import analysis, data_loader, hyperparam, knockouts, steadystate
 from phoscrosstalk.analysis import _save_preopt_snapshot_txt_csv
-from phoscrosstalk.config import ModelDims, load_config, validate_config
+from phoscrosstalk.config import ModelDims, _opt, load_config, validate_config
 from phoscrosstalk.derived_rates import make_k_act_fn, make_s_prod_fn
 from phoscrosstalk.equations import generate_equations_report
 from phoscrosstalk.logger import get_logger
@@ -222,10 +222,6 @@ def main():
     # ------------------------------------------------------------------
     # EXTRACT ALL SETTINGS FROM CONFIG
     # ------------------------------------------------------------------
-    def _opt(v: str) -> str | None:
-        v = (v or "").strip()
-        return v if v else None
-
     # Paths
     data_path = cfg.paths.data
     ptm_intra_path = cfg.paths.ptm_intra
