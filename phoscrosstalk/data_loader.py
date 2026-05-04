@@ -711,3 +711,99 @@ def build_alpha_laplacian_from_unified_graph(
                 A[i, j] = A[j, i] = w
     L = np.diag(A.sum(axis=1)) - A
     return L
+
+
+def match_rna_to_model_proteins(gene_ids, rna_matrix, proteins):
+    """
+    Match RNA genes to model proteins by exact symbol equality.
+
+    Only genes whose symbol matches a model protein are returned.  TF source
+    genes that are not modeled proteins are excluded, even if present in
+    gene_ids.
+
+    Parameters
+    ----------
+    gene_ids : list[str]
+        Gene identifiers from the mRNA dataset (row labels of rna_matrix).
+    rna_matrix : np.ndarray, shape (G, T_rna)
+        Observed mRNA fold-change values.
+    proteins : list[str]
+        Model protein names (from the phosphosite dataset).
+
+    Returns
+    -------
+    matched_genes : list[str]
+        Protein/gene names that appear in both datasets (ordered by protein index).
+    rna_obs_matched : np.ndarray, shape (n_match, T_rna)
+        Observed mRNA rows for matched genes.
+    rna_model_prot_idx : np.ndarray (int), shape (n_match,)
+        Indices into *proteins* for each matched gene.
+    rna_obs_idx : np.ndarray (int), shape (n_match,)
+        Indices into *gene_ids* / *rna_matrix* for each matched gene.
+    """
+    prot_idx_map = {p: i for i, p in enumerate(proteins)}
+    gene_idx_map = {g: i for i, g in enumerate(gene_ids)}
+
+    matched_genes = []
+    rna_model_prot_idx_list = []
+    rna_obs_idx_list = []
+
+    # Iterate proteins in order so output is deterministic and ordered by prot index
+    for p_name, p_idx in sorted(prot_idx_map.items(), key=lambda kv: kv[1]):
+        if p_name in gene_idx_map:
+            g_idx = gene_idx_map[p_name]
+            matched_genes.append(p_name)
+            rna_model_prot_idx_list.append(p_idx)
+            rna_obs_idx_list.append(g_idx)
+
+    if not matched_genes:
+        T_rna = rna_matrix.shape[1] if rna_matrix.ndim == 2 else 0
+        return (
+            [],
+            np.zeros((0, T_rna), dtype=float),
+            np.array([], dtype=int),
+            np.array([], dtype=int),
+        )
+
+    rna_model_prot_idx = np.array(rna_model_prot_idx_list, dtype=int)
+    rna_obs_idx = np.array(rna_obs_idx_list, dtype=int)
+    rna_obs_matched = rna_matrix[rna_obs_idx, :]
+
+    return matched_genes, rna_obs_matched, rna_model_prot_idx, rna_obs_idx
+
+
+def build_full_R0(K, gene_ids, rna_matrix, proteins, default=1.0):
+    """
+    Build the full R_rna initial condition vector for all K model proteins.
+
+    For proteins with a matched RNA row, the value at the first RNA time point
+    is used.  All other proteins receive *default* (fold-change scale: 1.0).
+
+    Parameters
+    ----------
+    K : int
+        Number of model proteins.
+    gene_ids : list[str]
+        Gene identifiers from the mRNA dataset.
+    rna_matrix : np.ndarray, shape (G, T_rna)
+        Observed mRNA fold-change matrix.
+    proteins : list[str]
+        Model protein names.
+    default : float
+        Default R0 value for unmatched proteins.
+
+    Returns
+    -------
+    R0 : np.ndarray, shape (K,)
+    """
+    R0 = np.full(K, default, dtype=float)
+    gene_idx_map = {g: i for i, g in enumerate(gene_ids)}
+
+    for k, p_name in enumerate(proteins):
+        if p_name in gene_idx_map:
+            g_idx = gene_idx_map[p_name]
+            val = float(rna_matrix[g_idx, 0])
+            if np.isfinite(val):
+                R0[k] = np.clip(val, 0.0, 20.0)
+
+    return R0

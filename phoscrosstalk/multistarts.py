@@ -100,6 +100,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
     w_phospho = getattr(args, "loss_weight_phospho", 1.0)
     w_abundance = getattr(args, "loss_weight_abundance", 1.0)
     w_reg = getattr(args, "loss_weight_reg", 1.0)
+    w_mrna = getattr(problem, "loss_weight_rna", getattr(args, "loss_weight_mrna", 1.0))
 
     # Warn if evolutionary algorithm flags were passed
     algo = getattr(args, "algorithm", None)
@@ -135,8 +136,13 @@ def run_multi_start_optimization(problem, args, P_scaled):
         w_phospho=w_phospho,
         w_abundance=w_abundance,
         w_reg=w_reg,
+        w_mrna=w_mrna,
         k_act_fn=getattr(problem, "k_act_fn", None),
         s_prod_fn=getattr(problem, "s_prod_fn", None),
+        t_mrna=getattr(problem, "t_rna", None),
+        rna_data_scaled=getattr(problem, "rna_obs_matched", None),
+        rna_model_prot_idx=getattr(problem, "rna_model_prot_idx", None),
+        R_data0=getattr(problem, "R_data0", None),
     )
 
     starts = _generate_starts(n_starts, xl, xu)
@@ -146,7 +152,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
         f"    {len(starts)} starting points, max_steps={max_steps} each"
     )
     logger.info(
-        f"    weights: phospho={w_phospho}, abundance={w_abundance}, reg={w_reg}"
+        f"    weights: phospho={w_phospho}, abundance={w_abundance}, reg={w_reg}, mrna={w_mrna}"
     )
 
     all_X, all_F, all_total = [], [], []
@@ -155,14 +161,14 @@ def run_multi_start_optimization(problem, args, P_scaled):
         logger.info(f"--- Run {i + 1}/{len(starts)} ---")
 
         try:
-            theta_opt, total_loss, f1, f2, f3 = run_single_optimisation(
+            theta_opt, total_loss, f1, f2, f3, f4 = run_single_optimisation(
                 loss_fn, theta0, max_steps=max_steps
             )
             all_X.append(theta_opt)
-            all_F.append([f1, f2, f3])
+            all_F.append([f1, f2, f3, f4])
             all_total.append(total_loss)
             logger.info(
-                f"    -> total={total_loss:.4f}  f1={f1:.4f}  f2={f2:.4f}  f3={f3:.4f}"
+                f"    -> total={total_loss:.4f}  f1={f1:.4f}  f2={f2:.4f}  f3={f3:.4f}  f4={f4:.4f}"
             )
         except Exception as e:
             logger.warning(f"    -> Run {i + 1} failed: {e}")

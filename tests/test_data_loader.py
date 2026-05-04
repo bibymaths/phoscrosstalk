@@ -278,7 +278,7 @@ def test_load_rna_data_nan_values(tmp_path):
     p = tmp_path / "rna_nan.csv"
     df.to_csv(p, index=False)
 
-    with pytest.raises(ValueError, match="NaN"):
+    with pytest.raises(ValueError, match="non-finite"):
         load_rna_data(str(p))
 
 
