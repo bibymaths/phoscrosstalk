@@ -274,6 +274,7 @@ def main():
         # solver
         rtol=cfg.solver.rtol,
         atol=cfg.solver.atol,
+        solver_max_steps=cfg.solver.max_steps,
         # analysis flags
         tune=getattr(cfg.analysis, "tune", False),
         run_steadystate=getattr(cfg.analysis, "run_steadystate", False),
@@ -605,7 +606,37 @@ def main():
         args=args,
     )
 
-    # 10. Optimisation
+    # 10. Build RNA-to-model-protein mapping (must happen BEFORE NetworkProblem)
+    rna_fit_genes = []
+    rna_obs_matched = None
+    rna_model_prot_idx = None
+    rna_obs_idx = None
+    W_data_mrna_matched = None
+    R_data0 = None
+
+    if rna_matrix is not None and gene_ids is not None:
+        (
+            rna_fit_genes,
+            rna_obs_matched_raw,
+            rna_model_prot_idx_raw,
+            rna_obs_idx_raw,
+        ) = data_loader.match_rna_to_model_proteins(gene_ids, rna_matrix, proteins)
+
+        if len(rna_fit_genes) > 0:
+            rna_obs_matched = rna_obs_matched_raw
+            rna_model_prot_idx = rna_model_prot_idx_raw
+            rna_obs_idx = rna_obs_idx_raw
+            W_data_mrna_matched = W_data_mrna[rna_obs_idx_raw, :]
+            R_data0 = data_loader.build_full_R0(K, gene_ids, rna_matrix, proteins)
+            logger.info(
+                f"[*] RNA-to-model mapping: {len(rna_fit_genes)} matched genes/proteins."
+            )
+        else:
+            logger.warning(
+                "[!] No RNA genes matched model proteins. RNA loss disabled."
+            )
+
+    # 11. Optimisation
     logger.info(
         f"[*] Initialising Optimistix problem ({args.n_starts} starts, "
         f"max_steps={args.max_steps})..."
@@ -637,48 +668,13 @@ def main():
         t_rna=t_rna if rna_matrix is not None else None,
         rna_obs_matched=rna_obs_matched,
         rna_model_prot_idx=rna_model_prot_idx,
-        rna_obs_idx=rna_obs_idx_raw if len(rna_fit_genes) > 0 else None,
+        rna_obs_idx=rna_obs_idx,
         rna_fit_genes=rna_fit_genes,
         loss_weight_rna=args.loss_weight_mrna,
         R_data0=R_data0,
         rna_relax=cfg.derived_rates.rna_relax,
         W_data_mrna=W_data_mrna_matched if len(rna_fit_genes) > 0 else None,
     )
-
-    # Build RNA-to-model-protein mapping (when RNA data is available)
-    rna_fit_genes = []
-    rna_obs_matched = None
-    rna_model_prot_idx = None
-    R_data0 = None
-
-    if rna_matrix is not None and gene_ids is not None:
-        (
-            rna_fit_genes,
-            rna_obs_matched_raw,
-            rna_model_prot_idx_raw,
-            rna_obs_idx_raw,
-        ) = data_loader.match_rna_to_model_proteins(gene_ids, rna_matrix, proteins)
-
-        if len(rna_fit_genes) > 0:
-            rna_obs_matched = rna_obs_matched_raw
-            rna_model_prot_idx = rna_model_prot_idx_raw
-            W_data_mrna_matched = W_data_mrna[rna_obs_idx_raw, :]
-
-            R_data0 = data_loader.build_full_R0(K, gene_ids, rna_matrix, proteins)
-
-            problem.rna_obs_matched = rna_obs_matched
-            problem.rna_model_prot_idx = rna_model_prot_idx
-            problem.rna_obs_idx = rna_obs_idx_raw
-            problem.rna_fit_genes = rna_fit_genes
-            problem.R_data0 = R_data0
-            problem.W_data_mrna = W_data_mrna_matched
-            logger.info(
-                f"[*] RNA-to-model mapping: {len(rna_fit_genes)} matched genes/proteins."
-            )
-        else:
-            logger.warning(
-                "[!] No RNA genes matched model proteins. RNA loss disabled."
-            )
 
     res, best_idx, total_losses = run_multi_start_optimization(problem, args, P_scaled)
 
