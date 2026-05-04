@@ -23,37 +23,79 @@ logger = get_logger()
 
 def _generate_param_labels(K, M, N, proteins, kinases, sites):
     """
-    Generates human-readable labels for the flattened parameter vector theta.
+    Generate human-readable labels for the flattened optimized parameter vector.
 
-    Order matches core_mechanisms.decode_theta:
-    1. Protein Kinetics (4 * K): k_act, k_deact, s_prod, d_deg
-    2. Coupling (2): beta_g, beta_l
-    3. Kinase Kinetics (3 * M): alpha, kK_act, kK_deact
-    4. Site Kinetics (1 * N): k_off
-    5. Gammas (4): S_p, A_S, A_p, K_net
+    Current theta layout:
+
+    1. Protein kinetics (2 * K):
+       - k_deact
+       - d_deg
+
+    2. Coupling (2):
+       - beta_g
+       - beta_l
+
+    3. Kinase kinetics (3 * M):
+       - alpha
+       - kK_act
+       - kK_deact
+
+    4. Site kinetics (1 * N):
+       - k_off
+
+    5. Global coupling gammas (4):
+       - gamma_S_p
+       - gamma_A_S
+       - gamma_A_p
+       - gamma_K_net
+
+    Notes:
+    - k_act is derived from TF/mRNA inputs and is no longer optimized.
+    - s_prod is derived from kinase/protein signals and is no longer optimized.
     """
     labels = []
 
-    # 1. Proteins
-    for tag in ["k_act", "k_deact", "s_prod", "d_deg"]:
-        for p in proteins:
-            labels.append(f"{tag}_{p}")
+    if len(proteins) != K:
+        raise ValueError(
+            f"Protein label count mismatch: K={K}, len(proteins)={len(proteins)}"
+        )
 
-    # 2. Coupling
+    if len(kinases) != M:
+        raise ValueError(
+            f"Kinase label count mismatch: M={M}, len(kinases)={len(kinases)}"
+        )
+
+    if len(sites) != N:
+        raise ValueError(
+            f"Site label count mismatch: N={N}, len(sites)={len(sites)}"
+        )
+
+    # 1. Optimized protein kinetics
+    for tag in ["k_deact", "d_deg"]:
+        for protein in proteins:
+            labels.append(f"{tag}_{protein}")
+
+    # 2. Global/local crosstalk coupling
     labels.extend(["beta_g", "beta_l"])
 
-    # 3. Kinases
+    # 3. Kinase kinetics
     for tag in ["alpha", "kK_act", "kK_deact"]:
-        for k in kinases:
-            labels.append(f"{tag}_{k}")
+        for kinase in kinases:
+            labels.append(f"{tag}_{kinase}")
 
-    # 4. Sites
-    for s in sites:
-        # shorten site name if needed, e.g. EGFR_Y1068 -> k_off_EGFR_Y1068
-        labels.append(f"k_off_{s}")
+    # 4. Site dephosphorylation/off-rate
+    for site in sites:
+        labels.append(f"k_off_{site}")
 
-    # 5. Gammas
+    # 5. Global coupling gammas
     labels.extend(["gamma_S_p", "gamma_A_S", "gamma_A_p", "gamma_K_net"])
+
+    expected = 2 * K + 2 + 3 * M + N + 4
+
+    if len(labels) != expected:
+        raise RuntimeError(
+            f"Generated {len(labels)} parameter labels, expected {expected}."
+        )
 
     return labels
 
