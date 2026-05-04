@@ -273,6 +273,7 @@ def run_evosax(
     if algo == "cma_es":
         strategy = CMA_ES(population_size=popsize, solution=solution_init)
     else:
+        # sep_cma_es is the default; 'de' and any unknown algo fall back to Sep_CMA_ES
         strategy = Sep_CMA_ES(population_size=popsize, solution=solution_init)
 
     key = jax.random.PRNGKey(seed)
@@ -521,8 +522,8 @@ def run_qdax_mapelites(
         t_half_protein = jnp.float32(log2) / d_deg  # shape (K,)
 
         # Median via sort
-        median_tK = jnp.sort(t_half_kinase)[M // 2]
-        median_tP = jnp.sort(t_half_protein)[K // 2]
+        median_tK = jnp.median(t_half_kinase)
+        median_tP = jnp.median(t_half_protein)
 
         bd0 = jnp.log10(jnp.maximum(median_tK, 1e-9))
         bd1 = jnp.log10(jnp.maximum(median_tP, 1e-9))
@@ -771,8 +772,11 @@ def run_hybrid_fit(
     top_k_idx = np.argsort(pop_losses)[:es_top_k]
     top_k_seeds = final_pop[top_k_idx]
 
-    # Always include best_theta as seed 0
-    lm_seeds = np.concatenate([best_theta[None, :], top_k_seeds], axis=0)
+    # Always include best_theta as seed 0; avoid exact duplicates
+    best_theta_row = best_theta[None, :]
+    is_dup = np.all(np.isclose(top_k_seeds, best_theta_row, rtol=1e-9, atol=1e-12), axis=1)
+    unique_top_k = top_k_seeds[~is_dup]
+    lm_seeds = np.concatenate([best_theta_row, unique_top_k], axis=0)
 
     # ------------------------------------------------------------------ Phase 2
     if verbose:
