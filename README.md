@@ -230,18 +230,18 @@ unified_kinase_graph.gpickle
 
 ```bash
 phoscrosstalk \
+  --config config.toml \
   --data data_timeseries/filtered_input1.csv \
+  --rna-data data_timeseries/filtered_input3.csv \
+  --tf-net data_interactions/tf_mrna.csv \
   --ptm-intra data_curated/processed/ptm_intra.db \
   --ptm-inter data_curated/processed/ptm_inter.db \
-  --kea-ks-table data_curated/processed/ks_psite_table.tsv \
+  --kinase-tsv data_interactions/kinase_sites.tsv \
   --unified-graph-pkl data_curated/processed/unified_kinase_graph.gpickle \
-  --outdir results/experiment_01 \
-  --cores 16 \
-  --mechanism rand \
-  --gen 300 \
-  --run-steadystate \
-  --run-knockouts \
-  --run-sensitivity
+  --outdir results/prior_supported_dist \
+  --mechanism dist \
+  --n-starts 3 \
+  --max-steps 500
 ```
 
 ### Run the dashboard
