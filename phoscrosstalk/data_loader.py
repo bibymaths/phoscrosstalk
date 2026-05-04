@@ -3,12 +3,14 @@ data_loader.py
 Handles data ingestion, scaling, database connectivity, and matrix construction.
 """
 
-import re
 import os
-import sqlite3
 import pickle
+import re
+import sqlite3
+
 import numpy as np
 import pandas as pd
+
 from phoscrosstalk.config import DEFAULT_TIMEPOINTS
 from phoscrosstalk.logger import get_logger
 
@@ -358,6 +360,7 @@ def build_kinase_site_from_kea(ks_psite_table_path, sites):
     row_sums[row_sums == 0.0] = 1.0
     return K_site_kin / row_sums, kinases
 
+
 RNA_TIMEPOINTS_9 = np.array(
     [4, 8, 15, 30, 60, 120, 240, 480, 960],
     dtype=float,
@@ -612,10 +615,7 @@ def load_tf_network(path, gene_ids=None):
         )
 
     # Collapse duplicate edges by summing weights.
-    out = (
-        out.groupby(["source", "target"], as_index=False, sort=False)["weight"]
-        .sum()
-    )
+    out = out.groupby(["source", "target"], as_index=False, sort=False)["weight"].sum()
 
     if gene_ids is not None:
         gene_set = {str(g).strip() for g in gene_ids}

@@ -22,12 +22,12 @@ The SciPy / Numba backend has been replaced by a Diffrax + JAX pipeline:
     - Results are converted back to NumPy arrays at the module boundary
 """
 
-import numpy as np
-import jax.numpy as jnp
 import diffrax
+import jax.numpy as jnp
+import numpy as np
 
 from phoscrosstalk.config import ModelDims
-from phoscrosstalk.jax_mechanisms import make_rhs, compute_prev_site_idx
+from phoscrosstalk.jax_mechanisms import compute_prev_site_idx, make_rhs
 
 
 def simulate_ode(
@@ -114,7 +114,11 @@ def simulate_ode(
     # backward compatibility.  When both are None there is no separate RNA grid.
     if t_rna is None and t_extra is not None:
         t_rna = t_extra
-    t_rna_arr = np.asarray(t_rna, dtype=np.float64) if t_rna is not None and len(t_rna) > 0 else None
+    t_rna_arr = (
+        np.asarray(t_rna, dtype=np.float64)
+        if t_rna is not None and len(t_rna) > 0
+        else None
+    )
 
     # Build unified solver time grid: t_arr ∪ t_rna ∪ t_extra
     parts = [t_arr]
@@ -242,11 +246,11 @@ def simulate_ode(
         else:
             R_rna_at_rna = R_rna_sim.copy()  # fallback: same grid
         return {
-            "P_sim": P_sim.T,          # (N, T)
-            "A_sim": A_sim.T,          # (K, T)
-            "S_sim": S_sim.T,          # (K, T)
-            "Kdyn_sim": Kdyn_sim.T,    # (M, T)
-            "R_sim": R_rna_sim.T,      # (K, T)  sampled at t_arr
+            "P_sim": P_sim.T,  # (N, T)
+            "A_sim": A_sim.T,  # (K, T)
+            "S_sim": S_sim.T,  # (K, T)
+            "Kdyn_sim": Kdyn_sim.T,  # (M, T)
+            "R_sim": R_rna_sim.T,  # (K, T)  sampled at t_arr
             "R_sim_rna": R_rna_at_rna.T,  # (K, T_rna) sampled at t_rna
             "t": t_arr,
             "t_rna": t_rna_arr if t_rna_arr is not None else t_arr,

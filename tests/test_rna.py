@@ -16,16 +16,14 @@ Tests for RNA-as-ODE-state features:
  12. test_backward_simulate_alias
 """
 
-import sys
-import tempfile
 import os
+import sys
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from phoscrosstalk.config import ModelDims
-
 
 # ---------------------------------------------------------------------------
 # Shared fixture
@@ -64,10 +62,20 @@ def _make_tiny_model(K=2, M=3, N=4, T=6, seed=0):
     rm_kin = np.zeros(M, dtype=int)
 
     return dict(
-        K=K, M=M, N=N, T=T, t=t,
-        P_data=P_data, A_data=A_data, theta=theta,
-        Cg=Cg, Cl=Cl, site_prot_idx=site_prot_idx,
-        K_site_kin=K_site_kin, R=R_mat, L_alpha=L_alpha,
+        K=K,
+        M=M,
+        N=N,
+        T=T,
+        t=t,
+        P_data=P_data,
+        A_data=A_data,
+        theta=theta,
+        Cg=Cg,
+        Cl=Cl,
+        site_prot_idx=site_prot_idx,
+        K_site_kin=K_site_kin,
+        R=R_mat,
+        L_alpha=L_alpha,
         kin_to_prot_idx=kin2prot,
         receptor_mask_prot=rm_prot,
         receptor_mask_kin=rm_kin,
@@ -89,7 +97,7 @@ def test_load_rna_data_x1_x9_timepoints(tmp_path):
     df = pd.DataFrame(
         {
             "gene": ["EGFR"],
-            **{f"x{i+1}": [float(vals[i])] for i in range(9)},
+            **{f"x{i + 1}": [float(vals[i])] for i in range(9)},
         }
     )
     p = tmp_path / "rna_x1_x9.csv"
@@ -197,7 +205,9 @@ def test_simulate_ode_returns_R_state():
     R_sim_rna = result["R_sim_rna"]
 
     assert R_sim.shape == (K, m["T"]), f"R_sim shape wrong: {R_sim.shape}"
-    assert R_sim_rna.shape == (K, len(t_rna)), f"R_sim_rna shape wrong: {R_sim_rna.shape}"
+    assert R_sim_rna.shape == (K, len(t_rna)), (
+        f"R_sim_rna shape wrong: {R_sim_rna.shape}"
+    )
     assert np.all(np.isfinite(R_sim)), "R_sim contains NaN/Inf"
     assert np.all(np.isfinite(R_sim_rna)), "R_sim_rna contains NaN/Inf"
     # RNA state should be non-negative (fold-change)
@@ -212,7 +222,8 @@ def test_simulate_ode_returns_R_state():
 def test_rhs_state_dimension_with_R():
     """RHS must return shape 3*K + M + N when R_rna is included."""
     import jax.numpy as jnp
-    from phoscrosstalk.jax_mechanisms import make_rhs, compute_prev_site_idx
+
+    from phoscrosstalk.jax_mechanisms import compute_prev_site_idx, make_rhs
 
     K, M, N = 2, 3, 4
     rhs = make_rhs(K, M, N, "dist")
@@ -231,9 +242,16 @@ def test_rhs_state_dimension_with_R():
     rmk = jnp.zeros(M, dtype=jnp.float32)
 
     args = (
-        theta_j, Cg, Cl,
+        theta_j,
+        Cg,
+        Cl,
         jnp.asarray(spi, dtype=jnp.int32),
-        K_sk, R_mat, La, k2p, rmp, rmk,
+        K_sk,
+        R_mat,
+        La,
+        k2p,
+        rmp,
+        rmk,
         jnp.asarray(prev, dtype=jnp.int32),
     )
 
@@ -304,7 +322,8 @@ def test_save_mrna_outputs_requires_simulated(tmp_path):
 def test_network_problem_loss_includes_rna():
     """Total loss must differ when RNA observations are perturbed."""
     import jax.numpy as jnp
-    from phoscrosstalk.optimization import make_loss_fn, create_bounds
+
+    from phoscrosstalk.optimization import create_bounds, make_loss_fn
 
     m = _make_tiny_model(K=2, M=3, N=4, T=6)
     K, M, N = m["K"], m["M"], m["N"]
@@ -316,29 +335,49 @@ def test_network_problem_loss_includes_rna():
     rna_prot_idx = np.array([0], dtype=int)  # maps to protein 0
 
     loss_no_rna = make_loss_fn(
-        t=m["t"], P_data=m["P_data"],
-        A_scaled=np.zeros((0, m["T"])), prot_idx_for_A=np.array([], dtype=int),
-        W_data=np.ones((N, m["T"])), W_data_prot=np.zeros((0, m["T"])),
-        Cg=m["Cg"], Cl=m["Cl"], site_prot_idx=m["site_prot_idx"],
-        K_site_kin=m["K_site_kin"], R=m["R"], L_alpha=m["L_alpha"],
+        t=m["t"],
+        P_data=m["P_data"],
+        A_scaled=np.zeros((0, m["T"])),
+        prot_idx_for_A=np.array([], dtype=int),
+        W_data=np.ones((N, m["T"])),
+        W_data_prot=np.zeros((0, m["T"])),
+        Cg=m["Cg"],
+        Cl=m["Cl"],
+        site_prot_idx=m["site_prot_idx"],
+        K_site_kin=m["K_site_kin"],
+        R=m["R"],
+        L_alpha=m["L_alpha"],
         kin_to_prot_idx=m["kin_to_prot_idx"],
         receptor_mask_prot=m["receptor_mask_prot"],
         receptor_mask_kin=m["receptor_mask_kin"],
-        mechanism="dist", lambda_net=1e-4, reg_lambda=1e-4,
+        mechanism="dist",
+        lambda_net=1e-4,
+        reg_lambda=1e-4,
     )
 
     loss_with_rna = make_loss_fn(
-        t=m["t"], P_data=m["P_data"],
-        A_scaled=np.zeros((0, m["T"])), prot_idx_for_A=np.array([], dtype=int),
-        W_data=np.ones((N, m["T"])), W_data_prot=np.zeros((0, m["T"])),
-        Cg=m["Cg"], Cl=m["Cl"], site_prot_idx=m["site_prot_idx"],
-        K_site_kin=m["K_site_kin"], R=m["R"], L_alpha=m["L_alpha"],
+        t=m["t"],
+        P_data=m["P_data"],
+        A_scaled=np.zeros((0, m["T"])),
+        prot_idx_for_A=np.array([], dtype=int),
+        W_data=np.ones((N, m["T"])),
+        W_data_prot=np.zeros((0, m["T"])),
+        Cg=m["Cg"],
+        Cl=m["Cl"],
+        site_prot_idx=m["site_prot_idx"],
+        K_site_kin=m["K_site_kin"],
+        R=m["R"],
+        L_alpha=m["L_alpha"],
         kin_to_prot_idx=m["kin_to_prot_idx"],
         receptor_mask_prot=m["receptor_mask_prot"],
         receptor_mask_kin=m["receptor_mask_kin"],
-        mechanism="dist", lambda_net=1e-4, reg_lambda=1e-4,
-        t_mrna=t_rna, rna_data_scaled=rna_obs * 100.0,  # large mismatch
-        rna_model_prot_idx=rna_prot_idx, w_mrna=1.0,
+        mechanism="dist",
+        lambda_net=1e-4,
+        reg_lambda=1e-4,
+        t_mrna=t_rna,
+        rna_data_scaled=rna_obs * 100.0,  # large mismatch
+        rna_model_prot_idx=rna_prot_idx,
+        w_mrna=1.0,
     )
 
     total_no, _ = loss_no_rna(theta0, None)
@@ -362,13 +401,20 @@ def test_main_cli_with_rna_args(monkeypatch):
         "argv",
         [
             "phoscrosstalk",
-            "--data", "fake.csv",
-            "--ptm-intra", "fake.db",
-            "--ptm-inter", "fake.db",
-            "--rna-data", "fake_rna.csv",
-            "--tf-net", "fake_tf.csv",
-            "--n-starts", "1",
-            "--max-steps", "5",
+            "--data",
+            "fake.csv",
+            "--ptm-intra",
+            "fake.db",
+            "--ptm-inter",
+            "fake.db",
+            "--rna-data",
+            "fake_rna.csv",
+            "--tf-net",
+            "fake_tf.csv",
+            "--n-starts",
+            "1",
+            "--max-steps",
+            "5",
         ],
     )
     from phoscrosstalk.main import main
@@ -421,7 +467,7 @@ def test_plot_three_panel_fit(tmp_path):
     t_cols_dat = [f"data_t{j}" for j in range(3)]
     rows = []
     for i in range(2):
-        row = {"Type": "Phosphosite", "Protein": "MAPK1", "Residue": f"S{i+1}"}
+        row = {"Type": "Phosphosite", "Protein": "MAPK1", "Residue": f"S{i + 1}"}
         for j in range(3):
             row[t_cols_sim[j]] = 0.5
             row[t_cols_dat[j]] = 0.6
@@ -432,7 +478,9 @@ def test_plot_three_panel_fit(tmp_path):
         row[t_cols_sim[j]] = 1.1
         row[t_cols_dat[j]] = 1.0
     rows.append(row)
-    pd.DataFrame(rows).to_csv(os.path.join(outdir, "fit_timeseries.tsv"), sep="\t", index=False)
+    pd.DataFrame(rows).to_csv(
+        os.path.join(outdir, "fit_timeseries.tsv"), sep="\t", index=False
+    )
 
     # Write minimal mrna_fit_timeseries.tsv
     rna_rows = [
@@ -457,7 +505,7 @@ def test_plot_three_panel_fit(tmp_path):
 
 def test_backward_simulate_alias():
     """simulate_p_scipy must be the same function as simulate_ode."""
-    from phoscrosstalk.simulation import simulate_p_scipy, simulate_ode
+    from phoscrosstalk.simulation import simulate_ode, simulate_p_scipy
 
     assert simulate_p_scipy is simulate_ode, (
         "simulate_p_scipy must be an alias for simulate_ode"

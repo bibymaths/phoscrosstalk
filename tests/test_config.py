@@ -88,5 +88,3 @@ phospho = 2.0
     assert cfg.loss_weights.phospho == pytest.approx(2.0)
     # Unset keys should use defaults
     assert cfg.solver.rtol == pytest.approx(1e-6)
-
-

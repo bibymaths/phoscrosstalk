@@ -4,14 +4,13 @@ test_derived_rates.py
 Unit tests for the derived_rates module.
 """
 
-import numpy as np
-import pytest
 import jax.numpy as jnp
-
+import numpy as np
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _simple_rna():
     """Return tiny t_rna, rna_data, tf_prot_weights."""
@@ -47,6 +46,7 @@ def _simple_phospho():
 # k_act tests
 # ---------------------------------------------------------------------------
 
+
 class TestMakeKActFn:
     def test_constant_fallback_no_data(self):
         from phoscrosstalk.derived_rates import make_k_act_fn
@@ -70,7 +70,9 @@ class TestMakeKActFn:
         from phoscrosstalk.derived_rates import make_k_act_fn
 
         t_rna, rna_data, tf_prot_weights, K = _simple_rna()
-        fn = make_k_act_fn(t_rna, rna_data, tf_prot_weights, K, interp_mode="piecewise_constant")
+        fn = make_k_act_fn(
+            t_rna, rna_data, tf_prot_weights, K, interp_mode="piecewise_constant"
+        )
         result = np.array(fn(jnp.float32(0.0)))
         # protein 0 reads gene 0 at t=0: rna_data[0, 0] = 1.0
         assert abs(result[0] - 1.0) < 1e-4
@@ -88,6 +90,7 @@ class TestMakeKActFn:
     def test_jax_traceable(self):
         """k_act_fn must be JAX-traceable (vmappable)."""
         import jax
+
         from phoscrosstalk.derived_rates import make_k_act_fn
 
         t_rna, rna_data, tf_prot_weights, K = _simple_rna()
@@ -100,6 +103,7 @@ class TestMakeKActFn:
 # ---------------------------------------------------------------------------
 # s_prod tests
 # ---------------------------------------------------------------------------
+
 
 class TestMakeSProdFn:
     def test_constant_fallback_empty_data(self):
@@ -132,8 +136,13 @@ class TestMakeSProdFn:
 
         t_protein, Y_data, R_kin_site, kin_to_prot_idx, K, M = _simple_phospho()
         fn = make_s_prod_fn(
-            t_protein, Y_data, R_kin_site, kin_to_prot_idx, K, M,
-            s_prod_fn_type="softplus"
+            t_protein,
+            Y_data,
+            R_kin_site,
+            kin_to_prot_idx,
+            K,
+            M,
+            s_prod_fn_type="softplus",
         )
         result = np.array(fn(jnp.float32(5.0)))
         assert np.all(result > 0), "softplus output should be positive"
@@ -144,8 +153,13 @@ class TestMakeSProdFn:
 
         t_protein, Y_data, R_kin_site, kin_to_prot_idx, K, M = _simple_phospho()
         fn = make_s_prod_fn(
-            t_protein, Y_data, R_kin_site, kin_to_prot_idx, K, M,
-            s_prod_fn_type="linear"
+            t_protein,
+            Y_data,
+            R_kin_site,
+            kin_to_prot_idx,
+            K,
+            M,
+            s_prod_fn_type="linear",
         )
         result = fn(jnp.float32(5.0))
         assert result.shape == (K,)
@@ -153,6 +167,7 @@ class TestMakeSProdFn:
     def test_jax_traceable(self):
         """s_prod_fn must be JAX-traceable."""
         import jax
+
         from phoscrosstalk.derived_rates import make_s_prod_fn
 
         t_protein, Y_data, R_kin_site, kin_to_prot_idx, K, M = _simple_phospho()

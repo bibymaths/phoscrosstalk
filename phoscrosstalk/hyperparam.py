@@ -7,20 +7,20 @@ short Optimistix optimisation for each combination, evaluated by Fréchet distan
 """
 
 import itertools
+
 import numpy as np
 import pandas as pd
 
-from phoscrosstalk.config import ModelDims
 from phoscrosstalk import data_loader
+from phoscrosstalk.config import ModelDims
+from phoscrosstalk.fretchet import frechet_distance
+from phoscrosstalk.logger import get_logger
 from phoscrosstalk.optimization import (
     NetworkProblem,
     create_bounds,
     make_loss_fn,
     run_single_optimisation,
 )
-from phoscrosstalk.fretchet import frechet_distance
-
-from phoscrosstalk.logger import get_logger
 
 logger = get_logger()
 

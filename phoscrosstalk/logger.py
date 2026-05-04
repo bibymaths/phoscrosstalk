@@ -8,8 +8,9 @@ import datetime
 import logging
 import os
 from pathlib import Path
-from rich.logging import RichHandler
+
 from rich.console import Console
+from rich.logging import RichHandler
 from rich.theme import Theme
 
 # Define custom-theme for consistent coloring

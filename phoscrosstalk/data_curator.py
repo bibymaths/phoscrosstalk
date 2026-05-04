@@ -18,10 +18,9 @@ import sqlite3
 import zipfile
 import zlib
 from pathlib import Path
-from typing import Dict, Optional
 
-import pandas as pd
 import networkx as nx
+import pandas as pd
 import requests
 
 from phoscrosstalk.logger import get_logger
@@ -124,7 +123,7 @@ class DataCurator:
                     else:
                         # File might not exist for this specific dataset, which is fine
                         pass
-                except (requests.RequestException, OSError, IOError) as e:
+                except (requests.RequestException, OSError) as e:
                     logger.warning(f"  ! Failed to download {url}: {e}")
 
     # =========================================================================
@@ -254,7 +253,7 @@ class DataCurator:
     # 3. KINASE NETWORK BUILDER
     # =========================================================================
 
-    def build_kinase_networks(self, zip_path: Optional[str] = None):
+    def build_kinase_networks(self, zip_path: str | None = None):
         """
         Builds multiplex kinase networks and a unified kinase graph.
         Defaults to looking for 'kinase_networks.zip' in raw/kea/.
@@ -270,7 +269,7 @@ class DataCurator:
             logger.error(f"Kinase networks zip not found at {zip_path}")
             return
 
-        layer_graphs: Dict[str, nx.Graph] = {}
+        layer_graphs: dict[str, nx.Graph] = {}
 
         # Load TSVs from Zip
         with zipfile.ZipFile(zip_path) as zf:
@@ -344,7 +343,7 @@ class DataCurator:
     # 4. KINASE-SUBSTRATE MAPPING
     # =========================================================================
 
-    def build_ks_map(self, gsl_zip: Optional[str] = None):
+    def build_ks_map(self, gsl_zip: str | None = None):
         """
         Builds the Site-Level Kinase-Substrate Map from KEA data.
         """

@@ -1,26 +1,24 @@
 import os
 import sys
-import numpy as np
-import pandas as pd
-import streamlit as st
-
-import matplotlib.pyplot as plt
-import matplotlib as mpl
-import imageio.v2 as imageio
 import tempfile
 
-import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
-
-import networkx as nx
 import gravis as gv
+import imageio.v2 as imageio
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+from plotly.subplots import make_subplots
 
 sys.path.append(os.getcwd())
 
 from phoscrosstalk.config import ModelDims
-from phoscrosstalk.simulation import simulate_p_scipy, build_full_A0
 from phoscrosstalk.core_mechanisms import decode_theta
+from phoscrosstalk.simulation import build_full_A0, simulate_p_scipy
 
 # --- Page Config ---
 st.set_page_config(
@@ -114,7 +112,7 @@ def load_snapshot_data(results_dir: str) -> dict | None:
             return []
 
         try:
-            with open(path, "r", encoding="utf-8") as handle:
+            with open(path, encoding="utf-8") as handle:
                 return [line.strip() for line in handle if line.strip()]
         except OSError as exc:
             raise OSError(f"Could not read text file `{path}`.") from exc
@@ -130,7 +128,7 @@ def load_snapshot_data(results_dir: str) -> dict | None:
         meta = {}
 
         try:
-            with open(path, "r", encoding="utf-8") as handle:
+            with open(path, encoding="utf-8") as handle:
                 for line_no, line in enumerate(handle, start=1):
                     line = line.strip()
 

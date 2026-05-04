@@ -4,13 +4,15 @@ Simulates the network to steady state (long-term behavior) and visualizes conver
 """
 
 import os
+
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib import pyplot as plt
+
 from phoscrosstalk.config import ModelDims
-from phoscrosstalk.simulation import simulate_p_scipy, build_full_A0
 from phoscrosstalk.logger import get_logger
+from phoscrosstalk.simulation import build_full_A0, simulate_p_scipy
 
 logger = get_logger()
 

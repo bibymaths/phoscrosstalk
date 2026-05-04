@@ -1,6 +1,6 @@
 import numpy as np
-from numba import njit, prange
 import numpy.typing as npt
+from numba import njit, prange
 
 FloatArray = npt.NDArray[np.float64]
 

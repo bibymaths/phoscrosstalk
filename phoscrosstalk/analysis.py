@@ -4,15 +4,17 @@ Post-optimization analysis, file export, and plotting.
 """
 
 import os
+
 import numpy as np
 import pandas as pd
-from matplotlib import pyplot as plt
 import seaborn as sns
+from matplotlib import pyplot as plt
+
+from phoscrosstalk.config import DEFAULT_TIMEPOINTS, ModelDims
 from phoscrosstalk.core_mechanisms import decode_theta
-from phoscrosstalk.config import ModelDims, DEFAULT_TIMEPOINTS
-from phoscrosstalk.simulation import simulate_p_scipy
-from phoscrosstalk.optimization import build_full_A0, bio_score
 from phoscrosstalk.logger import get_logger
+from phoscrosstalk.optimization import bio_score, build_full_A0
+from phoscrosstalk.simulation import simulate_p_scipy
 
 logger = get_logger()
 
@@ -175,7 +177,9 @@ def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
         f.write(f"beta_g (Global Coupling): {params_decoded[2]:.5f}\n")
         f.write(f"beta_l (Local Coupling):  {params_decoded[3]:.5f}\n")
         f.write("-" * 40 + "\n")
-        f.write("Note: k_act and s_prod are derived from TF/kinase signals, not fitted.\n")
+        f.write(
+            "Note: k_act and s_prod are derived from TF/kinase signals, not fitted.\n"
+        )
 
     # Print the summary to console as well
     logger.info("=== Parameter Summary ===")
@@ -494,14 +498,15 @@ def plot_fitted_simulation(outdir):
 
         # Determine number of panels
         has_rna_for_prot = (
-            has_rna_data and df_mrna is not None
-            and prot in df_mrna["gene"].values
+            has_rna_data and df_mrna is not None and prot in df_mrna["gene"].values
         )
         n_panels = 3 if has_rna_for_prot else 2
         color = plt.cm.tab10(proteins.index(prot) % 10)
 
         fig, axes = plt.subplots(
-            1, n_panels, figsize=(9 * n_panels, 7),
+            1,
+            n_panels,
+            figsize=(9 * n_panels, 7),
             gridspec_kw={"wspace": 0.12},
         )
         axes = list(axes)
@@ -518,8 +523,12 @@ def plot_fitted_simulation(outdir):
             t_rna_vals = rna_sub["time"].values
             y_rna_fit = rna_sub["fitted"].values
             y_rna_obs = rna_sub["observed"].values
-            axR.plot(t_rna_vals, y_rna_fit, "-", lw=3, color=color, label="mRNA (model)")
-            axR.scatter(t_rna_vals, y_rna_obs, s=50, color=color, zorder=5, label="mRNA (obs)")
+            axR.plot(
+                t_rna_vals, y_rna_fit, "-", lw=3, color=color, label="mRNA (model)"
+            )
+            axR.scatter(
+                t_rna_vals, y_rna_obs, s=50, color=color, zorder=5, label="mRNA (obs)"
+            )
             axR.set_title("mRNA / R(t)", fontsize=12, fontweight="bold")
             axR.set_xlabel("Time (min)")
             axR.set_ylabel("mRNA FC")
@@ -540,17 +549,34 @@ def plot_fitted_simulation(outdir):
             axP.plot(t_vals, y_sim, "-", lw=4, color=color, label="Protein (model)")
             if bool(np.any(mask_dat)):
                 axP.plot(
-                    np.asarray(t_vals)[mask_dat], y_dat[mask_dat],
-                    "-", lw=2, alpha=0.35, color=color, label="Protein (data)",
+                    np.asarray(t_vals)[mask_dat],
+                    y_dat[mask_dat],
+                    "-",
+                    lw=2,
+                    alpha=0.35,
+                    color=color,
+                    label="Protein (data)",
                 )
                 axP.scatter(
-                    np.asarray(t_vals)[mask_dat], y_dat[mask_dat],
-                    marker="s", s=55, alpha=0.6, color=color, edgecolors="none",
+                    np.asarray(t_vals)[mask_dat],
+                    y_dat[mask_dat],
+                    marker="s",
+                    s=55,
+                    alpha=0.6,
+                    color=color,
+                    edgecolors="none",
                 )
         else:
-            axP.text(0.5, 0.5, "No protein abundance row",
-                     transform=axP.transAxes, ha="center", va="center",
-                     fontsize=10, alpha=0.7)
+            axP.text(
+                0.5,
+                0.5,
+                "No protein abundance row",
+                transform=axP.transAxes,
+                ha="center",
+                va="center",
+                fontsize=10,
+                alpha=0.7,
+            )
         axP.set_title("Protein abundance", fontsize=12, fontweight="bold")
         axP.set_xlabel("Time (min)")
         axP.set_ylabel("FC / Scaled abundance")
@@ -563,42 +589,68 @@ def plot_fitted_simulation(outdir):
         axS = axes[panel_idx]
         sub = df_sites[df_sites["Protein"] == prot]
         if sub.empty:
-            axS.text(0.5, 0.5, "No phosphosites",
-                     transform=axS.transAxes, ha="center", va="center",
-                     fontsize=10, alpha=0.7)
+            axS.text(
+                0.5,
+                0.5,
+                "No phosphosites",
+                transform=axS.transAxes,
+                ha="center",
+                va="center",
+                fontsize=10,
+                alpha=0.7,
+            )
         else:
             cmap = plt.cm.tab20
             for i, (_, row) in enumerate(sub.iterrows()):
                 res = row.get("Residue", "")
                 pos = row.get("Position", row.get("Pos", row.get("SitePos", "")))
-                site_label = f"{res}_{pos}" if (pd.notna(pos) and str(pos) != "") else f"{res}"
+                site_label = (
+                    f"{res}_{pos}" if (pd.notna(pos) and str(pos) != "") else f"{res}"
+                )
                 y_sim = row[sim_cols].values.astype(float)
                 y_dat = row[data_cols].values.astype(float)
                 mask_dat = np.isfinite(y_dat)
                 c = cmap(i % 20)
-                axS.plot(t_vals, y_sim, "-", lw=4, color=c, label=f"{site_label} (model)")
+                axS.plot(
+                    t_vals, y_sim, "-", lw=4, color=c, label=f"{site_label} (model)"
+                )
                 if bool(np.any(mask_dat)):
                     axS.plot(
-                        np.asarray(t_vals)[mask_dat], y_dat[mask_dat],
-                        "-", lw=2, alpha=0.35, color=c, label=f"{site_label} (data)",
+                        np.asarray(t_vals)[mask_dat],
+                        y_dat[mask_dat],
+                        "-",
+                        lw=2,
+                        alpha=0.35,
+                        color=c,
+                        label=f"{site_label} (data)",
                     )
                     axS.scatter(
-                        np.asarray(t_vals)[mask_dat], y_dat[mask_dat],
-                        marker="s", s=45, alpha=0.6, color=c, edgecolors="none",
+                        np.asarray(t_vals)[mask_dat],
+                        y_dat[mask_dat],
+                        marker="s",
+                        s=45,
+                        alpha=0.6,
+                        color=c,
+                        edgecolors="none",
                     )
         axS.set_title("Phosphosites", fontsize=12, fontweight="bold")
         axS.set_xlabel("Time (min)")
         axS.set_ylabel("Phospho occupancy")
-        axS.legend(fontsize=8, loc="upper left",
-                   bbox_to_anchor=(1.02, 1.0), borderaxespad=0.0, frameon=True)
+        axS.legend(
+            fontsize=8,
+            loc="upper left",
+            bbox_to_anchor=(1.02, 1.0),
+            borderaxespad=0.0,
+            frameon=True,
+        )
         axS.grid(alpha=0.25)
 
         fig.suptitle(f"{prot}", fontsize=14, fontweight="bold", y=1.01)
         plt.tight_layout()
-        plt.savefig(os.path.join(outdir, f"fit_{prot}.png"), dpi=300, bbox_inches="tight")
+        plt.savefig(
+            os.path.join(outdir, f"fit_{prot}.png"), dpi=300, bbox_inches="tight"
+        )
         plt.close(fig)
-
-
 
 
 def print_biological_scores(outdir, X):
@@ -1107,8 +1159,8 @@ def save_mrna_outputs(outdir, gene_ids, t_rna, rna_data_obs, rna_simulated):
 
         # Per-gene diagnostics – computed from real residuals
         resid = obs - fit
-        rmse = float(np.sqrt(np.mean(resid ** 2)))
-        ss_res = float(np.sum(resid ** 2))
+        rmse = float(np.sqrt(np.mean(resid**2)))
+        ss_res = float(np.sum(resid**2))
         ss_tot = float(np.sum((obs - np.mean(obs)) ** 2))
         r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 1e-12 else float("nan")
         diag_records.append(
@@ -1151,7 +1203,9 @@ def plot_mrna_fit(outdir, gene_ids=None, max_genes=12):
     """
     tsv_path = os.path.join(outdir, "mrna_fit_timeseries.tsv")
     if not os.path.exists(tsv_path):
-        logger.warning(f"[!] mrna_fit_timeseries.tsv not found in {outdir}; skipping plot.")
+        logger.warning(
+            f"[!] mrna_fit_timeseries.tsv not found in {outdir}; skipping plot."
+        )
         return
 
     df = pd.read_csv(tsv_path, sep="\t")
@@ -1175,7 +1229,9 @@ def plot_mrna_fit(outdir, gene_ids=None, max_genes=12):
 
     ncols = min(4, n)
     nrows = (n + ncols - 1) // ncols
-    fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows), squeeze=False)
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(5 * ncols, 4 * nrows), squeeze=False
+    )
     axes_flat = axes.flatten()
 
     for ax_idx, gene in enumerate(plot_genes):
@@ -1198,6 +1254,7 @@ def plot_mrna_fit(outdir, gene_ids=None, max_genes=12):
     plt.savefig(os.path.join(outdir, "mrna_fit_panel.png"), dpi=300)
     plt.close(fig)
     logger.info(f"[*] mRNA fit panel saved to {outdir}/mrna_fit_panel.png")
+
 
 def save_derived_rates(
     outdir,
@@ -1224,7 +1281,9 @@ def save_derived_rates(
     os.makedirs(outdir, exist_ok=True)
 
     if k_act_fn is None and s_prod_fn is None:
-        logger.warning("[!] No derived rate functions provided; skipping derived rate export.")
+        logger.warning(
+            "[!] No derived rate functions provided; skipping derived rate export."
+        )
         return
 
     proteins = np.asarray(proteins, dtype=object)
