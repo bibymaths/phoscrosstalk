@@ -1221,3 +1221,88 @@ def plot_mrna_fit(outdir, gene_ids=None, max_genes=12):
     plt.close(fig)
     logger.info(f"[*] mRNA fit panel saved to {outdir}/mrna_fit_panel.png")
 
+def save_derived_rates(
+    outdir,
+    proteins,
+    t_protein,
+    k_act_fn=None,
+    s_prod_fn=None,
+    t_rna=None,
+):
+    """
+    Save derived k_act and s_prod trajectories.
+
+    k_act and s_prod are not optimized parameters. They are time-dependent
+    derived rates computed from network/input closures.
+
+    Outputs
+    -------
+    derived_rates.npz
+        Compact NumPy archive.
+
+    derived_rates_long.tsv
+        Long-format table for inspection and plotting.
+    """
+    os.makedirs(outdir, exist_ok=True)
+
+    if k_act_fn is None and s_prod_fn is None:
+        logger.warning("[!] No derived rate functions provided; skipping derived rate export.")
+        return
+
+    proteins = np.asarray(proteins, dtype=object)
+
+    if t_rna is not None:
+        t_k = np.asarray(t_rna, dtype=float)
+    else:
+        t_k = np.asarray(t_protein, dtype=float)
+
+    t_s = np.asarray(t_protein, dtype=float)
+
+    save_dict = {
+        "proteins": proteins,
+        "t_k_act": t_k,
+        "t_s_prod": t_s,
+    }
+
+    rows = []
+
+    if k_act_fn is not None:
+        k_act = np.vstack([np.asarray(k_act_fn(float(ti))) for ti in t_k]).T
+        save_dict["k_act"] = k_act
+
+        for i, protein in enumerate(proteins):
+            for j, time in enumerate(t_k):
+                rows.append(
+                    {
+                        "rate_type": "k_act",
+                        "entity": protein,
+                        "time": float(time),
+                        "value": float(k_act[i, j]),
+                    }
+                )
+
+    if s_prod_fn is not None:
+        s_prod = np.vstack([np.asarray(s_prod_fn(float(ti))) for ti in t_s]).T
+        save_dict["s_prod"] = s_prod
+
+        for i, protein in enumerate(proteins):
+            for j, time in enumerate(t_s):
+                rows.append(
+                    {
+                        "rate_type": "s_prod",
+                        "entity": protein,
+                        "time": float(time),
+                        "value": float(s_prod[i, j]),
+                    }
+                )
+
+    np.savez(os.path.join(outdir, "derived_rates.npz"), **save_dict)
+
+    if rows:
+        pd.DataFrame(rows).to_csv(
+            os.path.join(outdir, "derived_rates_long.tsv"),
+            sep="\t",
+            index=False,
+        )
+
+    logger.success("[*] Saved derived_rates.npz and derived_rates_long.tsv")

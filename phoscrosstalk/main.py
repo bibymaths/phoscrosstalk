@@ -521,12 +521,23 @@ def main():
     F, X = res.F, res.X
     f1, f2, f3 = F[:, 0], F[:, 1], F[:, 2]
 
+    theta_best = X[best_idx]
+
+    analysis.save_derived_rates(
+        outdir=outdir,
+        proteins=proteins,
+        t_protein=t,
+        k_act_fn=k_act_fn,
+        s_prod_fn=s_prod_fn,
+        t_rna=t_rna,
+    )
+
     analysis.save_run_results(outdir, F, X, f1, f2, f3, total_losses, F[best_idx])
     analysis.plot_run_diagnostics(outdir, F, F[best_idx], f1, f2, f3, X)
 
     analysis.save_fitted_simulation(
         outdir,
-        X[best_idx],
+        theta_best,
         t,
         sites,
         proteins,
@@ -552,7 +563,7 @@ def main():
     )
 
     analysis.plot_fitted_simulation(outdir)
-    analysis.print_parameter_summary(outdir, X[best_idx], proteins, kinases, sites)
+    analysis.print_parameter_summary(outdir, theta_best, proteins, kinases, sites)
     analysis.print_biological_scores(outdir, X)
     analysis.plot_biological_scores(outdir, X, F)
     analysis.plot_goodness_of_fit(f"{outdir}/fit_timeseries.tsv", outdir)
@@ -564,12 +575,12 @@ def main():
 
     if args.run_steadystate:
         steadystate.run_steadystate_analysis(
-            outdir, problem, X[best_idx], sites, proteins, kinases
+            outdir, problem, theta_best, sites, proteins, kinases
         )
 
     if args.run_knockouts:
         knockouts.run_knockout_screen(
-            outdir, problem, X[best_idx], sites, proteins, kinases
+            outdir, problem, theta_best, sites, proteins, kinases
         )
 
     if args.run_sensitivity:
@@ -586,10 +597,10 @@ def main():
     # 12. Provenance & exports
     save_run_metadata(outdir, args)
     export_network_for_cytoscape(
-        outdir, X[best_idx], proteins, kinases, sites, K_site_kin, site_prot_idx
+        outdir, theta_best, proteins, kinases, sites, K_site_kin, site_prot_idx
     )
 
-    P_best = problem.simulate(X[best_idx])
+    P_best = problem.simulate(theta_best)
     plot_residual_heatmap(outdir, P_scaled, P_best, sites, t)
 
     p_labels = _generate_param_labels(
@@ -599,7 +610,7 @@ def main():
 
     generate_equations_report(
         outdir,
-        X[best_idx],
+        theta_best,
         proteins,
         kinases,
         sites,
