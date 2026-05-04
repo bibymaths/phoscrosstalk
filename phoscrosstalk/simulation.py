@@ -109,7 +109,9 @@ def simulate_ode(
     T = len(t_arr)
     N_sites = P_data0.shape[0]
 
-    # Resolve RNA time grid
+    # Resolve RNA time grid:
+    # t_rna is the preferred argument; t_extra is a legacy alias kept for
+    # backward compatibility.  When both are None there is no separate RNA grid.
     if t_rna is None and t_extra is not None:
         t_rna = t_extra
     t_rna_arr = np.asarray(t_rna, dtype=np.float64) if t_rna is not None and len(t_rna) > 0 else None

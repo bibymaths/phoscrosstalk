@@ -1074,7 +1074,8 @@ def save_mrna_outputs(outdir, gene_ids, t_rna, rna_data_obs, rna_simulated):
     if rna_simulated is None:
         raise ValueError(
             "save_mrna_outputs: rna_simulated must not be None.  "
-            "Pass the simulated R(t) from problem.simulate_full(theta)['R_sim_rna']."
+            "Pass the simulated R(t) values from your model (e.g. from simulate_ode "
+            "with return_full=True)."
         )
 
     os.makedirs(outdir, exist_ok=True)
