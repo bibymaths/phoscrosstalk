@@ -3,230 +3,170 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white" alt="Python 3.11">
   <img src="https://img.shields.io/badge/license-BSD--3--Clause-green" alt="BSD 3-Clause license">
+  <img src="https://img.shields.io/badge/backend-JAX%2FDiffrax-blueviolet" alt="JAX/Diffrax">
   <img src="https://img.shields.io/badge/status-work%20in%20progress-orange" alt="Work in Progress">
 </p>
 
-<details>
-<summary>⚠️ <strong>Work in Progress — Click to read before using</strong></summary>
-
-<br>
-
-> **PhosCrosstalk is under active development and is not yet production-ready.**
-
-The following areas are still being built out or stabilised:
-
-- **API surface** — module interfaces, CLI flags, and config schema may change without notice
-- **ODE system** — kinetic mechanism implementations are being validated against benchmark datasets
-- **Data curator** — PTMcode2 and KEA3 ingestion pipelines are partially tested; edge cases may fail silently
-- **Optimisation backend** — multi-start BFGS convergence and scalarisation weight defaults are under tuning
-- **Dashboard** — the Streamlit app is functional but incomplete; some panels may render incorrectly
-- **Documentation** — docstrings, tutorials, and the full methods writeup are in progress
-- **Tests** — unit and integration test coverage is minimal at this stage
-
-If you use this repository right now, expect rough edges. Contributions, bug reports, and feedback are very welcome via [Issues](../../issues).
-
-A stable `v1.0` release will be tagged once core modules pass integration tests and the manuscript is submitted.
-
-</details>
-
 # PhosCrosstalk
 
-Global phospho-network ODE modeling with PTM-based crosstalk integration and multi-objective evolutionary optimization.
+**Global phospho-network ODE modeling with PTM crosstalk, kinase-site priors, and TF/mRNA integration.**
 
-PhosCrosstalk is a systems-level phosphorylation modeling framework that integrates PTMcode2-derived inter/intra-crosstalk, KEA3 kinase-substrate networks, and experimental phosphosite time-series into a unified global ODE model.
+PhosCrosstalk reconstructs protein activation, kinase activity, and phosphosite kinetics
+across a signalling network. It fits large parameter sets to time-series phosphoproteomics
+data using gradient-based multi-start optimisation via [JAX](https://github.com/google/jax),
+[Diffrax](https://github.com/patrick-kidger/diffrax), and
+[Optimistix](https://github.com/patrick-kidger/optimistix).
 
-It reconstructs protein activation, kinase activity, and phosphosite kinetics across a network. Large parameter sets are fitted using gradient-based multi-start optimisation through `optimistix` (JAX/Diffrax backend).
+---
 
-## Overview
+## What PhosCrosstalk does
 
-PhosCrosstalk provides an end-to-end pipeline for:
+- Models global phospho-network dynamics with five coupled ODE state variables
+- Integrates PTMcode2 intra/inter-protein crosstalk priors
+- Uses kinase-site interaction priors (KEA/KS or custom TSV)
+- Incorporates a TF→mRNA regulatory network to drive protein activation
+- Fits a single scalar loss to phosphosite, protein abundance, and mRNA time-series
+- Supports distributive, sequential, and random/cooperative kinase mechanisms
+- Offers downstream analyses: steady-state, in-silico knockouts, global sensitivity
+- Provides an interactive Streamlit dashboard for result exploration
 
-- automated biological data curation
-- kinase-substrate and PTM crosstalk network construction
-- global ODE-based phosphosite modeling
-- multi-objective parameter optimization
-- steady-state simulation
-- in-silico knockout analysis
-- global sensitivity analysis
-- interactive visualization through Streamlit
+---
 
-> [!NOTE]
-> PhosCrosstalk is designed for network-level phosphoproteomics modeling, not isolated single-site curve fitting. It is most useful when phosphosite time-series data can be connected to kinase-substrate and PTM crosstalk priors.
+## Model overview
 
-## Key features
+### State variables
 
-### Global phospho-network ODE model
-
-The model captures three coupled biological layers:
-
-- `S`: protein activation state
-- `K_dyn`: dynamic kinase activity
-- `p`: phosphosite occupancy
-
-The ODE system integrates:
-
-- kinase-substrate phosphorylation
-- PTMcode2-derived global crosstalk
-- local sequence-based phosphosite proximity
-- distributive, sequential, and random/cooperative kinetic mechanisms
-
-### Automated data curation
-
-The curator module processes biological prior knowledge into model-ready artifacts.
-
-It supports:
-
-- KEA and PhosphoSitePlus data acquisition
-- PTMcode2 within-protein and between-protein crosstalk processing
-- SQLite database generation for PTM lookups
-- unified kinase graph construction
-- kinase-substrate lookup table generation
-
-### Multi-objective optimization
-
-PhosCrosstalk formulates parameter fitting as a multi-objective optimization problem.
-
-The objectives include:
-
-1. phosphosite trajectory error
-2. protein abundance error
-3. model complexity regularization
-
-The optimisation uses a scalarized loss (w₁·phospho_error + w₂·abundance_error + w₃·regularisation) minimised with `optimistix.BFGS` from multiple random starting points (multi-start). Legacy flags `--algorithm nsga2/unsga3` are accepted for backward compatibility but mapped to the new backend. Pseudo-Pareto diversity is achieved by running a small set of starts with different scalarisation weights.
-
-### Post-optimization analysis
-
-After fitting, PhosCrosstalk can run:
-
-- steady-state convergence analysis
-- kinase, protein, and phosphosite knockouts
-- fold-change impact screening
-- Sobol global sensitivity analysis
-- Pareto-front trajectory selection using Fréchet distance
-
-### Interactive dashboard
-
-The Streamlit dashboard supports:
-
-- fitted trajectory inspection
-- observed vs simulated comparisons
-- parameter distribution exploration
-- sensitivity ranking visualization
-- knockout result exploration
-- dynamic kinase-network animation
-
-## Repository structure
+The ODE state vector is:
 
 ```text
-phoscrosstalk/
-├── __init__.py
-├── main.py
-├── config.py
-├── logger.py
-├── data_loader.py
-├── data_curator.py
-├── weighting.py
-├── core_mechanisms.py
-├── optimization.py
-├── hyperparam.py
-├── multistarts.py
-├── fretchet.py
-├── simulation.py
-├── steadystate.py
-├── analysis.py
-├── post_processing.py
-├── equations.py
-├── sensitivity.py
-├── knockouts.py
-├── debug_main.py
-└── app.py
+y = [R, S, A, Kdyn, p]    (dimension: 3K + M + N)
+
+R(t)    – mRNA level (ODE state)              shape (K,)
+S(t)    – protein activation / signalling     shape (K,)
+A(t)    – protein abundance                   shape (K,)
+Kdyn(t) – kinase activity                     shape (M,)
+p(t)    – phosphosite occupancy               shape (N,)
 ```
+
+where **K** = number of model proteins, **M** = number of kinases,
+**N** = number of phosphosites.
+
+### Derived rates
+
+Two rates are derived from data and **not** optimized:
+
+- `k_act(t)` – protein activation rate, derived from the TF→mRNA regulatory signal
+- `s_prod(t)` – kinase production rate, derived from kinase/protein signals
+
+If `--rna-data` and `--tf-net` are absent, `k_act` defaults to a constant vector of 1.0.
+
+### Single scalar objective
+
+```text
+total_loss =
+    w_phospho   × phosphosite_loss
+  + w_abundance × protein_abundance_loss
+  + w_rna       × rna_loss          (only when --rna-data is provided)
+  + w_reg       × regularization_loss
+```
+
+Weights are set in `config.toml` under `[loss_weights]`.
+
+---
+
+## Inputs
+
+| Flag | Description | Example |
+|------|-------------|---------|
+| `--data` | Protein/phosphosite time-series CSV | `data_timeseries/filtered_input1.csv` |
+| `--rna-data` | mRNA time-series CSV (GeneID, x1…x9) | `data_timeseries/filtered_input3.csv` |
+| `--tf-net` | TF→mRNA network CSV (Source, Target, Weight) | `data_interactions/tf_mrna.csv` |
+| `--ptm-intra` | PTMcode2 intra-protein SQLite DB | `data_curated/processed/ptm_intra.db` |
+| `--ptm-inter` | PTMcode2 inter-protein SQLite DB | `data_curated/processed/ptm_inter.db` |
+| `--kinase-tsv` | Kinase-site prior TSV (Site, Kinase, weight) | `data_interactions/kinase_sites.tsv` |
+| `--kea-ks-table` | Alternative KEA/KS table | `data_curated/processed/ks_psite_table.tsv` |
+| `--unified-graph-pkl` | Kinase-kinase graph for Laplacian regularization | `data_curated/processed/unified_kinase_graph.gpickle` |
+
+### Input sanity checks
+
+```bash
+head data_timeseries/filtered_input1.csv
+head data_timeseries/filtered_input3.csv
+head data_interactions/tf_mrna.csv
+head data_interactions/kinase_sites.tsv
+```
+
+Check TF network symbols against RNA data:
+
+```bash
+awk -F',' '
+  NR==FNR { if (FNR > 1) rna[$1]; next }
+  FNR > 1 {
+    if (!($1 in rna)) missing[$1]
+    if (!($2 in rna)) missing[$2]
+  }
+  END { for (g in missing) print g }
+' data_timeseries/filtered_input3.csv data_interactions/tf_mrna.csv | sort
+```
+
+---
 
 ## Installation
 
-PhosCrosstalk requires Python ≥ 3.11, < 3.12.
-
 ```bash
-git clone https://github.com/<yourname>/phoscrosstalk.git
+git clone https://github.com/bibymaths/phoscrosstalk.git
 cd phoscrosstalk
-
-python -m venv venv
-source venv/bin/activate
-
-pip install .
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev,docs]"
 ```
 
-Alternatively, with `uv`:
+---
 
-```bash
-uv sync
+## Configuration
+
+Copy and edit `config.toml`:
+
+```toml
+[paths]
+data_dir   = "data_timeseries"
+output_dir = "results"
+
+[model]
+mechanism    = "dist"      # dist | seq | rand
+scale_mode   = "none"
+length_scale = 50.0
+weight_scheme = "uniform"
+
+[optimisation]
+n_starts  = 3
+max_steps = 500
+lambda_net = 0.0001
+reg_lambda = 0.0001
+
+[loss_weights]
+phospho   = 1.0
+abundance = 1.0
+mrna      = 1.0
+reg       = 1.0
+
+[solver]
+rtol = 1e-6
+atol = 1e-9
+max_steps = 16384
+
+[time]
+mrna_time_points = [4, 8, 15, 30, 60, 120, 240, 480, 960]
+interpolation    = "piecewise_constant"
 ```
 
-Main dependencies:
+---
 
-```text
-numpy
-jax
-jaxlib
-diffrax
-optimistix
-equinox
-pandas
-numba
-networkx
-salib
-streamlit
-rich
-```
+## Running PhosCrosstalk
 
-> [!TIP]
-> For large optimization runs, use a clean virtual environment and run the pipeline on a machine with sufficient CPU cores and memory.
-
-## Data curation
-
-Before running the model, biological prior knowledge must be curated.
-
-### PTMcode2 files
-
-Download the PTMcode2 within-protein and between-protein files from the PTMcode website and place them in a local directory, for example:
-
-```text
-data/ptmcode2/
-├── within.gz
-└── between.gz
-```
-
-### Run the curator
-
-```bash
-python3 -m phoscrosstalk.data_curator \
-  --all \
-  --ptmcode data/ptmcode2/within.gz data/ptmcode2/between.gz
-```
-
-Curated outputs are written to:
-
-```text
-data_curated/processed/
-```
-
-Expected curated artifacts include:
-
-```text
-ptm_intra.db
-ptm_inter.db
-ks_psite_table.tsv
-unified_kinase_graph.gpickle
-```
-
-> [!IMPORTANT]
-> The modeling pipeline expects curated PTM and kinase-substrate artifacts before optimization. Run data curation first unless these files already exist.
-
-## Usage
-
-### Run the modeling pipeline
+### Base command
 
 ```bash
 phoscrosstalk \
@@ -238,77 +178,105 @@ phoscrosstalk \
   --ptm-inter data_curated/processed/ptm_inter.db \
   --kinase-tsv data_interactions/kinase_sites.tsv \
   --unified-graph-pkl data_curated/processed/unified_kinase_graph.gpickle \
-  --outdir results/prior_supported_dist \
+  --outdir results/experiment_01 \
   --mechanism dist \
   --n-starts 3 \
-  --max-steps 500
+  --max-steps 20000
 ```
 
-### Run the dashboard
+### Mechanism variants
+
+```bash
+# Distributive (default)
+phoscrosstalk ... --mechanism dist --outdir results/dist_run
+
+# Sequential
+phoscrosstalk ... --mechanism seq --outdir results/seq_run
+
+# Random / cooperative
+phoscrosstalk ... --mechanism rand --outdir results/rand_run
+```
+
+### With downstream analyses
+
+```bash
+phoscrosstalk ... \
+  --run-steadystate \
+  --run-knockouts \
+  --run-sensitivity
+```
+
+### With KEA kinase-substrate table
+
+```bash
+phoscrosstalk ... \
+  --kea-ks-table data_curated/processed/ks_psite_table.tsv
+```
+
+### Smoke test
+
+```bash
+phoscrosstalk ... --n-starts 1 --max-steps 50 --outdir results/smoke
+```
+
+### Dashboard
 
 ```bash
 streamlit run phoscrosstalk/app.py
 ```
 
-In the dashboard sidebar, select the output directory from a completed run, for example:
+---
 
-```text
-results/experiment_01
+## Outputs
+
+| File | Description |
+|------|-------------|
+| `fitted_params.npz` | Optimized parameter vector and decoded arrays |
+| `fit_timeseries.tsv` | Simulated vs observed phosphosite and protein time-series |
+| `mrna_fit_timeseries.tsv` | Simulated `R(t)` vs observed mRNA (only when RNA ODE state is active) |
+| `mrna_diagnostics.tsv` | Per-gene mRNA fit diagnostics |
+| `internal_states.tsv` | Simulated `S(t)` and `Kdyn(t)` |
+| `parameter_summary_*.tsv` | Per-protein, per-kinase, per-site parameters |
+| `pareto_front.npz` | All multi-start losses and parameters |
+| `preopt_snapshot/` | Full input snapshot before optimization |
+| `network_nodes.tsv`, `network_edges.tsv` | Cytoscape-compatible network export |
+| `equations/` | ODE equation reports |
+| `knockouts/` | Knockout screening results |
+| `sensitivity/` | Sobol sensitivity indices |
+| `steadystate/` | Steady-state simulation results |
+
+> **Note:** `mrna_fit_timeseries.tsv` contains model-simulated `R(t)` values,
+> not a copy of the input mRNA data. It is only written when `--rna-data` is
+> provided and at least one gene symbol matches a model protein.
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause |
+|---------|-------------|
+| Warning: No RNA genes matched | Gene symbols differ between `--rna-data` and `--data` |
+| `mrna_fit_timeseries.tsv` absent | RNA data not provided, or no symbol match |
+| Loss is `NaN` | Solver non-finite; check `rtol`/`atol`, try smoke test |
+| `IndexError` decoding parameters | Stale `fitted_params.npz` from a run with different dimensions |
+| Wrong TF direction | `Source` and `Target` columns swapped in `tf_mrna.csv` |
+| Empty kinase-site matrix | Site labels in `--kinase-tsv` do not match model site labels |
+
+---
+
+## Developer workflow
+
+```bash
+pytest
+pytest --cov=phoscrosstalk --cov-report=term-missing
+ruff check .
+ruff format --check .
+mkdocs serve
+mkdocs build --strict
 ```
 
-## Output files
-
-A typical run generates:
-
-```text
-results/experiment_01/
-├── fit_timeseries.tsv
-├── fitted_params.npz
-├── pareto_front_with_J.tsv
-├── knockouts/
-├── sensitivity/
-└── equations/
-```
-
-Main outputs:
-
-| Output                    | Description                                                 |
-| ------------------------- | ----------------------------------------------------------- |
-| `fit_timeseries.tsv`      | Observed and simulated trajectories for fitted phosphosites |
-| `fitted_params.npz`       | Optimized parameters and model state                        |
-| `pareto_front_with_J.tsv` | Objective values for Pareto-optimal solutions               |
-| `knockouts/`              | In-silico knockout results and fold-change summaries        |
-| `sensitivity/`            | Sobol indices and perturbation trajectories                 |
-| `equations/`              | Generated LaTeX representation of the fitted ODE system     |
-
-## Why PhosCrosstalk exists
-
-Phosphorylation is not independent at the site level. Sites can influence each other through protein domains, protein complexes, signaling cascades, and PTM interaction networks.
-
-Many modeling approaches treat phosphosites independently or rely only on kinase-substrate annotations. PhosCrosstalk combines global PTM relationships, local sequence context, and experimental time-series data into one mechanistic modeling framework.
-
-The goal is to connect:
-
-* dynamic ODE modeling
-* phosphoproteomics
-* PTM curation databases
-* kinase-substrate networks
-* residue-level prediction and downstream machine learning
-
-## Citation
-
-If you use PhosCrosstalk, cite the relevant biological resources and methods used by the framework.
-
-1. Casado, P., Rodriguez-Prados, J.-C., Cosulich, S. C., Guichard, S., Vanhaesebroeck, B., & Cutillas, P. R. (2013). Kinase-Substrate Enrichment Analysis provides insights into the heterogeneity of signaling pathway activation in leukemia cells. Science Signaling, 6(264), rs6. [https://doi.org/10.1126/scisignal.2003573](https://doi.org/10.1126/scisignal.2003573)
-
-2. Hornbeck, P. V., Zhang, B., Murray, B., Kornhauser, J. M., Latham, V., & Skrzypek, E. (2015). PhosphoSitePlus, 2014: mutations, PTMs and recalibrations. Nucleic Acids Research, 43(D1), D512-D520. [https://doi.org/10.1093/nar/gku1267](https://doi.org/10.1093/nar/gku1267)
-
-3. Horn, H., Schoof, E., Kim, J., Robin, X., Miller, M. L., Diella, F., Palma, A., Cesareni, G., Jensen, L. J., & Linding, R. (2014). KinomeXplorer: an integrated platform for kinome biology studies. Nature Methods, 11(6), 603-604. [https://doi.org/10.1038/nmeth.2968](https://doi.org/10.1038/nmeth.2968)
-
-4. Minguez, P., Letunic, I., Parca, L., & Bork, P. (2013). PTMcode: a database of known and predicted functional associations between post-translational modifications in proteins. Nucleic Acids Research, 41(D1), D306-D311. [https://doi.org/10.1093/nar/gks1230](https://doi.org/10.1093/nar/gks1230)
-
-5. Linding, R., Jensen, L. J., Pasculescu, A., Olhovsky, M., Colwill, K., Bork, P., Yaffe, M. B., & Pawson, T. (2008). NetworKIN: a resource for exploring cellular phosphorylation networks. Nucleic Acids Research, 36(Database issue), D695-D699. [https://doi.org/10.1093/nar/gkm902](https://doi.org/10.1093/nar/gkm902)
+---
 
 ## License
 
-This project is licensed under the BSD 3-Clause License.
+BSD 3-Clause — see [LICENSE](LICENSE).
