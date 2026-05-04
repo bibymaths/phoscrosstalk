@@ -107,7 +107,7 @@ def test_include_tfs_as_proteins_flag_parses(monkeypatch, tmp_path):
     _make_tf_net_csv(tf_net_csv, [("TF1", "PROT1", 1.0)])
 
     import argparse
-    from phoscrosstalk.main import main  # noqa: F401 – just import to verify parseable
+    from phoscrosstalk.main import main  # noqa: F401 – just import to verify parsable
 
     # Verify the flag is accepted by argparse
     import argparse as _ap
@@ -116,8 +116,12 @@ def test_include_tfs_as_proteins_flag_parses(monkeypatch, tmp_path):
     from phoscrosstalk import main as _main_module
 
     parser = _ap.ArgumentParser()
-    parser.add_argument("--include-tfs-as-proteins", action="store_true", default=False,
-                        dest="include_tfs_as_proteins")
+    parser.add_argument(
+        "--include-tfs-as-proteins",
+        action="store_true",
+        default=False,
+        dest="include_tfs_as_proteins",
+    )
     ns = parser.parse_args(["--include-tfs-as-proteins"])
     assert ns.include_tfs_as_proteins is True
 
@@ -164,12 +168,20 @@ def test_extended_mode_warns_on_filtered_inputs(monkeypatch, tmp_path, capsys):
     warnings_seen = []
 
     class _FakeLogger:
-        def header(self, *a, **kw): pass
-        def success(self, *a, **kw): pass
-        def info(self, *a, **kw): pass
+        def header(self, *a, **kw):
+            pass
+
+        def success(self, *a, **kw):
+            pass
+
+        def info(self, *a, **kw):
+            pass
+
         def warning(self, msg, *a, **kw):
             warnings_seen.append(msg)
-        def error(self, *a, **kw): pass
+
+        def error(self, *a, **kw):
+            pass
 
     import phoscrosstalk.main as _mod
     orig_logger = _mod.logger

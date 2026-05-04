@@ -107,8 +107,6 @@ def _save_model_entities_table(
     )
 
 
-
-
 def main():
     """
     Command-line interface for running the global phospho-network model fitting
