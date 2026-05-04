@@ -46,6 +46,11 @@ docs = [
   "mkdocs-material",
   "pymdown-extensions",
 ]
+hybrid = [
+  "scipy>=1.11",
+  "evosax>=0.1.6",
+  "qdax>=0.5.0",
+]
 
 [project.scripts]
 phoscrosstalk = "phoscrosstalk.main:cli"
