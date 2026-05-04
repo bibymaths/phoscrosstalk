@@ -7,24 +7,24 @@
 # Optional: set to "" (empty string) or omit the key entirely to disable.
 # ---------------------------------------------------------------------------
 [paths]
-data            = "data_timeseries/input1.csv"
+data            = "data_timeseries/filtered_input1.csv"
 ptm_intra       = "data_curated/processed/ptm_intra.db"
 ptm_inter       = "data_curated/processed/ptm_inter.db"
 output_dir      = "results"
 # crosstalk_tsv   = ""          # optional PTM-pair filter TSV
-# rna_data        = ""          # optional mRNA time-series CSV
-# tf_net          = ""          # optional TF→mRNA network CSV
-# kinase_tsv      = "data_interactions/kinase_sites.tsv"   # kinase-site prior
+rna_data        = "data_timeseries/filtered_input3.csv"          # optional mRNA time-series CSV
+tf_net          = "data_interactions/tf_mrna.csv"          # optional TF→mRNA network CSV
+kinase_tsv      = "data_interactions/kinase_sites.tsv"   # kinase-site prior
 # kea_ks_table    = ""          # alternative KEA/KS table
-# unified_graph_pkl = ""        # kinase-kinase graph for Laplacian regularizer
+unified_graph_pkl = "data_curated/processed/unified_kinase_graph.gpickle"        # kinase-kinase graph for Laplacian regularizer
 
 # ---------------------------------------------------------------------------
 # [model]  – ODE model settings
 # ---------------------------------------------------------------------------
 [model]
-mechanism               = "dist"     # dist | seq | rand
+mechanism               = "rand"     # dist | seq | rand
 scale_mode              = "none"
-length_scale            = 50.0
+length_scale            = 100.0
 weight_scheme           = "uniform"
 receptors               = []         # proteins receiving external stimulus u(t)
 receptor_kinases        = []         # kinases receiving external stimulus u(t)
@@ -39,8 +39,8 @@ include_tfs_as_proteins = false
 n_starts  = 3
 max_steps = 500
 loss_type  = "mse"
-lambda_net = 0.0001
-reg_lambda = 0.0001
+lambda_net = 0.01
+reg_lambda = 0.01
 
 # ---------------------------------------------------------------------------
 # [loss_weights]  – relative weight of each objective term

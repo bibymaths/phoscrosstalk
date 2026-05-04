@@ -556,7 +556,6 @@ def test_rna_scale_warning_when_sim_too_large(tmp_path):
     sim = obs * 100.0  # simulate exploding R(t) (factor 100 above observed)
 
     # Capture log warnings by temporarily lowering the log threshold
-    import phoscrosstalk.logger as plog
 
     captured_warnings = []
 
@@ -635,7 +634,6 @@ def test_mrna_tsv_simulated_column_alias(tmp_path):
 def test_kdyn_labels_use_kinase_names(tmp_path):
     """save_fitted_simulation must write real kinase names in Kdyn_sim rows."""
     from phoscrosstalk.analysis import save_fitted_simulation
-    from phoscrosstalk.simulation import build_full_A0
 
     K, M, N = 2, 3, 4
     ModelDims.set_dims(K, M, N)

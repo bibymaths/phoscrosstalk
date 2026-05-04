@@ -510,7 +510,9 @@ class TestCLIRegression:
     def test_new_flags_accepted(self, monkeypatch, tmp_path):
         """Only --config (and --help/--version) are accepted; config file is read."""
         cfg_path = tmp_path / "config.toml"
-        cfg_path.write_text("")  # empty → validation error (exit 1, not argparse exit 2)
+        cfg_path.write_text(
+            ""
+        )  # empty → validation error (exit 1, not argparse exit 2)
 
         monkeypatch.setattr(
             sys,

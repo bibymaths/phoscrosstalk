@@ -188,7 +188,9 @@ def simulate_ode(
         jnp.asarray(prev_site_idx, dtype=jnp.int32),
     )
 
-    rhs_fn = make_rhs(K, M, N, mechanism, k_act_fn=k_act_fn, s_prod_fn=s_prod_fn, rna_relax=rna_relax)
+    rhs_fn = make_rhs(
+        K, M, N, mechanism, k_act_fn=k_act_fn, s_prod_fn=s_prod_fn, rna_relax=rna_relax
+    )
     term = diffrax.ODETerm(rhs_fn)
     t_eval = jnp.asarray(solver_times, dtype=jnp.float32)
     y0_jax = jnp.asarray(x0, dtype=jnp.float32)

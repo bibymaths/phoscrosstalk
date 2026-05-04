@@ -164,7 +164,15 @@ def compute_prev_site_idx(site_prot_idx: np.ndarray, N: int) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-def make_rhs(K: int, M: int, N: int, mechanism: str, k_act_fn=None, s_prod_fn=None, rna_relax: float = 0.1):
+def make_rhs(
+    K: int,
+    M: int,
+    N: int,
+    mechanism: str,
+    k_act_fn=None,
+    s_prod_fn=None,
+    rna_relax: float = 0.1,
+):
     """
     Return a JAX-compatible RHS function for ``diffrax.ODETerm``.
 

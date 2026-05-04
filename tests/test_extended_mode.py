@@ -19,7 +19,6 @@ Covers:
 import os
 import sys
 import tempfile
-import textwrap
 
 import numpy as np
 import pandas as pd
@@ -29,10 +28,8 @@ from phoscrosstalk.config import DEFAULT_TIMEPOINTS, load_config
 from phoscrosstalk.data_loader import (
     build_protein_entity_masks,
     build_tf_prot_weights,
-    load_tf_network,
 )
 from phoscrosstalk.derived_rates import make_k_act_fn
-
 
 # ---------------------------------------------------------------------------
 # Helper factories
@@ -56,7 +53,10 @@ def _make_phospho_csv(path, proteins, sites_per_protein=1):
 def _make_rna_csv(path, gene_ids):
     """Write a minimal mRNA CSV with GeneID and x1..x9 columns."""
     df = pd.DataFrame(
-        {"GeneID": gene_ids, **{f"x{i}": [float(i)] * len(gene_ids) for i in range(1, 10)}}
+        {
+            "GeneID": gene_ids,
+            **{f"x{i}": [float(i)] * len(gene_ids) for i in range(1, 10)},
+        }
     )
     df.to_csv(path, index=False)
 
@@ -106,14 +106,11 @@ def test_include_tfs_as_proteins_flag_parses(monkeypatch, tmp_path):
     _make_rna_csv(rna_csv, ["PROT1", "TF1"])
     _make_tf_net_csv(tf_net_csv, [("TF1", "PROT1", 1.0)])
 
-    import argparse
-    from phoscrosstalk.main import main  # noqa: F401 – just import to verify parsable
-
     # Verify the flag is accepted by argparse
     import argparse as _ap
 
     # We cannot call main() fully (needs DBs etc.) so instead test via argparse directly
-    from phoscrosstalk import main as _main_module
+    from phoscrosstalk.main import main  # noqa: F401 – just import to verify parsable
 
     parser = _ap.ArgumentParser()
     parser.add_argument(
@@ -184,6 +181,7 @@ def test_extended_mode_warns_on_filtered_inputs(monkeypatch, tmp_path, capsys):
             pass
 
     import phoscrosstalk.main as _mod
+
     orig_logger = _mod.logger
     _mod.logger = _FakeLogger()
     try:
@@ -196,8 +194,9 @@ def test_extended_mode_warns_on_filtered_inputs(monkeypatch, tmp_path, capsys):
                     f"You passed a file containing 'filtered' in the name ({_path}). "
                     "This may remove TF proteins before modeling."
                 )
-        assert any("filtered" in w for w in warnings_seen), \
+        assert any("filtered" in w for w in warnings_seen), (
             f"Expected filtered-filename warning; got: {warnings_seen}"
+        )
     finally:
         _mod.logger = orig_logger
 
@@ -216,11 +215,13 @@ def test_tf_source_included_as_model_protein_without_tf_upstream():
     K_site_kin = np.zeros((2, 1), dtype=float)  # no kinase priors
 
     # TF_SOURCE → TARGET_PROT edge; TF_SOURCE itself is not a Target
-    tf_net_df = pd.DataFrame({
-        "source": ["TF_SOURCE"],
-        "target": ["TARGET_PROT"],
-        "weight": [1.0],
-    })
+    tf_net_df = pd.DataFrame(
+        {
+            "source": ["TF_SOURCE"],
+            "target": ["TARGET_PROT"],
+            "weight": [1.0],
+        }
+    )
     gene_ids = ["TF_SOURCE", "TARGET_PROT"]
     rna_matrix = np.ones((2, 9), dtype=float)
 
@@ -262,13 +263,17 @@ def test_tf_source_without_kinase_prior_does_not_crash():
     proteins = ["TF_A", "PROT_B"]
     sites = ["TF_A_S1", "PROT_B_S1"]
     site_prot_idx = np.array([0, 1], dtype=int)
-    K_site_kin = np.zeros((2, 2), dtype=float)  # all zeros → no kinase prior for any site
+    K_site_kin = np.zeros(
+        (2, 2), dtype=float
+    )  # all zeros → no kinase prior for any site
 
-    tf_net_df = pd.DataFrame({
-        "source": ["TF_A"],
-        "target": ["PROT_B"],
-        "weight": [0.8],
-    })
+    tf_net_df = pd.DataFrame(
+        {
+            "source": ["TF_A"],
+            "target": ["PROT_B"],
+            "weight": [0.8],
+        }
+    )
     gene_ids = ["TF_A", "PROT_B"]
     tf_prot_weights = build_tf_prot_weights(tf_net_df, gene_ids, proteins)
 
@@ -336,16 +341,22 @@ def test_tf_protein_self_rna_k_act_fallback():
     T_rna = 4
     t_rna = np.array([0.0, 1.0, 2.0, 3.0])
     # Gene 0 = TF_SOURCE, Gene 1 = TARGET (should have TF input)
-    rna_data = np.array([
-        [2.0, 3.0, 4.0, 5.0],   # gene 0 (TF_SOURCE self-RNA)
-        [1.0, 1.0, 1.0, 1.0],   # gene 1 (TARGET)
-    ], dtype=float)
+    rna_data = np.array(
+        [
+            [2.0, 3.0, 4.0, 5.0],  # gene 0 (TF_SOURCE self-RNA)
+            [1.0, 1.0, 1.0, 1.0],  # gene 1 (TARGET)
+        ],
+        dtype=float,
+    )
 
     # tf_prot_weights: only TARGET (protein 1) has TF input from gene 0
-    tf_prot_weights = np.array([
-        [0.0, 0.0],   # TF_SOURCE: no TF upstream
-        [1.0, 0.0],   # TARGET: regulated by gene 0
-    ], dtype=float)
+    tf_prot_weights = np.array(
+        [
+            [0.0, 0.0],  # TF_SOURCE: no TF upstream
+            [1.0, 0.0],  # TARGET: regulated by gene 0
+        ],
+        dtype=float,
+    )
 
     # Self-RNA fallback: protein 0 (TF_SOURCE) falls back to rna_data[0, :]
     protein_self_rna_idx = np.array([0, -1], dtype=int)
@@ -362,15 +373,18 @@ def test_tf_protein_self_rna_k_act_fallback():
     # At t=0: TF_SOURCE (p=0) should return rna_data[0, 0] = 2.0
     # TARGET (p=1) should return tf_weights[1, :] @ rna_data[:, 0] = 1.0*2.0 = 2.0
     result = np.array(k_act_fn(0.0))
-    assert float(result[0]) == pytest.approx(2.0), \
+    assert float(result[0]) == pytest.approx(2.0), (
         f"TF_SOURCE self-RNA fallback expected 2.0, got {result[0]}"
-    assert float(result[1]) == pytest.approx(2.0), \
+    )
+    assert float(result[1]) == pytest.approx(2.0), (
         f"TARGET k_act expected 2.0, got {result[1]}"
+    )
 
     # At t=2.5: piecewise-constant → use column at t=2 (index 2)
     result_late = np.array(k_act_fn(2.5))
-    assert float(result_late[0]) == pytest.approx(4.0), \
+    assert float(result_late[0]) == pytest.approx(4.0), (
         f"TF_SOURCE self-RNA at t=2.5 expected 4.0, got {result_late[0]}"
+    )
 
 
 def test_k_act_fn_constant_fallback_when_no_rna():
@@ -412,11 +426,13 @@ def test_model_entities_table_marks_extended_entities(tmp_path):
     site_prot_idx = np.array([0, 1], dtype=int)
     K_site_kin = np.zeros((2, 2), dtype=float)
 
-    tf_net_df = pd.DataFrame({
-        "source": ["TF_SOURCE"],
-        "target": ["NORMAL_PROT"],
-        "weight": [1.0],
-    })
+    tf_net_df = pd.DataFrame(
+        {
+            "source": ["TF_SOURCE"],
+            "target": ["NORMAL_PROT"],
+            "weight": [1.0],
+        }
+    )
     gene_ids = ["TF_SOURCE", "NORMAL_PROT"]
     tf_prot_weights = build_tf_prot_weights(tf_net_df, gene_ids, proteins)
 
@@ -508,8 +524,6 @@ def test_three_panel_plot_handles_missing_phosphosites():
         include_tfs_as_proteins=False,
     )
 
-    import tempfile
-
     with tempfile.TemporaryDirectory() as tmpdir:
         _save_model_entities_table(
             outdir=tmpdir,
@@ -541,11 +555,13 @@ def test_default_mode_unchanged_with_filtered_inputs():
     site_prot_idx = np.array([0, 1], dtype=int)
     K_site_kin = np.eye(2)
 
-    tf_net_df = pd.DataFrame({
-        "source": ["PROT1"],
-        "target": ["PROT2"],
-        "weight": [1.0],
-    })
+    tf_net_df = pd.DataFrame(
+        {
+            "source": ["PROT1"],
+            "target": ["PROT2"],
+            "weight": [1.0],
+        }
+    )
     gene_ids = ["PROT1", "PROT2"]
     tf_prot_weights = build_tf_prot_weights(tf_net_df, gene_ids, proteins)
 
@@ -560,8 +576,9 @@ def test_default_mode_unchanged_with_filtered_inputs():
         include_tfs_as_proteins=False,  # default mode
     )
 
-    assert not masks["included_by_extended_mode"].any(), \
+    assert not masks["included_by_extended_mode"].any(), (
         "Default mode should not mark any protein as 'included_by_extended_mode'"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -602,12 +619,16 @@ def test_extended_mode_requires_full_rna_and_tf_net(monkeypatch, tmp_path):
         "argv",
         [
             "phoscrosstalk",
-            "--data", phospho_csv,
-            "--ptm-intra", intra_db,
-            "--ptm-inter", inter_db,
+            "--data",
+            phospho_csv,
+            "--ptm-intra",
+            intra_db,
+            "--ptm-inter",
+            inter_db,
             "--include-tfs-as-proteins",
             # NO --rna-data
-            "--tf-net", "/nonexistent/tf.csv",
+            "--tf-net",
+            "/nonexistent/tf.csv",
         ],
     )
     with pytest.raises(SystemExit) as exc_info:
@@ -622,11 +643,15 @@ def test_extended_mode_requires_full_rna_and_tf_net(monkeypatch, tmp_path):
         "argv",
         [
             "phoscrosstalk",
-            "--data", phospho_csv,
-            "--ptm-intra", intra_db,
-            "--ptm-inter", inter_db,
+            "--data",
+            phospho_csv,
+            "--ptm-intra",
+            intra_db,
+            "--ptm-inter",
+            inter_db,
             "--include-tfs-as-proteins",
-            "--rna-data", rna_csv,
+            "--rna-data",
+            rna_csv,
             # NO --tf-net
         ],
     )
@@ -649,11 +674,13 @@ def test_network_prior_counts_logged():
     K_site_kin = np.zeros((3, 2), dtype=float)
     K_site_kin[1, 0] = 1.0  # TGT_PROT has kinase prior
 
-    tf_net_df = pd.DataFrame({
-        "source": ["SRC_PROT"],
-        "target": ["TGT_PROT"],
-        "weight": [1.0],
-    })
+    tf_net_df = pd.DataFrame(
+        {
+            "source": ["SRC_PROT"],
+            "target": ["TGT_PROT"],
+            "weight": [1.0],
+        }
+    )
     gene_ids = ["SRC_PROT", "TGT_PROT"]  # ORPHAN not in RNA
     tf_prot_weights = build_tf_prot_weights(tf_net_df, gene_ids, proteins)
 
@@ -668,12 +695,12 @@ def test_network_prior_counts_logged():
         include_tfs_as_proteins=True,
     )
 
-    assert masks["n_tf_sources"] == 1     # SRC_PROT
-    assert masks["n_tf_targets"] == 1     # TGT_PROT
+    assert masks["n_tf_sources"] == 1  # SRC_PROT
+    assert masks["n_tf_targets"] == 1  # TGT_PROT
     assert masks["n_sources_in_rna"] == 1  # SRC_PROT in gene_ids
     assert masks["n_targets_in_rna"] == 1  # TGT_PROT in gene_ids
-    assert masks["n_sources_in_proteins"] == 1   # SRC_PROT in model proteins
-    assert masks["n_targets_in_proteins"] == 1   # TGT_PROT in model proteins
+    assert masks["n_sources_in_proteins"] == 1  # SRC_PROT in model proteins
+    assert masks["n_targets_in_proteins"] == 1  # TGT_PROT in model proteins
     # SRC_PROT has no kinase prior and no TF input → included by extended mode
     assert masks["n_included_by_extended"] == 1
 

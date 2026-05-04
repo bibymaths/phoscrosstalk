@@ -17,6 +17,7 @@ from phoscrosstalk.config import ModelDims, _opt, load_config, validate_config
 from phoscrosstalk.derived_rates import make_k_act_fn, make_s_prod_fn
 from phoscrosstalk.equations import generate_equations_report
 from phoscrosstalk.logger import get_logger
+from phoscrosstalk.logo import print_logo
 from phoscrosstalk.multistarts import run_multi_start_optimization
 from phoscrosstalk.optimization import (
     NetworkProblem as NetworkOptimizationProblem,
@@ -282,6 +283,26 @@ def main():
 
     interp_mode = cfg.time.interpolation
     s_prod_fn_type = cfg.derived_rates.s_prod_fn
+
+    # ------------------------------------------------------------------
+    # PRINT LOGO
+    # ------------------------------------------------------------------
+
+    print_logo(
+        name="PhosCrossTalk",
+        version="alpha",
+        tagline=(
+            "Global phospho-network ODE modeling with PTM crosstalk, "
+            "kinase-site priors, and TF/mRNA integration"
+        ),
+        author="Abhinav Mishra",
+        email="mishraabhinav36@gmail.com",
+        orcid="0009-0005-3179-7408",
+        website="https://bibymaths.github.io",
+        font="slant",
+        color="bright_green",
+        animate=False,
+    )
 
     # ------------------------------------------------------------------
     # PRINT CONFIG SUMMARY
