@@ -113,26 +113,36 @@ def make_k_act_fn(
     tf_prot_weights: np.ndarray | None,
     K: int,
     interp_mode: str = "piecewise_constant",
+    protein_self_rna_idx: np.ndarray | None = None,
 ):
     """
     Build a JAX closure ``k_act_fn(t) -> jnp.array(shape=(K,))``.
 
-    Each element ``k_act[p]`` is the weighted sum of TF mRNA fold-changes
-    at time *t* for protein *p*::
+    Each element ``k_act[p]`` is determined by the following priority::
 
-        k_act(p, t) = Σ_{tf} tf_prot_weights[p, tf] · x_tf(t)
+        if protein has TF upstream edges (non-zero row in tf_prot_weights):
+            k_act_p(t) = Σ_{tf} tf_prot_weights[p, tf] · x_tf(t)
+        elif protein_self_rna_idx[p] >= 0 (protein has its own RNA observation):
+            k_act_p(t) = rna_data[protein_self_rna_idx[p], t]
+        else:
+            k_act_p(t) = 1.0  (neutral constant)
 
     If any of the required inputs are absent (``None``), the function returns
     a constant vector of ones (neutral activation rate).
 
     Args:
-        t_rna:           (T_rna,) mRNA time points.
-        rna_data:        (n_genes, T_rna) mRNA fold-change matrix.
-        tf_prot_weights: (K, n_genes) weight matrix mapping genes→proteins.
-                         ``tf_prot_weights[p, g]`` = contribution of gene *g*
-                         as a TF for protein *p*.
-        K:               Number of proteins.
-        interp_mode:     ``"piecewise_constant"`` or ``"linear"``.
+        t_rna:                (T_rna,) mRNA time points.
+        rna_data:             (n_genes, T_rna) mRNA fold-change matrix.
+        tf_prot_weights:      (K, n_genes) weight matrix mapping genes→proteins.
+                              ``tf_prot_weights[p, g]`` = contribution of gene *g*
+                              as a TF for protein *p*.
+        K:                    Number of proteins.
+        interp_mode:          ``"piecewise_constant"`` or ``"linear"``.
+        protein_self_rna_idx: (K,) int array. For proteins without TF upstream
+                              edges, ``protein_self_rna_idx[p]`` is the index
+                              into *rna_data* rows for a self-RNA fallback signal.
+                              Use ``-1`` to indicate no self-RNA (constant 1.0).
+                              Pass ``None`` to disable the fallback entirely.
 
     Returns:
         A JAX function ``fn(t) -> jnp.array(shape=(K,))``.
@@ -146,11 +156,29 @@ def make_k_act_fn(
 
         return _k_act_const
 
+    rna_data_np = np.asarray(rna_data, dtype=np.float32)
+    tf_weights_np = np.asarray(tf_prot_weights, dtype=np.float32)
+
     # Pre-compute weighted mRNA signals per protein: (K, T_rna)
     # signal[p, t] = Σ_g tf_prot_weights[p, g] * rna_data[g, t]
-    signal = np.asarray(tf_prot_weights, dtype=np.float32) @ np.asarray(
-        rna_data, dtype=np.float32
-    )  # (K, T_rna)
+    signal = tf_weights_np @ rna_data_np  # (K, T_rna)
+
+    # Apply per-protein fallback for proteins without TF upstream edges.
+    # A protein has TF input if its tf_prot_weights row is non-zero.
+    if protein_self_rna_idx is not None:
+        self_rna_idx = np.asarray(protein_self_rna_idx, dtype=int)
+        T_rna = rna_data_np.shape[1]
+        for p_idx in range(K):
+            row_sum = float(tf_weights_np[p_idx].sum())
+            if row_sum == 0.0:
+                s_idx = int(self_rna_idx[p_idx])
+                if 0 <= s_idx < rna_data_np.shape[0]:
+                    # Use the protein's own RNA trajectory as activation signal
+                    signal[p_idx, :] = rna_data_np[s_idx, :]
+                else:
+                    # No self-RNA available: neutral constant 1.0
+                    signal[p_idx, :] = 1.0
+
     signal_j = jnp.asarray(signal, dtype=jnp.float32)
     times_j = jnp.asarray(t_rna, dtype=jnp.float32)
     _interp = _interp_fn(interp_mode)
