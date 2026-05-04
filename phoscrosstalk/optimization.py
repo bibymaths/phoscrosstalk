@@ -2,17 +2,29 @@
 optimization.py
 Optimistix-based objective functions and parameter fitting for the phospho-network.
 
-Replaces the previous pymoo / ElementwiseProblem backend with:
-  - A JAX-differentiable scalarized loss (w1*f1 + w2*f2 + w3*f3 + w4*f4)
-  - Optimistix BFGS minimiser for gradient-based parameter fitting
-  - A thin NetworkProblem wrapper that preserves the .simulate() interface
-    used by steadystate, knockouts, sensitivity, and app modules.
+Primary fitting path (canonical Diffrax + Optimistix approach):
+  - ODE solve inside the optimization objective using diffrax.Tsit5.
+  - diffrax.SaveAt(ts=...) with explicit saved timepoints.
+  - diffrax.DirectAdjoint() for differentiating through the ODE solve (required
+    because Optimistix least-squares solvers use forward-mode autodiff).
+  - Optimistix LevenbergMarquardt with optx.least_squares for the main fitting path.
+  - Residual vector (not scalar) as the optimization objective.
 
-Loss components:
-  f1 : phosphosite occupancy loss
-  f2 : protein abundance loss
-  f3 : regularisation (L2 + Laplacian)
-  f4 : mRNA / R_rna state loss (zero when no RNA data provided)
+Loss components (diagnostics, computed from residuals):
+  f1 : phosphosite occupancy loss   – mean(W_data  * (P_sim - P_data)^2)
+  f2 : protein abundance loss       – mean(W_prot  * (A_sim - A_data)^2)
+  f3 : regularisation               – L2 + Laplacian network term
+  f4 : mRNA / R_rna state loss      – mean(W_mrna  * (R_sim - R_obs)^2)
+                                      zero when no RNA data provided
+
+Residual vector structure (for optx.least_squares):
+  [sqrt(w_phospho*W_data) * (P_sim - P_data),   shape: (N*T_prot,)
+   sqrt(w_abundance*W_prot) * (A_sim - A_data),  shape: (K_obs*T_prot,)
+   sqrt(w_mrna*W_mrna) * (R_sim - R_obs),        shape: (n_rna,)
+   sqrt(reg_lambda) * theta,                      shape: (n_var,)
+   sqrt(lambda_net) * alpha_net_reg]              shape: (M,)  [when lambda_net>0]
+
+State layout: y = [R_rna, S, A, Kdyn, p]  (dim = 3*K + M + N)
 """
 
 import diffrax
@@ -363,12 +375,13 @@ def make_loss_fn(
         )
 
         # f4: mRNA / R_rna loss (only when RNA data is available)
+        # Use raw MSE (not log1p) to avoid overflow to inf when R_sim is far from obs.
         if has_mrna:
             xs_rna = xs[mrna_idx_j, :]
-            R_sim_rna = jnp.clip(xs_rna[:, :K], 0.0, None).T  # (K, T_rna)
+            R_sim_rna = jnp.clip(xs_rna[:, :K], 0.0, 20.0).T  # (K, T_rna); clip to prevent float32 overflow
             R_sim_matched = R_sim_rna[rna_prot_idx_j, :]  # (n_match, T_rna)
             diff_R = rna_j - R_sim_matched
-            f4 = jnp.sum(jnp.log1p(W_rna_j * diff_R * diff_R)) / n_rna
+            f4 = jnp.sum(W_rna_j * diff_R * diff_R) / n_rna
         else:
             f4 = jnp.float32(0.0)
 
@@ -386,30 +399,371 @@ def make_loss_fn(
     return loss_fn
 
 
-def run_single_optimisation(
-    loss_fn,
-    theta0,
-    max_steps=256,
+def make_residuals_fn(
+    t,
+    P_data,
+    A_scaled,
+    prot_idx_for_A,
+    W_data,
+    W_data_prot,
+    Cg,
+    Cl,
+    site_prot_idx,
+    K_site_kin,
+    R,
+    L_alpha,
+    kin_to_prot_idx,
+    receptor_mask_prot,
+    receptor_mask_kin,
+    mechanism,
+    lambda_net,
+    reg_lambda,
+    w_phospho=1.0,
+    w_abundance=1.0,
+    w_reg=1.0,
+    rtol=1e-6,
+    atol=1e-9,
+    max_steps=16384,
+    k_act_fn=None,
+    s_prod_fn=None,
+    t_mrna=None,
+    rna_data_scaled=None,
+    w_mrna=1.0,
+    rna_model_prot_idx=None,
+    rna_obs_idx=None,
+    rna_fit_genes=None,
+    R_data0=None,
+    W_data_mrna=None,
+    rna_relax=0.1,
 ):
     """
-    Run a single Optimistix BFGS minimisation from starting point theta0.
+    Build a JAX-differentiable residual-vector function for Optimistix least_squares.
+
+    Follows the canonical Diffrax + Optimistix approach:
+      - ODE solve inside the objective.
+      - diffrax.Tsit5() solver.
+      - diffrax.SaveAt(ts=t_eval) with explicit saved timepoints.
+      - diffrax.DirectAdjoint() for differentiating through the ODE solve.
+        (required because Optimistix LM uses forward-mode autodiff)
+
+    The returned function ``residuals_fn(theta, args)`` is compatible with
+    ``optimistix.least_squares``. It returns:
+      - 1D finite residual vector (concatenation of all modality residuals)
+      - auxiliary tuple (f1, f2, f3, f4) as diagnostics  [via has_aux=True]
+
+    Residual blocks:
+      sqrt(w_phospho * W_data)  * (P_sim - P_data)   phosphosite block
+      sqrt(w_abundance * W_prot) * (A_sim - A_data)   abundance block
+      sqrt(w_mrna * W_mrna)     * (R_sim - R_obs)     mRNA block
+      sqrt(reg_lambda)          * theta                L2 regularisation
+      sqrt(lambda_net)          * L_alpha @ alpha      Laplacian regularisation
+
+    Failed ODE solves return a large finite penalty vector (not inf/nan).
+
+    Parameters are frozen at creation time; only ``theta`` varies.
+
+    State layout: y = [R_rna, S, A, Kdyn, p]  (dim = 3*K + M + N)
+    """
+    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+
+    n_p = max(1, P_data.size)
+    n_A = max(1, A_scaled.size)
+    n_var = 2 * K + 2 + 3 * M + N + 4
+
+    prev_site_idx = compute_prev_site_idx(site_prot_idx.astype(np.int32), N)
+
+    # Build unified time grid (protein ∪ mRNA)
+    if t_mrna is not None and len(t_mrna) > 0:
+        all_times = np.union1d(t, t_mrna)
+    else:
+        all_times = np.unique(t)
+    all_times = np.sort(all_times).astype(np.float64)
+
+    # Index maps
+    prot_time_idx = np.searchsorted(all_times, t)
+    if t_mrna is not None and len(t_mrna) > 0:
+        mrna_time_idx = np.searchsorted(all_times, t_mrna)
+    else:
+        mrna_time_idx = None
+
+    # Build initial state from data (layout: [R_rna, S, A, Kdyn, p])
+    T_prot = P_data.shape[1]
+    A0_full = build_full_A0(K, T_prot, A_scaled, prot_idx_for_A)
+
+    x0 = np.zeros(3 * K + M + N, dtype=np.float64)
+    if R_data0 is not None:
+        r_data = np.asarray(R_data0, dtype=np.float64)
+        r0 = r_data[:, 0].copy() if r_data.ndim > 1 else r_data.copy()
+        r0 = np.nan_to_num(r0, nan=1.0, posinf=5.0, neginf=0.0)
+        x0[:K] = np.clip(r0, 0.0, 10.0)
+    else:
+        x0[:K] = 1.0
+    a0 = np.nan_to_num(A0_full[:, 0], nan=1.0, posinf=5.0, neginf=0.0)
+    x0[2 * K : 3 * K] = np.clip(a0, 0.0, 5.0)
+    p0 = np.nan_to_num(P_data[:, 0], nan=0.0, posinf=1.0, neginf=0.0)
+    x0[3 * K + M :] = np.clip(p0, 0.0, 1.0)
+
+    # JAX static arrays
+    Cg_j = jnp.asarray(Cg, dtype=jnp.float32)
+    Cl_j = jnp.asarray(Cl, dtype=jnp.float32)
+    K_sk_j = jnp.asarray(K_site_kin, dtype=jnp.float32)
+    R_j = jnp.asarray(R, dtype=jnp.float32)
+    La_j = jnp.asarray(L_alpha, dtype=jnp.float32)
+    spi_j = jnp.asarray(site_prot_idx, dtype=jnp.int32)
+    k2p_j = jnp.asarray(kin_to_prot_idx, dtype=jnp.int32)
+    rmp_j = jnp.asarray(receptor_mask_prot, dtype=jnp.float32)
+    rmk_j = jnp.asarray(receptor_mask_kin, dtype=jnp.float32)
+    psi_j = jnp.asarray(prev_site_idx, dtype=jnp.int32)
+
+    y0_j = jnp.asarray(x0, dtype=jnp.float32)
+    t_eval = jnp.asarray(all_times, dtype=jnp.float32)
+
+    P_data_j = jnp.asarray(P_data, dtype=jnp.float32)
+    A_scaled_j = jnp.asarray(A_scaled, dtype=jnp.float32)
+    prot_idx_j = jnp.asarray(prot_idx_for_A, dtype=jnp.int32)
+    prot_idx_solver = jnp.asarray(prot_time_idx, dtype=jnp.int32)
+
+    # Weight arrays with modality loss weights baked in as sqrt factors
+    # so that ||sqrt(w*W)*(sim-obs)||^2 == w * sum(W * (sim-obs)^2)
+    sqrt_wp = jnp.sqrt(jnp.float32(w_phospho)) * jnp.sqrt(
+        jnp.asarray(W_data, dtype=jnp.float32)
+    )
+    has_abundance = A_scaled.size > 0
+    if has_abundance:
+        sqrt_wa = jnp.sqrt(jnp.float32(w_abundance)) * jnp.sqrt(
+            jnp.asarray(W_data_prot, dtype=jnp.float32)
+        )
+    else:
+        sqrt_wa = None
+
+    # Convert weight arrays to JAX for use inside the JIT-traced residuals_fn
+    W_data_j_diag = jnp.asarray(W_data, dtype=jnp.float32)
+    W_prot_j_diag = jnp.asarray(W_data_prot, dtype=jnp.float32) if has_abundance else None
+
+    # mRNA arrays
+    has_mrna = (
+        t_mrna is not None
+        and rna_data_scaled is not None
+        and len(t_mrna) > 0
+        and mrna_time_idx is not None
+        and rna_model_prot_idx is not None
+        and len(rna_model_prot_idx) > 0
+    )
+
+    if has_mrna:
+        assert t_mrna is not None
+        rna_j = jnp.asarray(rna_data_scaled, dtype=jnp.float32)
+        mrna_idx_j = jnp.asarray(mrna_time_idx, dtype=jnp.int32)
+        rna_prot_idx_j = jnp.asarray(rna_model_prot_idx, dtype=jnp.int32)
+        n_matched = len(rna_model_prot_idx)
+        T_rna = len(t_mrna)
+        W_rna_base = (
+            np.asarray(W_data_mrna, dtype=np.float32)
+            if W_data_mrna is not None
+            else np.ones((n_matched, T_rna), dtype=np.float32)
+        )
+        W_rna_j_diag = jnp.asarray(W_rna_base, dtype=jnp.float32)
+        sqrt_wr = jnp.sqrt(jnp.float32(w_mrna)) * jnp.sqrt(W_rna_j_diag)
+        n_rna = max(1, rna_data_scaled.size)
+    else:
+        rna_j = mrna_idx_j = rna_prot_idx_j = sqrt_wr = W_rna_j_diag = None
+        n_rna = 1
+
+    # Regularisation residuals – fixed structure, no ODE needed
+    sqrt_reg = jnp.float32(np.sqrt(float(reg_lambda)))
+    has_net_reg = lambda_net > 0.0
+    if has_net_reg:
+        sqrt_lnet = jnp.float32(np.sqrt(float(lambda_net)))
+
+    rhs_fn = make_rhs(
+        K, M, N, mechanism, k_act_fn=k_act_fn, s_prod_fn=s_prod_fn, rna_relax=rna_relax
+    )
+    term = diffrax.ODETerm(rhs_fn)
+    # Use Tsit5 + PIDController + DirectAdjoint as required by the problem statement.
+    # DirectAdjoint is needed because Optimistix LM uses forward-mode autodiff (jvp).
+    ode_solver = diffrax.Tsit5()
+    sctrl = diffrax.PIDController(rtol=rtol, atol=atol)
+    saveat = diffrax.SaveAt(ts=t_eval)
+    adjoint = diffrax.DirectAdjoint()
+
+    t0_val = float(all_times[0])
+    t1_val = float(all_times[-1])
+
+    # Penalty residual sizes for failed solves
+    n_phospho_res = P_data.size
+    n_abund_res = A_scaled.size if has_abundance else 0
+    n_rna_res = rna_data_scaled.size if has_mrna and rna_data_scaled is not None else 0
+    n_reg_res = n_var + (M if has_net_reg else 0)
+    total_res_size = n_phospho_res + n_abund_res + n_rna_res + n_reg_res
+
+    PENALTY = jnp.float32(1e3)  # per-element penalty value for failed solves
+
+    def residuals_fn(theta, _args):
+        """
+        Compute residual vector and diagnostic loss components.
+
+        Compatible with optx.least_squares(..., has_aux=True):
+          returns (residuals_1d, (f1, f2, f3, f4))
+
+        Uses diffrax.DirectAdjoint so that Optimistix LM can compute JVPs
+        through the ODE solve without storing all intermediate states.
+        """
+        theta_j = jnp.asarray(theta, dtype=jnp.float32)
+
+        ode_args = (
+            theta_j,
+            Cg_j,
+            Cl_j,
+            spi_j,
+            K_sk_j,
+            R_j,
+            La_j,
+            k2p_j,
+            rmp_j,
+            rmk_j,
+            psi_j,
+        )
+
+        sol = diffrax.diffeqsolve(
+            term,
+            ode_solver,
+            t0=t0_val,
+            t1=t1_val,
+            dt0=0.01,
+            y0=y0_j,
+            args=ode_args,
+            saveat=saveat,
+            stepsize_controller=sctrl,
+            max_steps=max_steps,
+            adjoint=adjoint,  # DirectAdjoint for forward-mode AD compatibility
+            throw=False,
+        )
+
+        xs = sol.ys  # (T_unified, 3K+M+N)
+        solve_ok = jnp.all(jnp.isfinite(xs))
+
+        # Sample at protein time indices (new layout: [R_rna, S, A, Kdyn, p])
+        xs_prot = xs[prot_idx_solver, :]
+        P_sim = jnp.clip(xs_prot[:, 3 * K + M :], 0.0, 1.0).T  # (N, T_prot)
+        A_sim = jnp.clip(xs_prot[:, 2 * K : 3 * K], 0.0, 5.0).T  # (K, T_prot)
+
+        # --- Phosphosite residuals ---
+        diff_p = P_sim - P_data_j  # (N, T_prot)
+        r_phospho = (sqrt_wp * diff_p).ravel()  # (N*T_prot,)
+
+        # --- f1 diagnostic (mean unweighted-by-modality MSE) ---
+        f1 = jnp.sum(W_data_j_diag * diff_p * diff_p) / n_p
+
+        # --- Abundance residuals ---
+        if has_abundance:
+            A_sim_obs = A_sim[prot_idx_j, :]  # (K_obs, T_prot)
+            diff_A = A_sim_obs - A_scaled_j  # (K_obs, T_prot)
+            r_abund = (sqrt_wa * diff_A).ravel()
+            f2 = jnp.sum(W_prot_j_diag * diff_A * diff_A) / n_A
+        else:
+            r_abund = jnp.zeros(0, dtype=jnp.float32)
+            f2 = jnp.float32(0.0)
+
+        # --- mRNA residuals ---
+        if has_mrna:
+            xs_rna = xs[mrna_idx_j, :]
+            # Clip to prevent float32 overflow; R_rna is on fold-change scale (~0-20)
+            R_sim_rna = jnp.clip(xs_rna[:, :K], 0.0, 20.0).T  # (K, T_rna)
+            R_sim_matched = R_sim_rna[rna_prot_idx_j, :]  # (n_match, T_rna)
+            diff_R = R_sim_matched - rna_j  # (n_match, T_rna)
+            r_rna = (sqrt_wr * diff_R).ravel()
+            f4 = jnp.sum(W_rna_j_diag * diff_R * diff_R) / n_rna
+        else:
+            r_rna = jnp.zeros(0, dtype=jnp.float32)
+            f4 = jnp.float32(0.0)
+
+        # --- Regularisation residuals (no ODE needed) ---
+        # L2 on theta
+        r_reg_l2 = sqrt_reg * theta_j  # (n_var,)
+        # Laplacian network regularisation on alpha (decoded from theta)
+        if has_net_reg:
+            alpha_raw = theta_j[2 * K + 2 : 2 * K + 2 + M]
+            alpha = jnp.exp(jnp.clip(alpha_raw, -20.0, 10.0))
+            r_reg_net = sqrt_lnet * (La_j @ alpha)  # (M,)
+            r_reg = jnp.concatenate([r_reg_l2, r_reg_net])
+        else:
+            r_reg = r_reg_l2
+
+        # f3 diagnostic
+        f3_l2 = jnp.float32(reg_lambda) * jnp.dot(theta_j, theta_j)
+        if has_net_reg:
+            alpha_raw = theta_j[2 * K + 2 : 2 * K + 2 + M]
+            alpha = jnp.exp(jnp.clip(alpha_raw, -20.0, 10.0))
+            f3_net = jnp.float32(lambda_net) * jnp.dot(alpha, La_j @ alpha)
+        else:
+            f3_net = jnp.float32(0.0)
+        f3 = (f3_l2 + f3_net) / jnp.float32(max(n_var, 1))
+
+        # --- Concatenate residual vector ---
+        residuals = jnp.concatenate([r_phospho, r_abund, r_rna, r_reg])
+
+        # --- Replace non-finite residuals with finite penalty ---
+        # This handles ODE solve failures gracefully without crashing the optimizer.
+        finite_residuals = jnp.where(
+            jnp.isfinite(residuals), residuals, PENALTY
+        )
+        finite_residuals = jnp.where(
+            solve_ok, finite_residuals, jnp.full_like(finite_residuals, PENALTY)
+        )
+
+        # Recalculate finite diagnostics for aux output
+        f1 = jnp.where(jnp.isfinite(f1), f1, jnp.float32(1e6))
+        f2 = jnp.where(jnp.isfinite(f2), f2, jnp.float32(1e6))
+        f3 = jnp.where(jnp.isfinite(f3), f3, jnp.float32(1e6))
+        f4 = jnp.where(jnp.isfinite(f4), f4, jnp.float32(1e6))
+
+        return finite_residuals, (f1, f2, f3, f4)
+
+    return residuals_fn
+
+
+def run_single_optimisation(
+    residuals_fn,
+    theta0,
+    max_steps=500,
+    rtol=1e-8,
+    atol=1e-8,
+    verbose=False,
+):
+    """
+    Run a single Optimistix LevenbergMarquardt least-squares optimisation.
+
+    Implements the canonical Diffrax + Optimistix approach:
+      - Optimistix LevenbergMarquardt solver
+      - optx.least_squares (not optx.minimise) for residual-vector fitting
+      - Verbose per-step progress when verbose=True
+
+    The ``residuals_fn`` must have signature::
+
+        residuals_fn(theta, args) -> (residuals_1d, (f1, f2, f3, f4))
+
+    as returned by ``make_residuals_fn``.
 
     Parameters
     ----------
-    loss_fn  : callable (theta, args) -> (scalar, (f1, f2, f3, f4))
-    theta0   : np.ndarray
-    max_steps: int
+    residuals_fn : callable (theta, args) -> (1D residuals, (f1, f2, f3, f4))
+    theta0       : np.ndarray  – starting parameter vector
+    max_steps    : int         – Optimistix iteration cap (not ODE steps)
+    rtol, atol   : float       – Optimistix convergence tolerances
+    verbose      : bool        – enable per-step progress logging
 
     Returns
     -------
-    theta_opt : np.ndarray
-    total_loss: float
-    f1, f2, f3, f4: float
+    theta_opt  : np.ndarray
+    total_loss : float  – w_phospho*f1 + w_abundance*f2 + w_reg*f3 + w_mrna*f4
+    f1, f2, f3, f4 : float
     """
-    solver = optx.BFGS(rtol=1e-5, atol=1e-7)
-    sol = optx.minimise(
-        loss_fn,
-        solver,
+    # Use LevenbergMarquardt with least_squares as specified by the Diffrax/Optimistix
+    # canonical approach.  verbose=True enables per-step progress logging.
+    lm_solver = optx.LevenbergMarquardt(rtol=rtol, atol=atol, verbose=verbose)
+    sol = optx.least_squares(
+        residuals_fn,
+        lm_solver,
         jnp.asarray(theta0, dtype=jnp.float32),
         args=None,
         has_aux=True,
@@ -417,8 +771,130 @@ def run_single_optimisation(
         throw=False,
     )
     theta_opt = np.asarray(sol.value, dtype=np.float64)
-    total_loss, (f1, f2, f3, f4) = loss_fn(sol.value, None)
-    return theta_opt, float(total_loss), float(f1), float(f2), float(f3), float(f4)
+
+    # Recompute diagnostics at the optimal point (aux from the last solver step)
+    _, (f1, f2, f3, f4) = residuals_fn(sol.value, None)
+    f1, f2, f3, f4 = float(f1), float(f2), float(f3), float(f4)
+    total_loss = f1 + f2 + f3 + f4  # diagnostic sum; modality weights are in residuals
+    return theta_opt, total_loss, f1, f2, f3, f4
+
+
+
+# ---------------------------------------------------------------------------
+# Problem shape validation
+# ---------------------------------------------------------------------------
+
+
+def validate_problem_shapes(problem):
+    """
+    Validate all array shapes in a NetworkProblem before starting optimisation.
+
+    Raises
+    ------
+    ValueError  if any shape invariant is violated or required arrays are None.
+
+    Parameters
+    ----------
+    problem : NetworkProblem
+    """
+    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+    T = problem.P_data.shape[1]
+
+    errors = []
+
+    def _chk(cond, msg):
+        if not cond:
+            errors.append(msg)
+
+    # Core shape checks
+    _chk(
+        problem.P_data.shape == problem.W_data.shape,
+        f"P_data.shape {problem.P_data.shape} != W_data.shape {problem.W_data.shape}",
+    )
+    if problem.A_scaled.size > 0:
+        _chk(
+            problem.A_scaled.shape == problem.W_data_prot.shape,
+            f"A_scaled.shape {problem.A_scaled.shape} != W_data_prot.shape {problem.W_data_prot.shape}",
+        )
+    _chk(
+        problem.K_site_kin.shape == (N, M),
+        f"K_site_kin.shape {problem.K_site_kin.shape} != (N={N}, M={M})",
+    )
+    _chk(
+        problem.R.shape == (M, N),
+        f"R.shape {problem.R.shape} != (M={M}, N={N})",
+    )
+    _chk(
+        problem.Cg.shape == (N, N),
+        f"Cg.shape {problem.Cg.shape} != (N={N}, N={N})",
+    )
+    _chk(
+        problem.Cl.shape == (N, N),
+        f"Cl.shape {problem.Cl.shape} != (N={N}, N={N})",
+    )
+    _chk(
+        problem.L_alpha.shape == (M, M),
+        f"L_alpha.shape {problem.L_alpha.shape} != (M={M}, M={M})",
+    )
+    _chk(
+        len(problem.site_prot_idx) == N,
+        f"len(site_prot_idx)={len(problem.site_prot_idx)} != N={N}",
+    )
+    if len(problem.site_prot_idx) > 0:
+        _chk(
+            int(problem.site_prot_idx.max()) < K,
+            f"max(site_prot_idx)={problem.site_prot_idx.max()} >= K={K}",
+        )
+    _chk(
+        len(problem.kin_to_prot_idx) == M,
+        f"len(kin_to_prot_idx)={len(problem.kin_to_prot_idx)} != M={M}",
+    )
+
+    # RNA shape checks
+    has_rna = (
+        problem.t_rna is not None
+        and problem.rna_obs_matched is not None
+        and problem.rna_model_prot_idx is not None
+        and getattr(problem, "rna_fit_genes", None) is not None
+        and len(getattr(problem, "rna_fit_genes", [])) > 0
+    )
+    if has_rna:
+        T_rna = len(problem.t_rna)
+        obs_shape = problem.rna_obs_matched.shape
+        _chk(
+            obs_shape[1] == T_rna,
+            f"rna_obs_matched.shape[1]={obs_shape[1]} != len(t_rna)={T_rna}",
+        )
+        if problem.W_data_mrna is not None:
+            _chk(
+                obs_shape == problem.W_data_mrna.shape,
+                f"rna_obs_matched.shape {obs_shape} != W_data_mrna.shape {problem.W_data_mrna.shape}",
+            )
+        n_matched = obs_shape[0]
+        _chk(
+            len(problem.rna_model_prot_idx) == n_matched,
+            f"len(rna_model_prot_idx)={len(problem.rna_model_prot_idx)} != rna_obs_matched.shape[0]={n_matched}",
+        )
+        if len(problem.rna_model_prot_idx) > 0:
+            _chk(
+                int(np.asarray(problem.rna_model_prot_idx).max()) < K,
+                f"max(rna_model_prot_idx)={np.asarray(problem.rna_model_prot_idx).max()} >= K={K}",
+            )
+
+    # Finiteness checks on core arrays
+    for name, arr in [
+        ("P_data", problem.P_data),
+        ("W_data", problem.W_data),
+    ]:
+        n_bad = int((~np.isfinite(arr)).sum())
+        if n_bad > 0:
+            errors.append(f"{name} has {n_bad} non-finite value(s) before optimization")
+
+    if errors:
+        raise ValueError(
+            "validate_problem_shapes found errors:\n  "
+            + "\n  ".join(errors)
+        )
 
 
 # ---------------------------------------------------------------------------
