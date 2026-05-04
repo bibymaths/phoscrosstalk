@@ -381,7 +381,9 @@ def save_fitted_simulation(
 
     # Kdyn_sim (Kinase Activity) – use real kinase names when available
     for m in range(M):
-        kin_name = kinases[m] if (kinases is not None and m < len(kinases)) else f"Kinase_{m}"
+        kin_name = (
+            kinases[m] if (kinases is not None and m < len(kinases)) else f"Kinase_{m}"
+        )
         rec = {"Type": "Kdyn_sim", "ID": kin_name}
         for j in range(T):
             rec[cols[j]] = Kdyn_sim[m, j]

@@ -340,15 +340,11 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
 
     lambda_net = getattr(cfg.optimisation, "lambda_net", 0.0001)
     if not isinstance(lambda_net, (int, float)) or lambda_net < 0:
-        errors.append(
-            f"  [optimisation] lambda_net = {lambda_net!r} must be >= 0."
-        )
+        errors.append(f"  [optimisation] lambda_net = {lambda_net!r} must be >= 0.")
 
     reg_lambda = getattr(cfg.optimisation, "reg_lambda", 0.0001)
     if not isinstance(reg_lambda, (int, float)) or reg_lambda < 0:
-        errors.append(
-            f"  [optimisation] reg_lambda = {reg_lambda!r} must be >= 0."
-        )
+        errors.append(f"  [optimisation] reg_lambda = {reg_lambda!r} must be >= 0.")
 
     # -------------------------------------------------------------------
     # Solver tolerances

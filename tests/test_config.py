@@ -104,7 +104,6 @@ def test_validate_config_missing_required_paths(tmp_path):
     cfg_path.write_text("")
     cfg = load_config(str(cfg_path))
 
-
     with pytest.raises(SystemExit) as exc_info:
         validate_config(cfg, str(cfg_path))
     assert exc_info.value.code == 1
@@ -118,7 +117,6 @@ def test_validate_config_invalid_mechanism(tmp_path):
     cfg_path.write_text('[model]\nmechanism = "invalid"\n')
     cfg = load_config(str(cfg_path))
     # required paths also missing so it will fail, but mechanism error must appear
-
 
     with pytest.raises(SystemExit) as exc_info:
         validate_config(cfg, str(cfg_path))
@@ -177,7 +175,6 @@ include_tfs_as_proteins = true
     cfg_path.write_text(toml_content)
     cfg = load_config(str(cfg_path))
 
-
     with pytest.raises(SystemExit) as exc_info:
         validate_config(cfg, str(cfg_path))
     assert exc_info.value.code == 1
@@ -233,7 +230,6 @@ n_starts = 0
     cfg_path = tmp_path / "bad_nstarts.toml"
     cfg_path.write_text(toml_content)
     cfg = load_config(str(cfg_path))
-
 
     with pytest.raises(SystemExit) as exc_info:
         validate_config(cfg, str(cfg_path))

@@ -274,7 +274,9 @@ def make_loss_fn(
         rna_prot_idx_j = None
         n_rna = 1
 
-    rhs_fn = make_rhs(K, M, N, mechanism, k_act_fn=k_act_fn, s_prod_fn=s_prod_fn, rna_relax=rna_relax)
+    rhs_fn = make_rhs(
+        K, M, N, mechanism, k_act_fn=k_act_fn, s_prod_fn=s_prod_fn, rna_relax=rna_relax
+    )
     term = diffrax.ODETerm(rhs_fn)
     solver = diffrax.Tsit5()
     sctrl = diffrax.PIDController(rtol=rtol, atol=atol)

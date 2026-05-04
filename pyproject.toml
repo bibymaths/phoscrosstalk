@@ -29,6 +29,8 @@ dependencies = [
   "imageio>=2.37.2",
   "graphviz>=0.21",
   "numba>=0.61.1",
+  "rich>=14.3.2",
+  "pyfiglet>=1.0.4",
 ]
 
 [project.optional-dependencies]
