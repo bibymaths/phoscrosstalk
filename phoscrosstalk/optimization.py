@@ -592,13 +592,14 @@ def make_residuals_fn(
     rhs_fn = make_rhs(
         K, M, N, mechanism, k_act_fn=k_act_fn, s_prod_fn=s_prod_fn, rna_relax=rna_relax
     )
+
     term = diffrax.ODETerm(rhs_fn)
-    # Use Tsit5 + PIDController + DirectAdjoint as required by the problem statement.
-    # DirectAdjoint is needed because Optimistix LM uses forward-mode autodiff (jvp).
+    # Use Tsit5 + PIDController + ForwardMode for Optimistix LM.
+    # ForwardMode is the recommended adjoint when you need forward-mode autodiff (jvp).
     ode_solver = diffrax.Tsit5()
     sctrl = diffrax.PIDController(rtol=rtol, atol=atol)
     saveat = diffrax.SaveAt(ts=t_eval)
-    adjoint = diffrax.DirectAdjoint()
+    adjoint = diffrax.ForwardMode()
 
     t0_val = float(all_times[0])
     t1_val = float(all_times[-1])
@@ -733,22 +734,77 @@ def make_residuals_fn(
 
     return residuals_fn
 
+def make_ls_solver(kind: str, rtol: float, atol: float):
+    """
+    Factory for Optimistix least-squares solvers used in run_single_optimisation.
+
+    Parameters
+    ----------
+    kind : {"lm", "indirect_lm", "dogleg", "gauss_newton"}
+        - "lm"           : LevenbergMarquardt (default)
+        - "indirect_lm" : IndirectLevenbergMarquardt (trust-region LM)
+        - "dogleg"      : Dogleg trust-region method
+        - "gauss_newton": Plain Gauss-Newton
+    rtol, atol : float
+        Convergence tolerances passed through to the solver.
+
+    Returns
+    -------
+    optimistix.AbstractLeastSquaresSolver
+    """
+    kind = kind.lower()
+    if kind == "lm":
+        return optx.LevenbergMarquardt(rtol=rtol, atol=atol)
+    if kind == "indirect_lm":
+        return optx.IndirectLevenbergMarquardt(rtol=rtol, atol=atol)
+    if kind == "dogleg":
+        return optx.Dogleg(rtol=rtol, atol=atol)
+    if kind == "gauss_newton":
+        return optx.GaussNewton(rtol=rtol, atol=atol)
+    raise ValueError(f"Unknown least-squares solver kind={kind!r}")
+
+def make_optx_adjoint(kind: str):
+    """
+    Factory for Optimistix adjoints used in run_single_optimisation.
+
+    These control how gradients are taken THROUGH the fixed-point solve
+    (meta-gradients), not how the Diffrax ODE is differentiated.
+
+    Parameters
+    ----------
+    kind : {"implicit", "checkpoint"}
+        - "implicit"   : ImplicitAdjoint (default in Optimistix; recommended)
+        - "checkpoint" : RecursiveCheckpointAdjoint
+
+    Returns
+    -------
+    optimistix.AbstractAdjoint
+    """
+    kind = kind.lower()
+    if kind == "implicit":
+        return optx.ImplicitAdjoint()
+    if kind == "checkpoint":
+        return optx.RecursiveCheckpointAdjoint()
+    raise ValueError(f"Unknown Optimistix adjoint kind={kind!r}")
 
 def run_single_optimisation(
     residuals_fn,
     theta0,
-    max_steps=500,
-    rtol=1e-8,
-    atol=1e-8,
-    verbose=False,
+    max_steps: int = 500,
+    rtol: float = 1e-8,
+    atol: float = 1e-8,
+    verbose: bool = False,
+    *,
+    ls_solver: str = "lm",
+    optx_adjoint: str = "implicit",
 ):
     """
-    Run a single Optimistix LevenbergMarquardt least-squares optimisation.
+    Run a single Optimistix least-squares optimisation of the parameter vector.
 
-    Implements the canonical Diffrax + Optimistix approach:
-      - Optimistix LevenbergMarquardt solver
-      - optx.least_squares (not optx.minimise) for residual-vector fitting
-      - Verbose per-step progress when verbose=True
+    Canonical setup:
+      - Residual-vector objective via optimistix.least_squares
+      - Gauss-Newton-type solver (Levenberg-Marquardt by default)
+      - Optional alternative solvers and adjoints, switchable via strings
 
     The ``residuals_fn`` must have signature::
 
@@ -758,28 +814,44 @@ def run_single_optimisation(
 
     Parameters
     ----------
-    residuals_fn : callable (theta, args) -> (1D residuals, (f1, f2, f3, f4))
-    theta0       : np.ndarray  – starting parameter vector
-    max_steps    : int         – Optimistix iteration cap (not ODE steps)
-    rtol, atol   : float       – Optimistix convergence tolerances
-    verbose      : bool        – enable per-step progress logging
+    residuals_fn : callable
+        (theta, args) -> (1D residuals, (f1, f2, f3, f4)).
+    theta0 : np.ndarray
+        Starting parameter vector.
+    max_steps : int
+        Optimistix iteration cap (not ODE steps).
+    rtol, atol : float
+        Optimistix convergence tolerances.
+    verbose : bool
+        Enable per-step progress logging in the solver.
+    ls_solver : {"lm", "indirect_lm", "dogleg", "gauss_newton"}
+        Least-squares solver type. Default "lm" reproduces previous behaviour.
+    optx_adjoint : {"implicit", "checkpoint"}
+        Optimistix adjoint used to differentiate through the fixed-point solve.
+        Default "implicit" is Optimistix's recommended choice.
 
     Returns
     -------
-    theta_opt  : np.ndarray
-    total_loss : float  – w_phospho*f1 + w_abundance*f2 + w_reg*f3 + w_mrna*f4
+    theta_opt : np.ndarray
+        Best-fit parameter vector (float64).
+    total_loss : float
+        f1 + f2 + f3 + f4 (diagnostic sum; per-modality weights already included
+        in the residuals).
     f1, f2, f3, f4 : float
+        Diagnostic loss components.
     """
-    # Use LevenbergMarquardt with least_squares as specified by the Diffrax/Optimistix
-    # canonical approach.  verbose=True enables per-step progress logging.
-    lm_solver = optx.LevenbergMarquardt(rtol=rtol, atol=atol, verbose=verbose)
+    # Construct solver and adjoint from simple string flags.
+    solver = make_ls_solver(ls_solver, rtol=rtol, atol=atol)
+    adjoint = make_optx_adjoint(optx_adjoint)
+
     sol = optx.least_squares(
         residuals_fn,
-        lm_solver,
+        solver,
         jnp.asarray(theta0, dtype=jnp.float32),
         args=None,
         has_aux=True,
         max_steps=max_steps,
+        adjoint=adjoint,
         throw=False,
     )
     theta_opt = np.asarray(sol.value, dtype=np.float64)
@@ -788,9 +860,8 @@ def run_single_optimisation(
     _, (f1, f2, f3, f4) = residuals_fn(sol.value, None)
     f1, f2, f3, f4 = float(f1), float(f2), float(f3), float(f4)
     total_loss = f1 + f2 + f3 + f4  # diagnostic sum; modality weights are in residuals
+
     return theta_opt, total_loss, f1, f2, f3, f4
-
-
 # ---------------------------------------------------------------------------
 # Problem shape validation
 # ---------------------------------------------------------------------------

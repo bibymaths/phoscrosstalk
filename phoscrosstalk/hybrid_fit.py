@@ -38,6 +38,9 @@ from phoscrosstalk.config import ModelDims
 from phoscrosstalk.optimization import (
     run_single_optimisation,
 )
+from phoscrosstalk.logger import get_logger
+
+logger = get_logger()
 
 # ---------------------------------------------------------------------------
 # Lazy optional imports
@@ -275,13 +278,25 @@ def run_evosax(
         # sep_cma_es is the default; 'de' and any unknown algo fall back to Sep_CMA_ES
         strategy = Sep_CMA_ES(population_size=popsize, solution=solution_init)
 
+    mean_init = jnp.full(n_var, 0.5, dtype=jnp.float32)  # centre of [0,1] space
+
+    # Strategy params can be an immutable object with .replace (newer evosax)
+    # or a namedtuple with ._replace (older evosax). Fall back to default as-is.
+    es_params = strategy.default_params
+    if hasattr(es_params, "replace"):
+        es_params = es_params.replace(sigma_init=sigma_init)
+    elif hasattr(es_params, "_replace"):
+        es_params = es_params._replace(sigma_init=sigma_init)
+    else:
+        logger.warning(f"Strategy params type {type(es_params)} does not support sigma_init override; using default sigma_init={es_params.sigma_init}")
+
     key = jax.random.PRNGKey(seed)
     key, init_key = jax.random.split(key)
-    state = strategy.init(init_key)
+    state = strategy.init(init_key, mean_init, es_params)
 
     for gen in range(n_generations):
-        key, ask_key, eval_key = jax.random.split(key, 3)
-        pop, state = strategy.ask(ask_key, state)
+        key, ask_key = jax.random.split(key)
+        pop, state = strategy.ask(ask_key, state, es_params)
 
         # Warm-start: inject LHS seeds into first generation
         if gen == 0 and warm_start_pop is not None:
@@ -293,21 +308,21 @@ def run_evosax(
         pop = jnp.clip(pop, 0.0, 1.0)
 
         losses = normed_fitness(pop)
-        state = strategy.tell(pop, losses, state)
+        state, _ = strategy.tell(pop, losses, state, es_params)
 
         if verbose and (gen % 50 == 0 or gen == n_generations - 1):
-            print(
+            logger.info(
                 f"[evosax gen {gen:4d}] best={float(state.best_fitness):.6f}",
                 flush=True,
             )
 
     # Extract best individual and full final population
     key, ask_key = jax.random.split(key)
-    final_pop, _ = strategy.ask(ask_key, state)
+    final_pop, _ = strategy.ask(ask_key, state, es_params)
     final_pop = jnp.clip(final_pop, 0.0, 1.0)
 
     # Best individual (from strategy state)
-    best_norm = state.best_member  # shape (n_var,)
+    best_norm = state.best_solution  # shape (n_var,)
     best_orig = np.asarray(to_original(best_norm), dtype=np.float64)
 
     # Full population in original space
@@ -379,7 +394,7 @@ def run_lm_polish(
             verbose=False,
         )
         if verbose:
-            print(
+            logger.info(
                 f"  [LM seed {i}] total={total:.6f} f1={f1:.6f} "
                 f"f2={f2:.6f} f3={f3:.6f} f4={f4:.6f}",
                 flush=True,
@@ -627,7 +642,7 @@ def run_qdax_mapelites(
             valid_mask = repertoire.fitnesses > -jnp.inf
             n_filled = int(valid_mask.sum())
             best_fit = float(jnp.max(repertoire.fitnesses[valid_mask]))
-            print(
+            logger.info(
                 f"[QDax iter {it:5d}] filled={n_filled} best_fit={best_fit:.6f}",
                 flush=True,
             )
@@ -727,7 +742,7 @@ def run_hybrid_fit(
     seed : int
         Master random seed.  Default: 0.
     verbose : bool
-        If ``True``, print progress for all phases.
+        If ``True``, logger.info progress for all phases.
 
     Returns
     -------
@@ -739,14 +754,14 @@ def run_hybrid_fit(
     warm_seeds: np.ndarray | None = None
     if not skip_lhs:
         if verbose:
-            print("[hybrid_fit] Phase 0: LHS screen …", flush=True)
+            logger.info("[hybrid_fit] Phase 0: LHS screen …", flush=True)
         warm_seeds = lhs_screen(
             loss_fn, xl, xu, n_samples=lhs_n_samples, top_p=lhs_top_p, seed=seed
         )
 
     # ------------------------------------------------------------------ Phase 1
     if verbose:
-        print("[hybrid_fit] Phase 1: evosax global search …", flush=True)
+        logger.info("[hybrid_fit] Phase 1: evosax global search …", flush=True)
     best_theta, final_pop = run_evosax(
         loss_fn,
         xl,
@@ -779,7 +794,7 @@ def run_hybrid_fit(
 
     # ------------------------------------------------------------------ Phase 2
     if verbose:
-        print("[hybrid_fit] Phase 2: LM polish …", flush=True)
+        logger.info("[hybrid_fit] Phase 2: LM polish …", flush=True)
     lm_result = run_lm_polish(
         residuals_fn,
         lm_seeds,
@@ -794,7 +809,7 @@ def run_hybrid_fit(
 
     # ------------------------------------------------------------------ QDax
     if verbose:
-        print("[hybrid_fit] QDax MAP-Elites …", flush=True)
+        logger.info("[hybrid_fit] QDax MAP-Elites …", flush=True)
     repertoire = run_qdax_mapelites(
         loss_fn,
         xl,
