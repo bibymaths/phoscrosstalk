@@ -238,7 +238,9 @@ def run_multi_start_optimization(problem, args, P_scaled):
     # Compute Fréchet Distance as a diagnostic metric (not used for selection)
     logger.info("[*] Computing Fréchet Distances (diagnostic only)...")
     frechet_scores = np.full(len(X_combined), np.inf)
-    # Transpose to (T, N_sites) so each row is a time-point vector (standard curve orientation)
+    # P_scaled shape is (N_sites, T).  Transpose to (T, N_sites) so that each
+    # row is a time-point in N_sites-dimensional feature space, which is the
+    # standard "curve of observations" orientation expected by frechet_distance.
     true_coords = np.ascontiguousarray(P_scaled.T, dtype=np.float64)
     for i in range(len(X_combined)):
         P_pred = problem.simulate(X_combined[i])

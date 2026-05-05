@@ -1258,6 +1258,12 @@ class NetworkProblem:
         max_steps=16384,
         **kwargs,  # absorb legacy keyword args (elementwise_runner, etc.)
     ):
+        # Note: ode_adjoint_kind was previously defaulted to the non-existent value
+        # "adjoint".  The corrected default is "forward", which is the right choice
+        # for LM + jac_mode="fwd" (Optimistix forward-mode AD through Diffrax).
+        # If you were relying on a different adjoint, set ode_adjoint_kind explicitly
+        # in your config under [solver] ode_adjoint.
+    ):
         self.t = t
         self.P_data = P_data
         self.Cg = Cg
