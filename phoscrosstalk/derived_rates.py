@@ -342,11 +342,17 @@ def build_data_interpolations(
     Returns:
         dict with keys:
           ``"t_obs"``         – original time vector (reference, not a copy)
-          ``"P_interp"``      – callable ``fn(t) -> np.ndarray`` shape (N_sites,)
+          ``"P_interp"``      – callable ``fn(t_q) -> np.ndarray`` returning shape
+                                ``(N_sites,)`` for a scalar query or
+                                ``(N_sites, len(t_q))`` for an array query;
                                 or None if P_data is not provided.
-          ``"A_interp"``      – callable ``fn(t) -> np.ndarray`` shape (K_obs,)
+          ``"A_interp"``      – callable ``fn(t_q) -> np.ndarray`` returning shape
+                                ``(K_obs,)`` for a scalar query or
+                                ``(K_obs, len(t_q))`` for an array query;
                                 or None if A_data is not provided.
-          ``"rna_interp"``    – callable ``fn(t) -> np.ndarray`` shape (n_genes,)
+          ``"rna_interp"``    – callable ``fn(t_q) -> np.ndarray`` returning shape
+                                ``(n_genes,)`` for a scalar query or
+                                ``(n_genes, len(t_q))`` for an array query;
                                 or None if rna_data is not provided.
           ``"method"``        – interpolation method actually used.
           ``"nan_fill_log"``  – list of messages documenting NaN handling.
@@ -441,7 +447,8 @@ def build_data_interpolations(
 
             def _cubic_fn(t_q):
                 out = np.stack([interp(t_q) for interp in interps], axis=0)
-                return out  # (D,) when t_q is scalar
+                # Shape: (D,) for scalar t_q, (D, len(t_q)) for array t_q
+                return out
 
             return _cubic_fn
         else:
@@ -453,6 +460,7 @@ def build_data_interpolations(
                 interps.append((t_valid, row_for_interp))
 
             def _linear_fn(t_q, _interps=interps):
+                # Shape: (D,) for scalar t_q, (D, len(t_q)) for array t_q
                 return np.array([
                     np.interp(t_q, tv, rv, left=np.nan, right=np.nan)
                     for tv, rv in _interps

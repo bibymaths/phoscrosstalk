@@ -360,7 +360,14 @@ def _save_dense_simulation(
             prot = parts[0]
             s = parts[1] if len(parts) > 1 else ""
             try:
+                # data_interp_P(t_dense) returns (N_sites, T_dense) when t_dense is
+                # an array, so we index as interp_vals[i, :].
                 interp_vals = np.asarray(data_interp_P(t_dense), dtype=float)
+                if interp_vals.ndim == 2:
+                    site_vals = interp_vals[i, :]
+                else:
+                    # Fallback for callables returning flat arrays (single-site edge case)
+                    site_vals = interp_vals
                 for j, ti in enumerate(t_dense):
                     rows.append(
                         {
@@ -369,7 +376,7 @@ def _save_dense_simulation(
                             "site": s,
                             "protein": prot,
                             "time": float(ti),
-                            "value": float(interp_vals[i, j]) if interp_vals.ndim == 2 else float(interp_vals[j]),
+                            "value": float(site_vals[j]),
                             "series_type": "observed_interpolated_dense",
                             "source": "data_interpolation",
                             "interpolation_method": "data_interp",
@@ -380,10 +387,14 @@ def _save_dense_simulation(
 
     if data_interp_A is not None and prot_idx_for_A_full is not None:
         try:
+            # data_interp_A(t_dense) returns (K_obs, T_dense) when t_dense is an array
             interp_A_vals = np.asarray(data_interp_A(t_dense), dtype=float)
             for k_obs, p_idx in enumerate(prot_idx_for_A_full):
                 prot = proteins[p_idx]
-                row_vals = interp_A_vals[k_obs] if interp_A_vals.ndim == 2 else interp_A_vals
+                if interp_A_vals.ndim == 2:
+                    row_vals = interp_A_vals[k_obs, :]
+                else:
+                    row_vals = interp_A_vals
                 for j, ti in enumerate(t_dense):
                     rows.append(
                         {

@@ -1028,7 +1028,7 @@ with tab_fit:
                                 x=_td_oi[_td_oi_mask],
                                 y=_df_site_oi["value"].values[_td_oi_mask],
                                 mode="lines",
-                                name=f"{label} (obs. interp. ⚠️)",
+                                name=f"{label} (obs. interp. - diagnostic only)",
                                 line=dict(width=1, color=c, dash="dash"),
                                 opacity=0.55,
                             ),
@@ -1058,7 +1058,7 @@ with tab_fit:
                     )
                 if _has_obs_interp:
                     _info_parts.append(
-                        "**Interpolated observed** (dashed ⚠️) = cubic/linear "
+                        "**Interpolated observed** (dashed, diagnostic only) = cubic/linear "
                         "interpolation of sparse measured values — diagnostic only, "
                         "NOT measured data."
                     )
