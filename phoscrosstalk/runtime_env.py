@@ -432,6 +432,27 @@ def setup_cpu_env(n_threads=None) -> int:
     return n
 
 
+# ---------------------------------------------------------------------------
+# JAX 64-bit precision
+# ---------------------------------------------------------------------------
+
+
+def enable_x64() -> None:
+    """
+    Enable JAX 64-bit floating-point support.
+
+    This MUST be called before any JAX import.  After ``jax`` is imported the
+    environment variable is frozen; use ``jax.config.update("jax_enable_x64",
+    True)`` as a secondary guard for in-process calls.
+
+    Side effects
+    ------------
+    Sets ``JAX_ENABLE_X64=true`` via ``os.environ.setdefault`` so an explicit
+    ``JAX_ENABLE_X64=false`` in the environment is respected.
+    """
+    os.environ.setdefault("JAX_ENABLE_X64", "true")
+
+
 def log_env_summary(logger=None, plan=None) -> None:
     """
     Log a summary of the active CPU/XLA environment variables.
@@ -446,6 +467,7 @@ def log_env_summary(logger=None, plan=None) -> None:
     """
     lines = [
         "[runtime_env] Active CPU/XLA environment:",
+        f"  JAX_ENABLE_X64           = {os.environ.get('JAX_ENABLE_X64', '(not set)')}",
         f"  JAX_PLATFORMS            = {os.environ.get('JAX_PLATFORMS', '(not set)')}",
         f"  XLA_FLAGS                = {os.environ.get('XLA_FLAGS', '(not set)')}",
         f"  OMP_NUM_THREADS          = {os.environ.get('OMP_NUM_THREADS', '(not set)')}",

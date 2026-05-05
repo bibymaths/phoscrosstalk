@@ -39,6 +39,7 @@ from phoscrosstalk.dashboard import (
     extract_time_axis,
     get_time_vals,
     load_dashboard_manifest,
+    load_dense_timeseries,
     load_derived_rates,
     load_entity_labels,
     load_fit_timeseries,
@@ -98,6 +99,11 @@ def _load_params(results_dir: str):
 @st.cache_data(show_spinner="Loading fit timeseries…")
 def _load_fit_ts(results_dir: str):
     return load_fit_timeseries(results_dir)
+
+
+@st.cache_data(show_spinner="Loading dense timeseries…")
+def _load_dense_ts(results_dir: str):
+    return load_dense_timeseries(results_dir)
 
 
 @st.cache_data(show_spinner="Loading internal states…")
@@ -764,7 +770,43 @@ with tab_overview:
 # ══════════════════════════════════════════════════════════════════════════
 with tab_fit:
     st.header("Fit Explorer")
-    st.caption("Source: `fit_timeseries.tsv`, optional `mrna_fit_timeseries.tsv`")
+    st.caption("Source: `fit_timeseries.tsv`, optional `fit_timeseries_dense.tsv`, `mrna_fit_timeseries.tsv`")
+
+    df_ft = _load_fit_ts(results_dir)
+    df_dense = _load_dense_ts(results_dir)
+
+    # Dense output availability and selection
+    _has_dense = df_dense is not None and not df_dense.empty
+    _dense_series_types = list(df_dense["series_type"].unique()) if _has_dense else []
+    _has_simulated_dense = _has_dense and "simulated_dense" in _dense_series_types
+    _has_obs_interp = _has_dense and "observed_interpolated_dense" in _dense_series_types
+
+    if _has_dense:
+        _show_dense = st.toggle(
+            "Show dense fitted curves (smooth ODE simulation)",
+            value=False,
+            help=(
+                "Overlays a dense smooth model simulation (fit_timeseries_dense.tsv) "
+                "alongside the sparse observed-time fit. Dense curves are model output "
+                "only and do NOT affect the optimisation loss."
+            ),
+        )
+        if _has_obs_interp:
+            _show_obs_interp = st.toggle(
+                "Show interpolated observed data (diagnostic)",
+                value=False,
+                help=(
+                    "Shows observed data interpolated to a dense grid for visualisation. "
+                    "These are NOT measured data points — they are cubic/linear "
+                    "interpolations of the sparse observed values. Clearly labelled "
+                    "as 'observed_interpolated_dense' in the source file."
+                ),
+            )
+        else:
+            _show_obs_interp = False
+    else:
+        _show_dense = False
+        _show_obs_interp = False
 
     df_ft = _load_fit_ts(results_dir)
     if df_ft is None:
@@ -893,6 +935,28 @@ with tab_fit:
                         row=1,
                         col=col_offset,
                     )
+                # Dense protein abundance overlay
+                if _show_dense and _has_simulated_dense and df_dense is not None:
+                    _df_A_dense = df_dense[
+                        (df_dense["series_type"] == "simulated_dense")
+                        & (df_dense["entity_type"] == "ProteinAbundance")
+                        & (df_dense["entity"] == selected_protein)
+                    ]
+                    if not _df_A_dense.empty:
+                        _td_a = _df_A_dense["time"].values
+                        _td_a_mask = (_td_a >= time_range[0]) & (_td_a <= time_range[1])
+                        fig_fit.add_trace(
+                            go.Scatter(
+                                x=_td_a[_td_a_mask],
+                                y=_df_A_dense["value"].values[_td_a_mask],
+                                mode="lines",
+                                name="abundance (dense model)",
+                                line=dict(width=1.5, color="royalblue", dash="dot"),
+                                opacity=0.75,
+                            ),
+                            row=1,
+                            col=col_offset,
+                        )
             fig_fit.update_yaxes(title_text="Protein abundance", row=1, col=col_offset)
             col_offset += 1
 
@@ -924,6 +988,54 @@ with tab_fit:
                         row=1,
                         col=col_offset,
                     )
+
+                # Dense fitted curve overlay
+                if _show_dense and _has_simulated_dense and df_dense is not None:
+                    site_key = label
+                    _df_site_dense = df_dense[
+                        (df_dense["series_type"] == "simulated_dense")
+                        & (df_dense["entity_type"] == "Phosphosite")
+                        & (df_dense["entity"] == site_key)
+                    ]
+                    if not _df_site_dense.empty:
+                        _td = _df_site_dense["time"].values
+                        _td_mask = (_td >= time_range[0]) & (_td <= time_range[1])
+                        fig_fit.add_trace(
+                            go.Scatter(
+                                x=_td[_td_mask],
+                                y=_df_site_dense["value"].values[_td_mask],
+                                mode="lines",
+                                name=f"{label} (dense model)",
+                                line=dict(width=1.5, color=c, dash="dot"),
+                                opacity=0.75,
+                            ),
+                            row=1,
+                            col=col_offset,
+                        )
+
+                # Interpolated observed dense curves (diagnostic, not measured data)
+                if _show_obs_interp and df_dense is not None:
+                    _df_site_oi = df_dense[
+                        (df_dense["series_type"] == "observed_interpolated_dense")
+                        & (df_dense["entity_type"] == "Phosphosite")
+                        & (df_dense["entity"] == site_key)
+                    ]
+                    if not _df_site_oi.empty:
+                        _td_oi = _df_site_oi["time"].values
+                        _td_oi_mask = (_td_oi >= time_range[0]) & (_td_oi <= time_range[1])
+                        fig_fit.add_trace(
+                            go.Scatter(
+                                x=_td_oi[_td_oi_mask],
+                                y=_df_site_oi["value"].values[_td_oi_mask],
+                                mode="lines",
+                                name=f"{label} (obs. interp. - diagnostic only)",
+                                line=dict(width=1, color=c, dash="dash"),
+                                opacity=0.55,
+                            ),
+                            row=1,
+                            col=col_offset,
+                        )
+
             fig_fit.update_yaxes(
                 title_text="Relative phosphosite signal", row=1, col=col_offset
             )
@@ -936,6 +1048,22 @@ with tab_fit:
             )
             st.plotly_chart(fig_fit, use_container_width=True)
 
+            # Dense output info box
+            if _has_dense:
+                _info_parts = ["Dense output available from `fit_timeseries_dense.tsv`."]
+                if _has_simulated_dense:
+                    _info_parts.append(
+                        "**Dense model curves** (dotted) = ODE simulation on fine grid, "
+                        "NOT used in optimisation loss."
+                    )
+                if _has_obs_interp:
+                    _info_parts.append(
+                        "**Interpolated observed** (dashed, diagnostic only) = cubic/linear "
+                        "interpolation of sparse measured values — diagnostic only, "
+                        "NOT measured data."
+                    )
+                st.info("  \n".join(_info_parts))
+
         with st.expander("Download fit table"):
             st.dataframe(df_ft, use_container_width=True)
             st.download_button(
@@ -943,6 +1071,14 @@ with tab_fit:
                 df_ft.to_csv(index=False).encode(),
                 file_name="fit_timeseries.csv",
             )
+        if _has_dense:
+            with st.expander("Download dense timeseries table"):
+                st.dataframe(df_dense, use_container_width=True)
+                st.download_button(
+                    "Download dense CSV",
+                    df_dense.to_csv(index=False).encode(),
+                    file_name="fit_timeseries_dense.csv",
+                )
 
 # ══════════════════════════════════════════════════════════════════════════
 # C · INTERNAL STATES

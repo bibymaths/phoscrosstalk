@@ -152,7 +152,7 @@ class TestComputeSecondOrderSensitivities:
         labels = build_parameter_labels(K, M, N)
         n = len(labels)
         rng = np.random.default_rng(42)
-        theta = rng.uniform(-1, 1, n).astype(np.float32)
+        theta = rng.uniform(-1, 1, n).astype(np.float64)
 
         H = compute_second_order_sensitivities(
             theta=theta,
@@ -171,7 +171,7 @@ class TestComputeSecondOrderSensitivities:
 
         labels = build_parameter_labels(K, M, N)
         n = len(labels)
-        theta = np.zeros(n, dtype=np.float32)
+        theta = np.zeros(n, dtype=np.float64)
 
         H = compute_second_order_sensitivities(
             theta=theta,
@@ -189,7 +189,7 @@ class TestComputeSecondOrderSensitivities:
         )
 
         labels = build_parameter_labels(K, M, N)
-        theta = np.zeros(len(labels), dtype=np.float32)
+        theta = np.zeros(len(labels), dtype=np.float64)
 
         H = compute_second_order_sensitivities(
             theta=theta,
@@ -210,7 +210,7 @@ class TestComputeSecondOrderSensitivities:
         )
 
         labels = build_parameter_labels(K, M, N)
-        theta = np.zeros(len(labels), dtype=np.float32)
+        theta = np.zeros(len(labels), dtype=np.float64)
 
         compute_second_order_sensitivities(
             theta=theta,
@@ -244,7 +244,7 @@ class TestComputeSecondOrderSensitivities:
         )
 
         labels = build_parameter_labels(K, M, N)
-        theta = np.zeros(len(labels), dtype=np.float32)
+        theta = np.zeros(len(labels), dtype=np.float64)
 
         compute_second_order_sensitivities(
             theta=theta,
@@ -264,7 +264,7 @@ class TestComputeSecondOrderSensitivities:
         )
 
         labels = build_parameter_labels(K, M, N)
-        theta = np.zeros(len(labels), dtype=np.float32)
+        theta = np.zeros(len(labels), dtype=np.float64)
 
         H = compute_second_order_sensitivities(
             theta=theta,
@@ -359,7 +359,7 @@ def test_make_loss_fn_scan_kind_bounded_produces_finite_output():
         reg_lambda=1e-4,
     )
 
-    theta0 = jnp.asarray(m["theta"], dtype=jnp.float32)
+    theta0 = jnp.asarray(m["theta"], dtype=jnp.float64)
     total, (f1, f2, f3, f4) = loss_fn(theta0, None)
 
     assert np.isfinite(float(total)), f"total loss is not finite: {total}"

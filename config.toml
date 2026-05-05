@@ -145,9 +145,9 @@ unified_graph_pkl = "data_curated/processed/unified_kinase_graph.gpickle"
 #   "rand"  – random phosphorylation mechanism
 #
 # scale_mode:
-#   "none"   – use values as provided after basic cleaning
-#   "minmax" – min-max scale each trajectory
-#   "zscore" – z-score scale each trajectory
+#   "none"      – use values as provided after basic cleaning
+#   "minmax"    – min-max scale each trajectory to [0, 1]
+#   "log-minmax"– log-transform then min-max scale (useful for skewed data)
 #
 # weight_scheme:
 #   "uniform"          – equal weight for all observed points
@@ -966,3 +966,80 @@ max_steps                = 131072
 top_n                    = 10
 skip_plots_on_nonfinite  = true
 strict                   = false
+
+# Diffrax steady-state event termination.
+# use_event = true  → run_steadystate_analysis() uses diffrax.steady_state_event()
+#                     to stop the ODE integration when the system converges.
+# use_event = false → falls back to the legacy simulate() path (long fixed horizon).
+# event_rtol / event_atol:
+#   Relative/absolute tolerance for the steady-state event.
+#   null → inherit from [steadystate] rtol / atol above.
+use_event   = true
+event_rtol  = 1e-5   # null → use [steadystate] rtol
+event_atol  = 1e-8   # null → use [steadystate] atol
+
+
+# =============================================================================
+# [simulation] – dense continuous output after fitting
+# =============================================================================
+#
+# These settings control post-fit forward simulation used for smooth
+# visualisation and dashboard export.  They do NOT affect the optimisation
+# loss, objective, or fitted parameters in any way.
+#
+# dense_output:
+#   true  – run an additional dense-grid forward simulation after fitting.
+#   false – skip dense output (saves time; fit_timeseries_dense.tsv not written).
+#
+# dense_n_points:
+#   Number of uniformly-spaced time points in [0, t_max_observed].
+#   Increase for smoother plots; 200 is a good default.
+#
+# dense_interpolation:
+#   Label written to the interpolation_method column in fit_timeseries_dense.tsv.
+#   Used for provenance / filtering in downstream analysis.
+#
+# save_dense:
+#   true  – write fit_timeseries_dense.tsv to the output directory.
+#   false – skip the file write even if dense simulation ran successfully.
+# =============================================================================
+[simulation]
+dense_output        = true
+dense_n_points      = 200
+dense_interpolation = "diffrax_dense"
+save_dense          = true
+
+
+# =============================================================================
+# [data_interpolation] – diagnostic interpolation of observed sparse data
+# =============================================================================
+#
+# This section controls interpolated observed-data curves written to
+# fit_timeseries_dense.tsv with series_type = "observed_interpolated_dense".
+# It is NOT used in the loss function and does NOT expand training targets.
+# The original sparse observed arrays in the loss are never modified.
+#
+# enabled:
+#   false (default) – skip diagnostic data interpolation.
+#   true            – add interpolated observed curves to the dense output TSV.
+#
+# method:
+#   "linear"         – piecewise linear interpolation.  Safe for NaN-heavy data.
+#   "cubic_hermite"  – smooth cubic interpolation via Hermite splines.
+#                      Requires fewer NaNs for a stable result.
+#
+# fill_forward_nans_at_end:
+#   false (default) – leave NaNs beyond the final observed point as NaN.
+#   true            – forward-fill the last observed value past the final
+#                     non-NaN time point (applies to the interpolated curve only).
+#
+# replace_nans_at_start:
+#   null (default)  – leave NaNs before the first observed point as NaN.
+#   "zero"          – fill with zero before the first observation.
+#   "first_valid"   – repeat the first valid observed value.
+# =============================================================================
+[data_interpolation]
+enabled                 = false
+method                  = "linear"   # options: "linear" | "cubic_hermite"
+fill_forward_nans_at_end = false
+replace_nans_at_start   = "first_valid"   # null | "zero" | "first_valid"
