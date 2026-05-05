@@ -1206,8 +1206,8 @@ def main():
         t_rna=t_rna,
     )
 
-    analysis.save_run_results(outdir, F, X, f1, f2, f3, total_losses, F[best_idx])
-    analysis.plot_run_diagnostics(outdir, F, F[best_idx], f1, f2, f3, X)
+    analysis.save_run_results(outdir, F, X, f1, f2, f3, total_losses, F[best_idx], f4=f4)
+    analysis.plot_run_diagnostics(outdir, F, F[best_idx], f1, f2, f3, X, f4=f4)
 
     analysis.save_fitted_simulation(
         outdir,

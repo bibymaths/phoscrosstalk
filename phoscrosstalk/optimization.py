@@ -918,8 +918,9 @@ def run_single_optimisation(
     theta_opt : np.ndarray
         Best-fit parameter vector (float64).
     total_loss : float
-        f1 + f2 + f3 (selection metric; f4 is excluded to avoid scale domination
-        by the RNA loss which operates on a different scale from f1/f2).
+        f1 + f2 + f3 + f4 (selection metric; all four loss components
+        contribute so that the best run is chosen consistently whether
+        or not RNA data are present).
     f1, f2, f3, f4 : float
         Diagnostic loss components.
     """
@@ -948,10 +949,9 @@ def run_single_optimisation(
     # Recompute diagnostics at the optimal point (aux from the last solver step)
     _, (f1, f2, f3, f4) = residuals_fn(sol.value, None)
     f1, f2, f3, f4 = float(f1), float(f2), float(f3), float(f4)
-    # Use f1+f2+f3 only for best-run selection to avoid scale domination by f4
-    # (f1/f2 are phosphosite/abundance MSE; f4 is RNA MSE which can be much larger).
-    # f4 is returned for diagnostic reporting but excluded from the selection metric.
-    total_loss = f1 + f2 + f3  # selection metric; f4 treated as regulariser diagnostic
+    # Include all four loss terms in the selection metric so that best-run
+    # selection is consistent when RNA data are present (f4 > 0).
+    total_loss = f1 + f2 + f3 + f4
 
     return theta_opt, total_loss, f1, f2, f3, f4
 
