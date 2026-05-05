@@ -1263,7 +1263,6 @@ class NetworkProblem:
         # for LM + jac_mode="fwd" (Optimistix forward-mode AD through Diffrax).
         # If you were relying on a different adjoint, set ode_adjoint_kind explicitly
         # in your config under [solver] ode_adjoint.
-    ):
         self.t = t
         self.P_data = P_data
         self.Cg = Cg
