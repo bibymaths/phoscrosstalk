@@ -223,6 +223,117 @@ def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
     logger.info("-" * 40 + "\n")
 
 
+def _save_dense_simulation(
+    outdir,
+    theta_opt,
+    t_obs,
+    sites,
+    proteins,
+    P_scaled,
+    A_scaled,
+    prot_idx_for_A,
+    Cg,
+    Cl,
+    site_prot_idx,
+    K_site_kin,
+    R,
+    L_alpha,
+    kin_to_prot_idx,
+    mask_p,
+    mask_k,
+    mechanism,
+    k_act_fn=None,
+    s_prod_fn=None,
+    R_data0=None,
+    n_dense: int = 200,
+):
+    """Run a dense-grid simulation and save long-format output for visualisation.
+
+    Runs an additional forward ODE simulation over a uniform grid of *n_dense*
+    points spanning ``[0, max(t_obs)]`` and writes ``fit_timeseries_dense.tsv``
+    in a long format suitable for the dashboard.
+
+    This function is called by ``save_fitted_simulation`` and does **not** affect
+    the optimisation objective or loss values.  It is best-effort; failures are
+    caught and warned rather than propagated.
+
+    Output columns: entity_type, entity, site, protein, time, value, series_type,
+                    source, interpolation_method
+    """
+    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+    t_max = float(np.nanmax(t_obs)) if len(t_obs) > 0 else 1.0
+    t_dense = np.linspace(0.0, t_max, n_dense)
+
+    A0_full = build_full_A0(K, len(t_dense), A_scaled, prot_idx_for_A)
+
+    P_sim_d, A_sim_d, _S_sim_d, _K_sim_d = simulate(
+        t_dense,
+        P_scaled,
+        A0_full,
+        theta_opt,
+        Cg,
+        Cl,
+        site_prot_idx,
+        K_site_kin,
+        R,
+        L_alpha,
+        kin_to_prot_idx,
+        mask_p,
+        mask_k,
+        mechanism,
+        full_output=True,
+        k_act_fn=k_act_fn,
+        s_prod_fn=s_prod_fn,
+        R_data0=R_data0,
+    )
+
+    rows = []
+
+    # Phosphosite dense simulation
+    for i, site in enumerate(sites):
+        parts = site.split("_", 1)
+        prot = parts[0]
+        s = parts[1] if len(parts) > 1 else ""
+        for j, ti in enumerate(t_dense):
+            rows.append(
+                {
+                    "entity_type": "Phosphosite",
+                    "entity": site,
+                    "site": s,
+                    "protein": prot,
+                    "time": float(ti),
+                    "value": float(P_sim_d[i, j]),
+                    "series_type": "dense_simulation",
+                    "source": "model",
+                    "interpolation_method": "ode_saveat",
+                }
+            )
+
+    # Protein abundance dense simulation
+    for p_idx in range(K):
+        prot = proteins[p_idx]
+        for j, ti in enumerate(t_dense):
+            rows.append(
+                {
+                    "entity_type": "ProteinAbundance",
+                    "entity": prot,
+                    "site": "",
+                    "protein": prot,
+                    "time": float(ti),
+                    "value": float(A_sim_d[p_idx, j]),
+                    "series_type": "dense_simulation",
+                    "source": "model",
+                    "interpolation_method": "ode_saveat",
+                }
+            )
+
+    df_dense = pd.DataFrame(rows)
+    df_dense.to_csv(
+        os.path.join(outdir, "fit_timeseries_dense.tsv"), sep="\t", index=False
+    )
+    logger.info(f"[*] Dense simulation output saved ({len(t_dense)} time points).")
+
+
 def save_fitted_simulation(
     outdir,
     theta_opt,
@@ -396,6 +507,38 @@ def save_fitted_simulation(
 
     df_out = pd.DataFrame.from_records(records)
     df_out.to_csv(os.path.join(outdir, "fit_timeseries.tsv"), sep="\t", index=False)
+
+    # Dense continuous output for smooth dashboard visualisation.
+    # Runs a separate forward simulation over a fine time grid [0, t_max] and
+    # saves the result in long format to fit_timeseries_dense.tsv.
+    # This does NOT affect optimisation or loss computation.
+    try:
+        _save_dense_simulation(
+            outdir=outdir,
+            theta_opt=theta_opt,
+            t_obs=t,
+            sites=sites,
+            proteins=proteins,
+            P_scaled=P_scaled,
+            A_scaled=A_scaled,
+            prot_idx_for_A=prot_idx_for_A,
+            Cg=Cg,
+            Cl=Cl,
+            site_prot_idx=site_prot_idx,
+            K_site_kin=K_site_kin,
+            R=R,
+            L_alpha=L_alpha,
+            kin_to_prot_idx=kin_to_prot_idx,
+            mask_p=mask_p,
+            mask_k=mask_k,
+            mechanism=mechanism,
+            k_act_fn=k_act_fn,
+            s_prod_fn=s_prod_fn,
+            R_data0=R_data0,
+            n_dense=200,
+        )
+    except Exception as exc:  # pragma: no cover – dense output is best-effort
+        logger.warning(f"[!] Dense simulation output skipped: {exc}")
 
     records_internal = []
     T = len(t)

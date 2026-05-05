@@ -1282,6 +1282,9 @@ def main():
             top_n=getattr(_ss, "top_n", 10),
             skip_plots_on_nonfinite=getattr(_ss, "skip_plots_on_nonfinite", True),
             strict=getattr(_ss, "strict", False),
+            use_event=getattr(_ss, "use_event", True),
+            event_rtol=getattr(_ss, "event_rtol", None),
+            event_atol=getattr(_ss, "event_atol", None),
         )
 
     if args.run_knockouts:
