@@ -382,7 +382,8 @@ class TestSaveDenseSimulation:
         P_obs = np.ones((self.N, 3)) * 0.3
 
         def _simple_interp(t_query):
-            return np.full((self.N, len(np.atleast_1d(t_query))), 0.3)
+            t_query = np.atleast_1d(t_query)
+            return np.full((self.N, len(t_query)), 0.3)
 
         self._call_save(tmp_path, n_dense=10, data_interp_P=_simple_interp)
         df = pd.read_csv(tmp_path / "fit_timeseries_dense.tsv", sep="\t")
