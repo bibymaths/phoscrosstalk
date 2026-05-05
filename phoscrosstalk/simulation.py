@@ -14,7 +14,7 @@ State layout (new):
     S     : protein signalling/activation state   shape (K,)
     A     : protein abundance state               shape (K,)
     Kdyn  : kinase activity state                 shape (M,)
-    p     : phosphosite occupancy                 shape (N,)
+    p     : relative phosphosite signal            shape (N,)
 
 The SciPy / Numba backend has been replaced by a Diffrax + JAX pipeline:
     - RHS is provided by jax_mechanisms.make_rhs
@@ -159,7 +159,7 @@ def simulate_ode(
     a0 = np.clip(a0, 0.0, 5.0)
     x0[2 * K : 3 * K] = a0
 
-    # p initial condition (phosphosite occupancy)
+    # p initial condition (relative phosphosite signal, clipped to [0, +inf))
     p0 = np.nan_to_num(
         P_data0[:, 0].astype(np.float64), nan=0.0, posinf=10.0, neginf=0.0
     )

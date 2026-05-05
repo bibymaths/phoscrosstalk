@@ -152,6 +152,20 @@ _DEFAULTS = {
         "run_knockouts": False,
         "run_sensitivity": False,
     },
+    "steadystate": {
+        "t_end": 2000.0,
+        "early_end": 100.0,
+        "n_early": 100,
+        "n_late": 80,
+        "late_grid": "geomspace",
+        "rtol": 1e-6,
+        "atol": 1e-8,
+        "dt0": 0.1,
+        "max_steps": 131072,
+        "top_n": 10,
+        "skip_plots_on_nonfinite": True,
+        "strict": False,
+    },
 }
 
 
@@ -439,6 +453,75 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
                 errors.append(
                     f"  [bounds] {field} = {val!r} must be a positive number."
                 )
+
+    # -------------------------------------------------------------------
+    # Steady-state / long-horizon relaxation analysis
+    # -------------------------------------------------------------------
+    ss_cfg = getattr(cfg, "steadystate", None)
+    if ss_cfg is not None:
+        ss_t_end = getattr(ss_cfg, "t_end", 2000.0)
+        ss_early_end = getattr(ss_cfg, "early_end", 100.0)
+        ss_n_early = getattr(ss_cfg, "n_early", 100)
+        ss_n_late = getattr(ss_cfg, "n_late", 80)
+        ss_late_grid = getattr(ss_cfg, "late_grid", "geomspace")
+        ss_rtol = getattr(ss_cfg, "rtol", 1e-6)
+        ss_atol = getattr(ss_cfg, "atol", 1e-8)
+        ss_dt0 = getattr(ss_cfg, "dt0", 0.1)
+        ss_max_steps = getattr(ss_cfg, "max_steps", 131072)
+        ss_top_n = getattr(ss_cfg, "top_n", 10)
+
+        if not isinstance(ss_t_end, (int, float)) or ss_t_end <= 0:
+            errors.append(
+                f"  [steadystate] t_end = {ss_t_end!r} must be a positive number."
+            )
+        if not isinstance(ss_early_end, (int, float)) or ss_early_end <= 0:
+            errors.append(
+                f"  [steadystate] early_end = {ss_early_end!r} must be a positive number."
+            )
+        if (
+            isinstance(ss_t_end, (int, float))
+            and isinstance(ss_early_end, (int, float))
+            and ss_t_end <= ss_early_end
+        ):
+            errors.append(
+                f"  [steadystate] t_end ({ss_t_end}) must be greater than "
+                f"early_end ({ss_early_end})."
+            )
+        if not isinstance(ss_n_early, int) or ss_n_early < 2:
+            errors.append(
+                f"  [steadystate] n_early = {ss_n_early!r} must be an integer >= 2."
+            )
+        if not isinstance(ss_n_late, int) or ss_n_late < 2:
+            errors.append(
+                f"  [steadystate] n_late = {ss_n_late!r} must be an integer >= 2."
+            )
+        if ss_late_grid not in {"linear", "geomspace"}:
+            errors.append(
+                f"  [steadystate] late_grid = {ss_late_grid!r} is invalid. "
+                'Must be "linear" or "geomspace".'
+            )
+        if not isinstance(ss_rtol, (int, float)) or ss_rtol <= 0:
+            errors.append(
+                f"  [steadystate] rtol = {ss_rtol!r} must be a positive number."
+            )
+        if not isinstance(ss_atol, (int, float)) or ss_atol <= 0:
+            errors.append(
+                f"  [steadystate] atol = {ss_atol!r} must be a positive number."
+            )
+        if ss_dt0 is not None and (
+            not isinstance(ss_dt0, (int, float)) or ss_dt0 <= 0
+        ):
+            errors.append(
+                f"  [steadystate] dt0 = {ss_dt0!r} must be null or a positive number."
+            )
+        if not isinstance(ss_max_steps, int) or ss_max_steps < 1:
+            errors.append(
+                f"  [steadystate] max_steps = {ss_max_steps!r} must be a positive integer."
+            )
+        if not isinstance(ss_top_n, int) or ss_top_n < 1:
+            errors.append(
+                f"  [steadystate] top_n = {ss_top_n!r} must be a positive integer."
+            )
 
     # -------------------------------------------------------------------
     # Report
