@@ -1285,6 +1285,21 @@ class NetworkProblem:
         self.k_act_fn = k_act_fn
         self.s_prod_fn = s_prod_fn
         self.rna_relax = rna_relax
+        # Optional picklable rebuild kwargs for parallel multi-start workers.
+        # Set these after construction (e.g. in main.py) with the raw numpy
+        # arrays / config strings used to build k_act_fn / s_prod_fn so that
+        # spawned worker processes can reconstruct the JAX closures without
+        # receiving a non-picklable callable across process boundaries.
+        #
+        # _k_act_rebuild_kwargs expected keys (matching make_k_act_fn signature):
+        #   t_rna, rna_data, tf_prot_weights, K, interp_mode,
+        #   protein_self_rna_idx
+        #
+        # _s_prod_rebuild_kwargs expected keys (matching make_s_prod_fn signature):
+        #   t_protein, Y_data, R_kin_site, kin_to_prot_idx, K, M,
+        #   s_prod_fn_type, interp_mode
+        self._k_act_rebuild_kwargs: dict | None = None
+        self._s_prod_rebuild_kwargs: dict | None = None
         # RNA-specific
         self.t_rna = t_rna
         self.rna_obs_matched = rna_obs_matched
