@@ -6,12 +6,14 @@ Strategy
 --------
 1. Generate ``n_starts`` random starting points uniformly in [xl, xu] using
    fixed random seeds for reproducibility.
-2. Run ``run_single_optimisation`` (Optimistix BFGS) from each starting point
-   using the same configured loss weights for all runs.
+2. Run ``run_single_optimisation`` (Optimistix LevenbergMarquardt) from each
+   starting point, optionally in parallel via ``ProcessPoolExecutor``.
+   Falls back to serial execution automatically when the residuals closure is
+   not picklable (e.g. JAX closures on some platforms).
 3. Select the best solution by minimum **total loss** (the scalar objective
    that was minimised).
 4. Compute the Discrete Fréchet Distance for each solution as a diagnostic
-   metric only (logged but not used for selection).
+   metric only (logged but not used for selection).  Optionally parallelised.
 5. Aggregate all solutions into a result object compatible with the
    caller in main.py.
 
@@ -29,6 +31,9 @@ Old pymoo-specific flags (--gen, --pop-size, --algorithm) are mapped:
   --gen        → max_steps_per_run
   --algorithm  → ignored with a warning (non-fatal)
 """
+
+import pickle
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 
@@ -49,6 +54,105 @@ class OptimizationResult:
         self.X = X
         self.F = F
         self.J = J  # total loss per run
+
+
+# ---------------------------------------------------------------------------
+# Module-level workers for ProcessPoolExecutor
+# ---------------------------------------------------------------------------
+
+
+def _run_single_start_worker(task):
+    """
+    Worker function for parallel multi-start execution.
+
+    Must be defined at module level so it is picklable by ProcessPoolExecutor.
+    Applies per-worker CPU thread caps before any JAX usage.
+
+    Parameters
+    ----------
+    task : tuple
+        (i, theta0, residuals_fn, max_steps, opt_rtol, opt_atol, opt_verbose,
+         optx_adjoint, ls_solver, jac_mode, threads_per_run)
+
+    Returns
+    -------
+    tuple
+        (i, success, theta_opt, total_loss, f1, f2, f3, f4, error_message)
+    """
+    (
+        i,
+        theta0,
+        residuals_fn,
+        max_steps,
+        opt_rtol,
+        opt_atol,
+        opt_verbose,
+        optx_adjoint,
+        ls_solver,
+        jac_mode,
+        threads_per_run,
+    ) = task
+
+    # Cap BLAS/OMP threads per worker before any computation
+    from phoscrosstalk import runtime_env  # noqa: PLC0415
+
+    runtime_env.apply_cpu_env(threads_per_run, overwrite=True)
+
+    try:
+        theta_opt, total_loss, f1, f2, f3, f4 = run_single_optimisation(
+            residuals_fn,
+            theta0,
+            max_steps=max_steps,
+            rtol=opt_rtol,
+            atol=opt_atol,
+            verbose=opt_verbose,
+            optx_adjoint=optx_adjoint,
+            ls_solver=ls_solver,
+            jac_mode=jac_mode,
+        )
+        return (i, True, theta_opt, total_loss, f1, f2, f3, f4, None)
+    except Exception as exc:
+        return (i, False, None, None, None, None, None, None, str(exc))
+
+
+def _frechet_worker(task):
+    """
+    Worker function for parallel Fréchet distance computation.
+
+    Parameters
+    ----------
+    task : tuple
+        (i, theta, problem, true_coords)
+
+    Returns
+    -------
+    tuple
+        (i, score)  where score is np.inf on failure
+    """
+    i, theta, problem, true_coords = task
+    try:
+        P_pred = problem.simulate(theta)
+        if not np.all(np.isfinite(P_pred)):
+            return (i, np.inf)
+        pred_coords = np.ascontiguousarray(P_pred.T, dtype=np.float64)
+        score = frechet_distance(true_coords, pred_coords)
+        return (i, score)
+    except Exception:
+        return (i, np.inf)
+
+
+def _can_pickle(obj) -> bool:
+    """Return True if *obj* can be serialised with pickle."""
+    try:
+        pickle.dumps(obj)
+        return True
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 
 def run_multi_start_optimization(problem, args, P_scaled):
@@ -170,6 +274,21 @@ def run_multi_start_optimization(problem, args, P_scaled):
 
     starts = _generate_starts(n_starts, xl, xu)
 
+    # ------------------------------------------------------------------
+    # CPU parallelism plan
+    # ------------------------------------------------------------------
+    from phoscrosstalk.runtime_env import plan_cpu_runtime  # noqa: PLC0415
+
+    cpu_plan = plan_cpu_runtime(
+        cpu_threads=getattr(args, "cpu_threads", "auto"),
+        n_starts=n_starts,
+        parallel_starts=getattr(args, "parallel_starts", "auto"),
+        threads_per_start=getattr(args, "threads_per_start", "auto"),
+        reserve_cores=getattr(args, "reserve_cores", 0),
+        use_physical_cores=getattr(args, "use_physical_cores", True),
+    )
+    topo = cpu_plan.topo
+
     logger.header("[*] Starting Multi-Start Optimistix Optimisation")
     logger.info(f"    Optimizer: Optimistix LevenbergMarquardt(verbose={opt_verbose})")
     logger.info(
@@ -191,32 +310,143 @@ def run_multi_start_optimization(problem, args, P_scaled):
     logger.info(
         f"    ODE rtol={getattr(args, 'rtol', 1e-6)}, atol={getattr(args, 'atol', 1e-9)}, max_steps={getattr(args, 'solver_max_steps', 16384)}"  # noqa: E501
     )
+    logger.info(
+        "[runtime] CPU plan:"
+        f"\n    SLURM active         = {topo.slurm_cpus is not None}"
+        f"\n    logical CPUs         = {topo.logical_cpus}"
+        f"\n    physical cores       = {topo.physical_cores if topo.physical_cores is not None else 'unknown'}"  # noqa: E501
+        f"\n    affinity CPUs        = {topo.affinity_cpus if topo.affinity_cpus is not None else 'n/a'}"  # noqa: E501
+        f"\n    usable CPUs (budget) = {cpu_plan.total_available_cpus}"
+        f"\n    CPU source           = {topo.source}"
+        f"\n    n_starts             = {n_starts}"
+        f"\n    parallel starts      = {cpu_plan.n_parallel_runs}"
+        f"\n    threads per start    = {cpu_plan.threads_per_run}"
+        f"\n    XLA intra-op threads = {cpu_plan.xla_threads}"
+        f"\n    BLAS/OpenMP threads  = {cpu_plan.blas_threads}"
+    )
+
+    # ------------------------------------------------------------------
+    # Decide whether to use ProcessPoolExecutor
+    # ------------------------------------------------------------------
+    use_parallel = cpu_plan.n_parallel_runs > 1
+
+    if use_parallel and not _can_pickle(residuals_fn):
+        logger.warning(
+            "[runtime] residuals_fn is not picklable (likely a JAX closure); "
+            "falling back to serial execution.  Each run will use "
+            f"{cpu_plan.threads_per_run} threads as configured by XLA."
+        )
+        use_parallel = False
 
     all_X, all_F, all_total = [], [], []
 
-    for i, theta0 in enumerate(starts):
-        logger.info(f"--- Run {i + 1}/{len(starts)} ---")
-
-        try:
-            theta_opt, total_loss, f1, f2, f3, f4 = run_single_optimisation(
-                residuals_fn,
+    if use_parallel:
+        logger.info(
+            f"[runtime] Running {n_starts} starts across "
+            f"{cpu_plan.n_parallel_runs} parallel workers "
+            f"({cpu_plan.threads_per_run} threads/worker)."
+        )
+        tasks = [
+            (
+                i,
                 theta0,
-                max_steps=max_steps,
-                rtol=opt_rtol,
-                atol=opt_atol,
-                verbose=opt_verbose,
-                optx_adjoint=getattr(args, "optx_adjoint", "implicit"),
-                ls_solver=getattr(args, "ls_solver", "lm"),
-                jac_mode=getattr(args, "jac_mode", "fwd")
+                residuals_fn,
+                max_steps,
+                opt_rtol,
+                opt_atol,
+                opt_verbose,
+                getattr(args, "optx_adjoint", "implicit"),
+                getattr(args, "ls_solver", "lm"),
+                getattr(args, "jac_mode", "fwd"),
+                cpu_plan.threads_per_run,
             )
-            all_X.append(theta_opt)
-            all_F.append([f1, f2, f3, f4])
-            all_total.append(total_loss)
-            logger.info(
-                f"    -> total={total_loss:.4f}  f1={f1:.4f}  f2={f2:.4f}  f3={f3:.4f}  f4={f4:.4f}"  # noqa: E501
+            for i, theta0 in enumerate(starts)
+        ]
+
+        results_map = {}
+        try:
+            with ProcessPoolExecutor(max_workers=cpu_plan.n_parallel_runs) as pool:
+                future_to_i = {
+                    pool.submit(_run_single_start_worker, task): task[0]
+                    for task in tasks
+                }
+                for future in as_completed(future_to_i):
+                    orig_i = future_to_i[future]
+                    try:
+                        result = future.result()
+                        results_map[result[0]] = result
+                    except Exception as exc:
+                        logger.warning(f"    -> Run {orig_i + 1} raised exception: {exc}")
+                        results_map[orig_i] = (
+                            orig_i, False, None, None, None, None, None, None, str(exc)
+                        )
+        except Exception as exc:
+            logger.warning(
+                f"[runtime] ProcessPoolExecutor failed ({exc}); "
+                "falling back to serial execution."
             )
-        except Exception as e:
-            logger.warning(f"    -> Run {i + 1} failed: {e}")
+            # Fall back: run any missing starts serially
+            for i, theta0 in enumerate(starts):
+                if i in results_map:
+                    continue
+                logger.info(f"--- Run {i + 1}/{len(starts)} (serial fallback) ---")
+                try:
+                    theta_opt, total_loss, f1, f2, f3, f4 = run_single_optimisation(
+                        residuals_fn,
+                        theta0,
+                        max_steps=max_steps,
+                        rtol=opt_rtol,
+                        atol=opt_atol,
+                        verbose=opt_verbose,
+                        optx_adjoint=getattr(args, "optx_adjoint", "implicit"),
+                        ls_solver=getattr(args, "ls_solver", "lm"),
+                        jac_mode=getattr(args, "jac_mode", "fwd"),
+                    )
+                    results_map[i] = (i, True, theta_opt, total_loss, f1, f2, f3, f4, None)
+                except Exception as inner_exc:
+                    logger.warning(f"    -> Run {i + 1} failed: {inner_exc}")
+                    results_map[i] = (
+                        i, False, None, None, None, None, None, None, str(inner_exc)
+                    )
+
+        # Collect results in original start order
+        for i in sorted(results_map):
+            _, success, theta_opt, total_loss, f1, f2, f3, f4, err = results_map[i]
+            if success:
+                all_X.append(theta_opt)
+                all_F.append([f1, f2, f3, f4])
+                all_total.append(total_loss)
+                logger.info(
+                    f"--- Run {i + 1}/{len(starts)} -> "
+                    f"total={total_loss:.4f}  f1={f1:.4f}  f2={f2:.4f}  f3={f3:.4f}  f4={f4:.4f}"  # noqa: E501
+                )
+            else:
+                logger.warning(f"    -> Run {i + 1} failed: {err}")
+
+    else:
+        # Serial execution
+        for i, theta0 in enumerate(starts):
+            logger.info(f"--- Run {i + 1}/{len(starts)} ---")
+            try:
+                theta_opt, total_loss, f1, f2, f3, f4 = run_single_optimisation(
+                    residuals_fn,
+                    theta0,
+                    max_steps=max_steps,
+                    rtol=opt_rtol,
+                    atol=opt_atol,
+                    verbose=opt_verbose,
+                    optx_adjoint=getattr(args, "optx_adjoint", "implicit"),
+                    ls_solver=getattr(args, "ls_solver", "lm"),
+                    jac_mode=getattr(args, "jac_mode", "fwd"),
+                )
+                all_X.append(theta_opt)
+                all_F.append([f1, f2, f3, f4])
+                all_total.append(total_loss)
+                logger.info(
+                    f"    -> total={total_loss:.4f}  f1={f1:.4f}  f2={f2:.4f}  f3={f3:.4f}  f4={f4:.4f}"  # noqa: E501
+                )
+            except Exception as exc:
+                logger.warning(f"    -> Run {i + 1} failed: {exc}")
 
     if not all_X:
         raise RuntimeError(
@@ -235,25 +465,63 @@ def run_multi_start_optimization(problem, args, P_scaled):
     best_loss = total_losses[best_idx]
     logger.success(f"[*] Best Solution: total_loss = {best_loss:.6f} (idx={best_idx})")
 
-    # Compute Fréchet Distance as a diagnostic metric (not used for selection)
+    # ------------------------------------------------------------------
+    # Fréchet Distance diagnostics (optional, not used for selection)
+    # ------------------------------------------------------------------
     logger.info("[*] Computing Fréchet Distances (diagnostic only)...")
     frechet_scores = np.full(len(X_combined), np.inf)
     # P_scaled shape is (N_sites, T).  Transpose to (T, N_sites) so that each
     # row is a time-point in N_sites-dimensional feature space, which is the
     # standard "curve of observations" orientation expected by frechet_distance.
     true_coords = np.ascontiguousarray(P_scaled.T, dtype=np.float64)
-    for i in range(len(X_combined)):
-        P_pred = problem.simulate(X_combined[i])
-        if not np.all(np.isfinite(P_pred)):
-            logger.warning(
-                f"    Fréchet idx {i}: P_pred contains non-finite values; skipping."
-            )
-            continue
-        pred_coords = np.ascontiguousarray(P_pred.T, dtype=np.float64)
+
+    parallel_frechet_cfg = getattr(args, "parallel_frechet", "auto")
+    _pf_str = str(parallel_frechet_cfg).lower()
+    if _pf_str == "auto":
+        use_frechet_parallel = len(X_combined) > 2 and cpu_plan.n_parallel_runs > 1
+    elif _pf_str in ("true", "1", "yes"):
+        use_frechet_parallel = True
+    else:
+        use_frechet_parallel = False
+
+    if use_frechet_parallel and not _can_pickle(problem):
+        logger.debug(
+            "[runtime] problem is not picklable; using serial Fréchet computation."
+        )
+        use_frechet_parallel = False
+
+    if use_frechet_parallel:
+        logger.info(
+            f"[runtime] Computing Fréchet scores in parallel "
+            f"(max_workers={cpu_plan.n_parallel_runs})."
+        )
+        frechet_tasks = [
+            (i, X_combined[i], problem, true_coords) for i in range(len(X_combined))
+        ]
         try:
-            frechet_scores[i] = frechet_distance(true_coords, pred_coords)
-        except Exception as e:
-            logger.warning(f"    Fréchet error at idx {i}: {e}")
+            with ProcessPoolExecutor(max_workers=cpu_plan.n_parallel_runs) as pool:
+                for score_i, score_val in pool.map(_frechet_worker, frechet_tasks):
+                    frechet_scores[score_i] = score_val
+        except Exception as exc:
+            logger.warning(
+                f"[runtime] Parallel Fréchet failed ({exc}); falling back to serial."
+            )
+            use_frechet_parallel = False  # re-run serially below
+
+    if not use_frechet_parallel:
+        for i in range(len(X_combined)):
+            P_pred = problem.simulate(X_combined[i])
+            if not np.all(np.isfinite(P_pred)):
+                logger.warning(
+                    f"    Fréchet idx {i}: P_pred contains non-finite values; skipping."
+                )
+                continue
+            pred_coords = np.ascontiguousarray(P_pred.T, dtype=np.float64)
+            try:
+                frechet_scores[i] = frechet_distance(true_coords, pred_coords)
+            except Exception as exc:
+                logger.warning(f"    Fréchet error at idx {i}: {exc}")
+
     logger.info(
         f"    -> Fréchet at best (idx={best_idx}): {frechet_scores[best_idx]:.6f}"
     )

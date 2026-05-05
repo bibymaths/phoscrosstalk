@@ -21,14 +21,23 @@ import os
 import sys
 
 
-def _read_runtime_cpu_threads():
+def _read_runtime_config():
     """
-    Pre-parse *only* the ``[runtime] cpu_threads`` key from the config file
-    that was passed on the command line (or the default ``./config.toml``).
+    Pre-parse the ``[runtime]`` section and the ``n_starts`` value from the
+    config file so that ``plan_cpu_runtime`` can be called before any JAX
+    import.
 
     Uses only the standard library so that no JAX import can happen before
-    the env vars are configured.  Returns ``"auto"`` on any error.
+    the env vars are configured.  Returns safe defaults on any error.
     """
+    _defaults = {
+        "cpu_threads": "auto",
+        "parallel_starts": "auto",
+        "threads_per_start": "auto",
+        "use_physical_cores": True,
+        "reserve_cores": 0,
+        "n_starts": 1,
+    }
     try:
         try:
             import tomllib  # stdlib Python >= 3.11
@@ -45,14 +54,32 @@ def _read_runtime_cpu_threads():
 
         with open(config_path, "rb") as _f:
             raw = tomllib.load(_f)
-        return raw.get("runtime", {}).get("cpu_threads", "auto")
+        rt = raw.get("runtime", {})
+        opt = raw.get("optimisation", {})
+        return {
+            "cpu_threads": rt.get("cpu_threads", "auto"),
+            "parallel_starts": rt.get("parallel_starts", "auto"),
+            "threads_per_start": rt.get("threads_per_start", "auto"),
+            "use_physical_cores": rt.get("use_physical_cores", True),
+            "reserve_cores": rt.get("reserve_cores", 0),
+            "n_starts": opt.get("n_starts", 1),
+        }
     except Exception:
-        return "auto"
+        return _defaults
 
 
-from phoscrosstalk.runtime_env import log_env_summary, setup_cpu_env  # noqa: E402
+from phoscrosstalk.runtime_env import log_env_summary, plan_cpu_runtime, setup_cpu_env  # noqa: E402
 
-_n_cpu_threads = setup_cpu_env(n_threads=_read_runtime_cpu_threads())
+_runtime_cfg = _read_runtime_config()
+_cpu_plan = plan_cpu_runtime(
+    cpu_threads=_runtime_cfg["cpu_threads"],
+    n_starts=_runtime_cfg["n_starts"],
+    parallel_starts=_runtime_cfg["parallel_starts"],
+    threads_per_start=_runtime_cfg["threads_per_start"],
+    use_physical_cores=_runtime_cfg["use_physical_cores"],
+    reserve_cores=_runtime_cfg["reserve_cores"],
+)
+_n_cpu_threads = setup_cpu_env(n_threads=_cpu_plan.threads_per_run)
 
 # ---------------------------------------------------------------------------
 # Standard library and third-party imports (JAX enters here via phoscrosstalk
@@ -476,6 +503,13 @@ def main():
         run_steadystate=getattr(cfg.analysis, "run_steadystate", False),
         run_knockouts=getattr(cfg.analysis, "run_knockouts", False),
         run_sensitivity=getattr(cfg.analysis, "run_sensitivity", False),
+        # CPU parallelism (read by run_multi_start_optimization)
+        cpu_threads=getattr(getattr(cfg, "runtime", None), "cpu_threads", "auto"),
+        parallel_starts=getattr(getattr(cfg, "runtime", None), "parallel_starts", "auto"),
+        threads_per_start=getattr(getattr(cfg, "runtime", None), "threads_per_start", "auto"),
+        use_physical_cores=getattr(getattr(cfg, "runtime", None), "use_physical_cores", True),
+        reserve_cores=getattr(getattr(cfg, "runtime", None), "reserve_cores", 0),
+        parallel_frechet=getattr(getattr(cfg, "runtime", None), "parallel_frechet", "auto"),
     )
 
     interp_mode = cfg.time.interpolation
@@ -505,11 +539,12 @@ def main():
     # PRINT CONFIG SUMMARY AND RUNTIME ENVIRONMENT
     # ------------------------------------------------------------------
     _print_config_summary(cfg, config_path)
-    log_env_summary(logger)
+    log_env_summary(logger, plan=_cpu_plan)
     logger.info(
-        "[runtime_env] CPU threads configured: %d"
-        "  (source: SLURM_CPUS_PER_TASK=%s, config cpu_threads=%s)",
+        "[runtime_env] CPU threads configured: %d per run "
+        "  (parallel_runs=%d, source: SLURM_CPUS_PER_TASK=%s, config cpu_threads=%s)",
         _n_cpu_threads,
+        _cpu_plan.n_parallel_runs,
         os.environ.get("SLURM_CPUS_PER_TASK", "unset"),
         getattr(getattr(cfg, "runtime", None), "cpu_threads", "auto"),
     )

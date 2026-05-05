@@ -161,9 +161,25 @@ _DEFAULTS = {
     },
     "runtime": {
         # Number of CPU threads for JAX/XLA and BLAS libraries.
-        # "auto" → detect from SLURM_CPUS_PER_TASK, OMP_NUM_THREADS, or os.cpu_count().
+        # "auto" → detect from SLURM_CPUS_PER_TASK, affinity, or os.cpu_count().
         # Any positive integer overrides auto-detection.
         "cpu_threads": "auto",
+        # Number of optimisation starts to run concurrently.
+        # "auto" → determined from CPU budget and threads_per_start.
+        # Any positive integer pins the value.
+        "parallel_starts": "auto",
+        # Threads allocated to each parallel start.
+        # "auto" → determined from CPU budget and parallel_starts.
+        "threads_per_start": "auto",
+        # When True, use physical cores (not logical CPUs) as the parallelism budget.
+        # Ignored when SLURM_CPUS_PER_TASK is set.
+        "use_physical_cores": True,
+        # CPUs to reserve for the OS / parent process.  Default 0.
+        "reserve_cores": 0,
+        # Parallelise Fréchet distance diagnostics.
+        # "auto" → parallelise only if len(solutions) > 2 and n_parallel_runs > 1.
+        # true / false → always / never parallelise.
+        "parallel_frechet": "auto",
     },
     "steadystate": {
         "t_end": 2000.0,
