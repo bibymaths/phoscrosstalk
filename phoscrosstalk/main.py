@@ -988,8 +988,26 @@ def main():
     analysis.plot_goodness_of_fit(f"{outdir}/fit_timeseries.tsv", outdir)
 
     if args.run_steadystate:
+        _ss = getattr(cfg, "steadystate", None)
         steadystate.run_steadystate_analysis(
-            outdir, problem, theta_best, sites, proteins, kinases
+            outdir=outdir,
+            problem=problem,
+            theta_opt=theta_best,
+            sites=sites,
+            proteins=proteins,
+            kinases=kinases,
+            t_end=getattr(_ss, "t_end", 2000.0),
+            early_end=getattr(_ss, "early_end", 100.0),
+            n_early=getattr(_ss, "n_early", 100),
+            n_late=getattr(_ss, "n_late", 80),
+            late_grid=getattr(_ss, "late_grid", "geomspace"),
+            rtol=getattr(_ss, "rtol", 1e-6),
+            atol=getattr(_ss, "atol", 1e-8),
+            dt0=getattr(_ss, "dt0", 0.1),
+            max_steps=getattr(_ss, "max_steps", 131072),
+            top_n=getattr(_ss, "top_n", 10),
+            skip_plots_on_nonfinite=getattr(_ss, "skip_plots_on_nonfinite", True),
+            strict=getattr(_ss, "strict", False),
         )
 
     if args.run_knockouts:

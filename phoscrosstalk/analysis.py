@@ -650,7 +650,7 @@ def plot_fitted_simulation(outdir):
                     )
         axS.set_title("Phosphosites", fontsize=12, fontweight="bold")
         axS.set_xlabel("Time (min)")
-        axS.set_ylabel("Phosphosite occupancy / p(t)")
+        axS.set_ylabel("Relative phosphosite signal p(t)")
         axS.legend(
             fontsize=8,
             loc="upper left",
