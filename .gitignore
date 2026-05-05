@@ -1,16 +1,69 @@
-# Byte-compiled / optimized / DLL files
+# =============================================================================
+# PhosCrosstalk .gitignore
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# Python bytecode, interpreter caches, compiled artifacts
+# -----------------------------------------------------------------------------
 __pycache__/
-*.py[codz]
+*.py[cod]
 *$py.class
-
-# C extensions
 *.so
+*.pyd
+*.dll
+*.dylib
 
-# Distribution / packaging
+
+# -----------------------------------------------------------------------------
+# Numba / JIT / cache artifacts
+# -----------------------------------------------------------------------------
+*.nbc
+*.nbi
+.numba_cache/
+numba_cache/
+.cache/
+.jax_cache/
+jax_cache/
+xla_cache/
+.XLA/
+*.prof
+*.profraw
+*.profdata
+
+
+# -----------------------------------------------------------------------------
+# Virtual environments and local Python installs
+# -----------------------------------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+__pypackages__/
+.pdm-python
+.pdm-build/
+.pixi/
+
+
+# -----------------------------------------------------------------------------
+# Environment variables, secrets, local machine config
+# -----------------------------------------------------------------------------
+.env
+.env.*
+.envrc
+*.local
+.pypirc
+
+
+# -----------------------------------------------------------------------------
+# Packaging / build / distribution
+# -----------------------------------------------------------------------------
 .Python
 build/
-develop-eggs/
 dist/
+develop-eggs/
 downloads/
 eggs/
 .eggs/
@@ -25,209 +78,191 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
 
-# Unit test / coverage reports
+# -----------------------------------------------------------------------------
+# Test, coverage, lint, type-checking caches
+# -----------------------------------------------------------------------------
 htmlcov/
 .tox/
 .nox/
 .coverage
 .coverage.*
-.cache
-nosetests.xml
 coverage.xml
 *.cover
 *.py.cover
 .hypothesis/
 .pytest_cache/
 cover/
+nosetests.xml
 
-# Translations
-*.mo
-*.pot
-
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-.pybuilder/
-target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-#   For a library or package, you might want to ignore these files since the code is
-#   intended to run in multiple environments; otherwise, check them in:
-# .python-version
-
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
-
-# UV
-#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#uv.lock
-
-# poetry
-#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
-#poetry.lock
-#poetry.toml
-
-# pdm
-#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
-#   pdm recommends including project-wide configuration in pdm.toml, but excluding .pdm-python.
-#   https://pdm-project.org/en/latest/usage/project/#working-with-version-control
-#pdm.lock
-#pdm.toml
-.pdm-python
-.pdm-build/
-
-# pixi
-#   Similar to Pipfile.lock, it is generally recommended to include pixi.lock in version control.
-#pixi.lock
-#   Pixi creates a virtual environment in the .pixi directory, just like venv module creates one
-#   in the .venv directory. It is recommended not to include this directory in version control.
-.pixi
-
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
-__pypackages__/
-
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
-.env
-.envrc
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Spyder project settings
-.spyderproject
-.spyproject
-
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
 .mypy_cache/
 .dmypy.json
 dmypy.json
-
-# Pyre type checker
 .pyre/
-
-# pytype static type analyzer
 .pytype/
-
-# Cython debug symbols
-cython_debug/
-
-# PyCharm
-#  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
-#  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#  and can be added to the global gitignore or merged into this file.  For a more nuclear
-#  option (not recommended) you can uncomment the following to ignore the entire idea folder.
-#.idea/
-
-# Abstra
-# Abstra is an AI-powered process automation framework.
-# Ignore directories containing user credentials, local state, and settings.
-# Learn more at https://abstra.io/docs
-.abstra/
-
-# Visual Studio Code
-#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
-#  that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#  and can be added to the global gitignore or merged into this file. However, if you prefer, 
-#  you could uncomment the following to ignore the entire vscode folder
-# .vscode/
-
-# Ruff stuff:
 .ruff_cache/
 
-# PyPI configuration file
-.pypirc
 
-# Cursor
-#  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
-#  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
-#  refer to https://docs.cursor.com/context/ignore-files
+# -----------------------------------------------------------------------------
+# Jupyter / IPython / notebooks runtime state
+# -----------------------------------------------------------------------------
+.ipynb_checkpoints/
+profile_default/
+ipython_config.py
+
+
+# -----------------------------------------------------------------------------
+# Documentation build outputs
+# -----------------------------------------------------------------------------
+docs/_build/
+site/
+
+
+# -----------------------------------------------------------------------------
+# IDE / editor state
+# -----------------------------------------------------------------------------
+.idea/
+*.iml
+.vscode/
+.spyderproject
+.spyproject
+.ropeproject
 .cursorignore
 .cursorindexingignore
+*.swp
+*.swo
+*~
 
-# Marimo
+
+# -----------------------------------------------------------------------------
+# OS / filesystem junk
+# -----------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+
+# -----------------------------------------------------------------------------
+# PhosCrosstalk runtime logs
+# -----------------------------------------------------------------------------
+logs/
+log/
+logs*/
+*.log
+*.out
+*.err
+
+# Root-level module logs created like:
+# phoscrosstalk_2026-05-05_13-05-30.optimization
+# phoscrosstalk_2026-05-05_13-05-30.multistarts
+# phoscrosstalk_2026-05-05_13-05-30.runtime_env
+/phoscrosstalk_*.analysis
+/phoscrosstalk_*.app
+/phoscrosstalk_*.config
+/phoscrosstalk_*.core_mechanisms
+/phoscrosstalk_*.dashboard_io
+/phoscrosstalk_*.data_curator
+/phoscrosstalk_*.data_loader
+/phoscrosstalk_*.derived_rates
+/phoscrosstalk_*.equations
+/phoscrosstalk_*.fretchet
+/phoscrosstalk_*.hybrid_fit
+/phoscrosstalk_*.hyperparam
+/phoscrosstalk_*.jax_mechanisms
+/phoscrosstalk_*.knockouts
+/phoscrosstalk_*.logger
+/phoscrosstalk_*.logo
+/phoscrosstalk_*.main
+/phoscrosstalk_*.multistarts
+/phoscrosstalk_*.optimization
+/phoscrosstalk_*.post_processing
+/phoscrosstalk_*.runtime_env
+/phoscrosstalk_*.sensitivity
+/phoscrosstalk_*.simulation
+/phoscrosstalk_*.solver_config
+/phoscrosstalk_*.steadystate
+/phoscrosstalk_*.weighting
+
+
+# -----------------------------------------------------------------------------
+# Data inputs, curated databases, intermediate datasets
+# -----------------------------------------------------------------------------
+data/
+data_*/
+data*/
+*.db
+*.sqlite
+*.sqlite3
+
+
+# -----------------------------------------------------------------------------
+# Generated scientific outputs / fitting outputs
+# -----------------------------------------------------------------------------
+results/
+results*/
+output/
+outputs/
+run/
+run*/
+runs/
+fit/
+fit*/
+thesis_dist/
+snapshot*/
+checkpoints/
+checkpoint*/
+
+*.npz
+*.npy
+*.pkl
+*.pickle
+*.gpickle
+*.h5
+*.hdf5
+*.parquet
+*.feather
+
+
+# -----------------------------------------------------------------------------
+# Generated plots, reports, tables
+# -----------------------------------------------------------------------------
+*.png
+*.jpg
+*.jpeg
+*.svg
+*.pdf
+*.html
+
+# Be careful: this ignores all CSV/TSV/TXT files.
+# Keep commented if you want example input files tracked.
+# *.csv
+# *.tsv
+# *.txt
+
+
+# -----------------------------------------------------------------------------
+# Temporary / backup files
+# -----------------------------------------------------------------------------
+*.tmp
+*.temp
+*.bak
+*.backup
+*.orig
+*.rej
+
+
+# -----------------------------------------------------------------------------
+# Tool-specific local state
+# -----------------------------------------------------------------------------
+.abstra/
+.scrapy/
+.webassets-cache
+instance/
+celerybeat-schedule
+celerybeat.pid
 marimo/_static/
 marimo/_lsp/
 __marimo__/
-
-# User dir and files
-data*/
-results*/
-.venv
-*.egg-info
-results*/
-run*/
-__pycache__/
-.ipynb_checkpoints
-.DS_Store
-.vscode
-.env
-.env.*
-.idea
-*.iml
-*.pyc
-fit*/
-*.tsv
-*.csv
-logs*/
-*.log
-*.npz
-*.png
-*.svg
-*.txt*.optimization
