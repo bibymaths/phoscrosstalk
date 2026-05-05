@@ -246,7 +246,7 @@ def load_config(path: str | None = None) -> SimpleNamespace:
 _VALID_MECHANISMS = {"dist", "seq", "rand"}
 _VALID_INTERP = {"piecewise_constant", "linear"}
 _VALID_SCALE = {"none", "minmax", "zscore"}
-_VALID_WEIGHT = {"uniform", "inverse_variance", "time_weighted"}
+_VALID_WEIGHT = {"uniform", "early_emphasis", "early_emphasis_moderate", "late_emphasis", "flat_no_noise"}
 _VALID_SPROD = {"softplus", "linear"}
 _VALID_ODE_SOLVERS = {
     "tsit5",

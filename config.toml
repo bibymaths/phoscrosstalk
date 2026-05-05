@@ -129,8 +129,8 @@ output_dir        = "thesis_dist"
 
 crosstalk_tsv     = ""
 rna_data          = "data_timeseries/input3.csv"
-tf_net            = "data_subset/subnetwork_EGFR_MET_ERBB2/tf_mrna_subset.csv"
-kinase_tsv        = "data_subset/subnetwork_EGFR_MET_ERBB2/kinase_sites_subset.tsv"
+tf_net            = "data_interactions/tf_mrna.csv"
+kinase_tsv        = "data_interactions/kinase_sites.tsv"
 kea_ks_table      = ""
 unified_graph_pkl = "data_curated/processed/unified_kinase_graph.gpickle"
 
@@ -172,7 +172,7 @@ unified_graph_pkl = "data_curated/processed/unified_kinase_graph.gpickle"
 mechanism               = "dist"      # options: "dist" | "seq" | "rand"
 scale_mode              = "none"      # options: "none" | "minmax" | "zscore"
 length_scale            = 25.0
-weight_scheme           = "uniform"   # options: "uniform" | "inverse_variance" | "time_weighted"
+weight_scheme           = "late_emphasis"   # options: uniform, early_emphasis, early_emphasis_moderate, late_emphasis, flat_no_noise
 
 receptors               = []
 receptor_kinases        = []
