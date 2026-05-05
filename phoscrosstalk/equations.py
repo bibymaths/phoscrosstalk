@@ -31,7 +31,7 @@ from typing import Any
 
 import numpy as np
 
-from phoscrosstalk.jax_mechanisms import decode_theta_jax
+from phoscrosstalk.mechanisms import decode_theta
 from phoscrosstalk.logger import get_logger
 
 logger = get_logger(__name__)

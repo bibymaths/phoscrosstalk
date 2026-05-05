@@ -98,7 +98,7 @@ def test_decoded_rate_params_positive():
     """k_deact, d_deg, beta_g, beta_l, alpha, kK_act, kK_deact, k_off > 0."""
     import jax.numpy as jnp
 
-    from phoscrosstalk.jax_mechanisms import decode_theta_jax
+    from phoscrosstalk.mechanisms import decode_theta
 
     K, M, N = 3, 4, 6
     dim = 2 * K + 2 + 3 * M + N + 4
@@ -108,7 +108,7 @@ def test_decoded_rate_params_positive():
         theta = rng.uniform(-5.0, 5.0, dim)
         theta_j = jnp.asarray(theta, dtype=jnp.float32)
         (k_deact, d_deg, beta_g, beta_l, alpha, kK_act, kK_deact, k_off, _, _, _, _) = (
-            decode_theta_jax(theta_j, K, M, N)
+            decode_theta(theta_j, K, M, N)
         )
 
         for name, val in [
@@ -136,7 +136,7 @@ def test_gamma_params_can_be_negative():
     """Gamma parameters must NOT be forced to non-negative values."""
     import jax.numpy as jnp
 
-    from phoscrosstalk.jax_mechanisms import decode_theta_jax
+    from phoscrosstalk.mechanisms import decode_theta
 
     K, M, N = 2, 2, 3
     dim = 2 * K + 2 + 3 * M + N + 4
@@ -148,10 +148,10 @@ def test_gamma_params_can_be_negative():
     theta_neg = np.zeros(dim)
     theta_neg[-4:] = -10.0  # raw_gamma → tanh(-10) ≈ -1 → decoded gamma < 0
 
-    (_, _, _, _, _, _, _, _, gsp_pos, gas_pos, gap_pos, gkn_pos) = decode_theta_jax(
+    (_, _, _, _, _, _, _, _, gsp_pos, gas_pos, gap_pos, gkn_pos) = decode_theta(
         jnp.asarray(theta_pos, dtype=jnp.float32), K, M, N
     )
-    (_, _, _, _, _, _, _, _, gsp_neg, gas_neg, gap_neg, gkn_neg) = decode_theta_jax(
+    (_, _, _, _, _, _, _, _, gsp_neg, gas_neg, gap_neg, gkn_neg) = decode_theta(
         jnp.asarray(theta_neg, dtype=jnp.float32), K, M, N
     )
 
@@ -173,7 +173,7 @@ def test_rhs_finite_for_nonneg_states():
     """RHS must return finite derivatives when fed valid non-negative states."""
     import jax.numpy as jnp
 
-    from phoscrosstalk.jax_mechanisms import compute_prev_site_idx, make_rhs
+    from phoscrosstalk.mechanisms import compute_prev_site_idx, make_rhs
 
     K, M, N = 2, 3, 4
     dim = 2 * K + 2 + 3 * M + N + 4
@@ -219,7 +219,7 @@ def test_rhs_boundary_guard_lower_bound():
     """At lower bound (state=0), the derivative must not be negative."""
     import jax.numpy as jnp
 
-    from phoscrosstalk.jax_mechanisms import compute_prev_site_idx, make_rhs
+    from phoscrosstalk.mechanisms import compute_prev_site_idx, make_rhs
 
     K, M, N = 2, 2, 3
     rng = np.random.default_rng(99)
