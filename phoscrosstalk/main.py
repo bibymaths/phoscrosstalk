@@ -20,6 +20,12 @@ Entry point for the Global Phospho-Network Model orchestration.
 import os
 import sys
 
+from phoscrosstalk.data_loader import (
+    _build_network_allow_sets,
+    _prefilter_phospho_csv,
+    _prefilter_rna_csv,
+)
+
 
 def _read_runtime_config():
     """
@@ -563,10 +569,39 @@ def main():
     os.makedirs(outdir, exist_ok=True)
     logger.header(f"[*] Output directory: {outdir}")
 
+    # ---------------------------------------------------------------------------
+    # TODO(data-loader-refactor): Pre-filter full datasets to the model universe
+    # defined by the biological networks.  Full files act as a measurement
+    # reservoir; kinase_tsv and tf_net define which entities enter the model.
+    # Remove these pre-filter calls once data_loader.py accepts allow-lists.
+    # ---------------------------------------------------------------------------
+    (
+        _net_allowed_sites,
+        _net_allowed_kinases,
+        _net_tf_sources,
+        _net_tf_targets,
+    ) = _build_network_allow_sets(
+        kinase_tsv_path,
+        tf_net_path,
+        include_tfs_as_proteins,
+    )
+
+    _filtered_data_path = _prefilter_phospho_csv(
+        data_path=args.data,
+        allowed_sites=_net_allowed_sites,
+        allowed_kinases=_net_allowed_kinases,
+        tf_sources=_net_tf_sources,
+        tf_targets=_net_tf_targets,
+        include_tfs_as_proteins=include_tfs_as_proteins,
+        logger_=logger,
+    )
+    # --- end TODO(data-loader-refactor) pre-filter phospho ---
+
     # 1. Load primary phospho data
     (sites, proteins, site_prot_idx, positions, t, Y, A_data, A_proteins) = (
-        data_loader.load_site_data(args.data)
+        data_loader.load_site_data(_filtered_data_path)
     )
+
     logger.success(f"[*] Loaded {len(sites)} sites, {len(proteins)} proteins.")
 
     # 2. Load optional mRNA data and TF network
@@ -577,7 +612,18 @@ def main():
     tf_net_df = None
 
     if args.rna_data:
-        gene_ids, t_rna, rna_matrix = data_loader.load_rna_data(args.rna_data)
+        # TODO(data-loader-refactor): Narrow the full RNA table to only the
+        # genes needed by the model before handing the path to load_rna_data().
+        # At this point proteins[] is already defined from load_site_data().
+        _filtered_rna_path = _prefilter_rna_csv(
+            rna_path=args.rna_data,
+            model_proteins=proteins,  # defined in step 1 above
+            tf_sources=_net_tf_sources,
+            tf_targets=_net_tf_targets,
+            logger_=logger,
+        )
+        # --- end TODO(data-loader-refactor) pre-filter RNA ---
+        gene_ids, t_rna, rna_matrix = data_loader.load_rna_data(_filtered_rna_path)
         logger.success(
             f"[*] Loaded mRNA data: {len(gene_ids)} genes x {len(t_rna)} time points."
         )
@@ -827,6 +873,24 @@ def main():
     logger.header(f"[*] K={ModelDims.K}, M={ModelDims.M}, N={ModelDims.N}")
     xl, xu, dim = create_bounds(ModelDims.K, ModelDims.M, ModelDims.N)
 
+    logger.info(
+        f"[DEBUG] create_bounds → xl type={type(xl)}, xu type={type(xu)}, dim={dim}"
+    )
+
+    # Guard: create_bounds must return finite numpy arrays.
+    if xl is None or xu is None:
+        raise RuntimeError(
+            f"create_bounds() returned None for xl={xl} or xu={xu}. "
+            f"ModelDims are K={ModelDims.K}, M={ModelDims.M}, N={ModelDims.N}. "
+            "This usually means ModelDims.set_dims() was called with zero dimensions — "
+            "check that kinase_tsv/kea_ks_table loaded at least one site and one kinase."
+        )
+    xl = np.asarray(xl, dtype=float)
+    xu = np.asarray(xu, dtype=float)
+    assert np.all(np.isfinite(xl)) and np.all(np.isfinite(xu)), (
+        f"create_bounds() returned non-finite values: xl={xl}, xu={xu}"
+    )
+
     _save_preopt_snapshot_txt_csv(
         outdir,
         t=t,
@@ -940,16 +1004,16 @@ def main():
     # these dicts to match.
     problem._k_act_rebuild_kwargs = {
         "t_rna": t_rna,
-        "rna_data": rna_matrix,          # (n_genes, T_rna) or None
+        "rna_data": rna_matrix,  # (n_genes, T_rna) or None
         "tf_prot_weights": tf_prot_weights,  # (K, n_genes) or None
         "K": K,
         "interp_mode": interp_mode,
         "protein_self_rna_idx": entity_masks["protein_self_rna_idx"],
     }
     problem._s_prod_rebuild_kwargs = {
-        "t_protein": t,                  # (T,) protein time points
-        "Y_data": P_scaled,              # (N_sites, T) phospho data
-        "R_kin_site": R,                 # (M, N_sites) kinase-to-site weights
+        "t_protein": t,  # (T,) protein time points
+        "Y_data": P_scaled,  # (N_sites, T) phospho data
+        "R_kin_site": R,  # (M, N_sites) kinase-to-site weights
         "kin_to_prot_idx": kin_to_prot_idx,  # (M,) kinase→protein mapping
         "K": K,
         "M": M,

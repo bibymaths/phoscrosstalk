@@ -7,6 +7,7 @@ import os
 import pickle
 import re
 import sqlite3
+import tempfile
 
 import numpy as np
 import pandas as pd
@@ -949,3 +950,224 @@ def build_protein_entity_masks(
         "n_targets_in_proteins": n_targets_in_proteins,
         "n_included_by_extended": n_included_by_extended,
     }
+
+
+# ---------------------------------------------------------------------------
+# TODO(data-loader-refactor): This helper is a temporary network-driven
+# pre-filter so that full measurement files can serve as a "reservoir" while
+# the biological networks (kinase_tsv / tf_net) define the model universe.
+# When data_loader.py is refactored to accept allow-lists natively, remove
+# _build_network_allow_sets() and the two _prefilter_*() wrappers below.
+# ---------------------------------------------------------------------------
+
+
+def _build_network_allow_sets(kinase_tsv_path, tf_net_path, include_tfs_as_proteins):
+    """
+    Read kinase-site TSV and TF-network CSV and return:
+      - allowed_sites  : set of site labels in kinase_tsv 'Site' column  (e.g. 'EGFR_Y1068')
+      - allowed_kinases: set of kinase names in kinase_tsv 'Kinase' column
+      - tf_sources     : set of TF source gene names  (empty if no tf_net)
+      - tf_targets     : set of TF target gene names  (empty if no tf_net)
+
+    Returns four empty sets when neither network file is supplied.
+    """
+    allowed_sites = set()
+    allowed_kinases = set()
+    tf_sources = set()
+    tf_targets = set()
+
+    if kinase_tsv_path:
+        df_kin = pd.read_csv(kinase_tsv_path, sep="\t")
+        if "Site" in df_kin.columns:
+            allowed_sites = set(df_kin["Site"].dropna().astype(str))
+        if "Kinase" in df_kin.columns:
+            allowed_kinases = set(df_kin["Kinase"].dropna().astype(str))
+
+    if tf_net_path:
+        df_tf = pd.read_csv(tf_net_path)
+        col_map = {c.strip().lower(): c for c in df_tf.columns}
+        if "source" in col_map:
+            tf_sources = set(df_tf[col_map["source"]].dropna().astype(str).str.strip())
+        if "target" in col_map:
+            tf_targets = set(df_tf[col_map["target"]].dropna().astype(str).str.strip())
+
+    return allowed_sites, allowed_kinases, tf_sources, tf_targets
+
+
+def _normalise_psite_label(raw_psite: str) -> str:
+    """
+    Normalise a raw Psite value to the form used in model site labels.
+
+    The loader converts 'Y_1068' → 'Y1068' (strips the underscore between
+    amino-acid letter and position number).  We replicate that here so that
+    allow-set membership checks are consistent.
+
+    Examples
+    --------
+    'Y_1068'  → 'Y1068'
+    'S_473'   → 'S473'
+    'T202'    → 'T202'   (already normalised — unchanged)
+    """
+    raw_psite = str(raw_psite)
+    if "_" in raw_psite:
+        aa, pos = raw_psite.split("_", 1)
+        return f"{aa}{pos}"
+    return raw_psite
+
+
+def _prefilter_phospho_csv(
+    data_path,
+    allowed_sites,
+    allowed_kinases,
+    tf_sources,
+    tf_targets,
+    include_tfs_as_proteins,
+    logger_,
+):
+    """
+    TODO(data-loader-refactor): Temporary pre-filter applied to the full
+    phospho/protein CSV before passing its path to load_site_data().
+
+    Keeps rows where:
+      • internal site label (Protein + normalised Psite/Residue) matches an
+        entry in allowed_sites (kinase-site 'Site' column)   — phosphosite rows
+      • OR the protein name is one of the allowed kinases             — protein rows
+      • OR the protein is a TF source/target AND
+        include_tfs_as_proteins is True                        — protein rows
+
+    If allowed_sites and allowed_kinases are both empty (no network files
+    supplied) the original path is returned unchanged for backward
+    compatibility.
+
+    Returns the path to use for load_site_data() — either the original path
+    or a NamedTemporaryFile that will persist until the process exits.
+    """
+    if not allowed_sites and not allowed_kinases:
+        # No networks supplied — preserve existing behaviour exactly.
+        return data_path
+
+    df = pd.read_csv(data_path, sep=None, engine="python")
+
+    prot_col = None
+    for candidate in ("Protein", "GeneID"):
+        if candidate in df.columns:
+            prot_col = candidate
+            break
+    if prot_col is None:
+        logger_.warning(
+            "[!] _prefilter_phospho_csv: cannot find Protein/GeneID column — "
+            "skipping pre-filter."
+        )
+        return data_path
+
+    site_col = None
+    for candidate in ("Psite", "Residue"):
+        if candidate in df.columns:
+            site_col = candidate
+            break
+
+    n_before = len(df)
+    proteins_col = df[prot_col].astype(str)
+
+    # Build internal site labels for every row that has a site annotation.
+    if site_col is not None:
+        has_site_mask = df[site_col].notna()
+        normalised_site = df[site_col].astype(str).apply(_normalise_psite_label)
+        internal_label = proteins_col + "_" + normalised_site
+    else:
+        has_site_mask = pd.Series(False, index=df.index)
+        internal_label = pd.Series("", index=df.index)
+
+    # Phosphosite rows: keep if their label is in allowed_sites.
+    keep_psite = has_site_mask & internal_label.isin(allowed_sites)
+
+    # Protein/abundance rows: keep if protein is an allowed kinase or a TF.
+    is_protein_row = ~has_site_mask
+    keep_kinase = is_protein_row & proteins_col.isin(allowed_kinases)
+
+    tf_proteins: set = set()
+    if include_tfs_as_proteins:
+        tf_proteins = tf_sources | tf_targets
+    keep_tf = is_protein_row & proteins_col.isin(tf_proteins)
+
+    keep_mask = keep_psite | keep_kinase | keep_tf
+    df_filtered = df[keep_mask].copy()
+
+    n_after = len(df_filtered)
+    logger_.info(
+        "Network-filtered phospho/protein data: %d -> %d rows", n_before, n_after
+    )
+    if n_after == 0:
+        logger_.warning(
+            "[!] Network pre-filter removed ALL rows from %s. "
+            "Check that kinase_tsv 'Site' labels match the 'Protein_Residue' format "
+            "used in your data file (e.g. 'EGFR_Y1068').",
+            data_path,
+        )
+    fd, tmp_path = tempfile.mkstemp(suffix=".csv", prefix="_phoscrosstalk_phospho_")
+    os.close(fd)  # close the raw file descriptor; pandas will open by path
+    df_filtered.to_csv(tmp_path, index=False)
+    logger_.info("Network-filtered phospho file written to: %s", tmp_path)
+    return tmp_path
+
+
+def _prefilter_rna_csv(rna_path, model_proteins, tf_sources, tf_targets, logger_):
+    """
+    TODO(data-loader-refactor): Temporary pre-filter applied to the full RNA
+    CSV before passing its path to load_rna_data().
+
+    Keeps rows whose GeneID is a model protein OR a TF source OR a TF target.
+
+    If model_proteins is empty the original path is returned unchanged.
+
+    Returns the path to use for load_rna_data().
+    """
+    if not model_proteins:
+        return rna_path
+
+    df = pd.read_csv(rna_path)
+
+    # Determine the gene-ID column (mirrors logic in load_rna_data).
+    id_col = None
+    if "GeneID" in df.columns:
+        id_col = "GeneID"
+    else:
+        for col in df.columns:
+            col_str = str(col).strip()
+            # Skip numeric / x1..x9 style columns.
+            is_time = bool(re.fullmatch(r"x\d+", col_str, re.I))
+            try:
+                float(col_str)
+                is_time = True
+            except ValueError:
+                pass
+            if not is_time:
+                id_col = col
+                break
+
+    if id_col is None:
+        logger_.warning(
+            "[!] _prefilter_rna_csv: cannot detect gene-ID column — "
+            "skipping RNA pre-filter."
+        )
+        return rna_path
+
+    n_before = len(df)
+    allowed_genes = set(model_proteins) | tf_sources | tf_targets
+    keep_mask = df[id_col].astype(str).str.strip().isin(allowed_genes)
+    df_filtered = df[keep_mask].copy()
+    n_after = len(df_filtered)
+
+    logger_.info("Network-filtered RNA data: %d -> %d rows", n_before, n_after)
+    if n_after == 0:
+        logger_.warning(
+            "[!] Network pre-filter removed ALL rows from %s. "
+            "Check that gene IDs in the RNA file match model protein names.",
+            rna_path,
+        )
+
+    fd, tmp_path = tempfile.mkstemp(suffix=".csv", prefix="_phoscrosstalk_rna_")
+    os.close(fd)  # close the raw file descriptor; pandas will open by path
+    df_filtered.to_csv(tmp_path, index=False)
+    logger_.info("Network-filtered RNA file written to: %s", tmp_path)
+    return tmp_path
