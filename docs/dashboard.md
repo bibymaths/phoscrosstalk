@@ -6,6 +6,10 @@ optimization results without rerunning the full pipeline.
 ## Launch
 
 ```bash
+# From repo root with uv (recommended)
+uv run streamlit run phoscrosstalk/app.py
+
+# Or if the package is already installed
 streamlit run phoscrosstalk/app.py
 ```
 
@@ -43,5 +47,8 @@ The dashboard reads the following files from the results directory:
 
 ## Configuration
 
-Point the dashboard at a different results directory by editing the path in the
-sidebar or passing it as a query parameter (if implemented).
+Point the dashboard at a different results directory by entering the path in the
+**sidebar text input** (e.g. `test_results_dist`).
+
+> **Note:** The dashboard does not accept a `--results-dir` CLI flag.  The
+> results directory is configured interactively via the sidebar text input.
