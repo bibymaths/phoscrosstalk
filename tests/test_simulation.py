@@ -1,19 +1,16 @@
 """
 Regression tests for simulation.py.
-
-Verifies that simulate_p_scipy raises RuntimeError when ModelDims
-have not been initialised.
 """
 
 import numpy as np
 import pytest
 
 from phoscrosstalk.config import ModelDims
-from phoscrosstalk.simulation import simulate_p_scipy
+from phoscrosstalk.simulation import simulate
 
 
 def test_simulate_requires_modeldims_set():
-    """simulate_p_scipy must raise RuntimeError when ModelDims are None."""
+    """simulate must raise RuntimeError when ModelDims are None."""
     # Temporarily reset ModelDims
     saved = (ModelDims.K, ModelDims.M, ModelDims.N)
     ModelDims.K = None
@@ -36,7 +33,7 @@ def test_simulate_requires_modeldims_set():
         receptor_mask_kin = np.array([0, 0], dtype=np.int64)
 
         with pytest.raises(RuntimeError, match="ModelDims have not been set"):
-            simulate_p_scipy(
+            simulate(
                 t,
                 P_data,
                 A_data,

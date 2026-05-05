@@ -17,7 +17,7 @@ from tqdm import tqdm
 
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.logger import get_logger
-from phoscrosstalk.simulation import build_full_A0, simulate_p_scipy
+from phoscrosstalk.simulation import build_full_A0, simulate
 
 logger = get_logger(__name__)
 
@@ -136,7 +136,7 @@ def _evaluate_single_sample(i, theta, problem, K, M, N, sites, proteins, kinases
     # Note: problem object usually handles this inside _evaluate, we replicate here.
     A0_full = build_full_A0(K, len(problem.t), problem.A_scaled, problem.prot_idx_for_A)
 
-    P_sim, A_sim, S_sim, Kdyn_sim = simulate_p_scipy(
+    P_sim, A_sim, S_sim, Kdyn_sim = simulate(
         problem.t,
         problem.P_data,
         A0_full,
@@ -275,7 +275,7 @@ def run_global_sensitivity(
 
     # Run parallel simulations
     # 1. Create a generator for the delayed tasks
-    # NOTE: We pass the RAW param_values (log scale) to simulation because simulate_p_scipy expects them.  # noqa: E501
+    # NOTE: We pass the RAW param_values (log scale) to simulation because simulate expects them.  # noqa: E501
     tasks = (
         delayed(_evaluate_single_sample)(
             i, theta, problem, K, M, N, sites, proteins, kinases

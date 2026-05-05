@@ -12,7 +12,7 @@ Test coverage
    negative and are NOT forced positive (signed regulatory effects).
 3. RHS returns finite derivatives for non-negative input states.
 4. RHS boundary guards prevent negative derivatives at lower bounds.
-5. simulate_ode never returns negative R_sim, S_sim, A_sim, Kdyn_sim, P_sim.
+5. simulate never returns negative R_sim, S_sim, A_sim, Kdyn_sim, P_sim.
 6. Residual construction clips model outputs before computing residuals
    (no negative model outputs enter the loss).
 7. saved mrna_fit_timeseries.tsv fitted values are non-negative.
@@ -273,17 +273,17 @@ def test_rhs_boundary_guard_lower_bound():
 
 
 # ---------------------------------------------------------------------------
-# 5. simulate_ode never returns negative R, S, A, Kdyn, P
+# 5. simulate never returns negative R, S, A, Kdyn, P
 # ---------------------------------------------------------------------------
 
 
-def test_simulate_ode_nonneg_outputs():
-    """All state outputs from simulate_ode must be non-negative."""
-    from phoscrosstalk.simulation import simulate_ode
+def test_simulate_nonneg_outputs():
+    """All state outputs from simulate must be non-negative."""
+    from phoscrosstalk.simulation import simulate
 
     m = _make_tiny(K=2, M=3, N=4, T=6)
 
-    result = simulate_ode(
+    result = simulate(
         m["t"],
         m["P_data"],
         m["A_data"],

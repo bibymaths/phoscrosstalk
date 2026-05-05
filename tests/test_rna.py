@@ -5,7 +5,7 @@ Tests for RNA-as-ODE-state features:
   1. test_load_rna_data_x1_x9_timepoints
   2. test_tf_network_header_case_and_direction
   3. test_match_rna_to_model_proteins
-  4. test_simulate_ode_returns_R_state
+  4. test_simulate_returns_R_state
   5. test_rhs_state_dimension_with_R
   6. test_rna_loss_nonzero_when_sim_differs
   7. test_save_mrna_outputs_requires_simulated
@@ -166,19 +166,19 @@ def test_match_rna_to_model_proteins_no_overlap():
 
 
 # ---------------------------------------------------------------------------
-# 4. simulate_ode returns R state
+# 4. simulate returns R state
 # ---------------------------------------------------------------------------
 
 
-def test_simulate_ode_returns_R_state():
+def test_simulate_returns_R_state():
     """return_full=True must include R_sim and R_sim_rna with correct shapes."""
-    from phoscrosstalk.simulation import simulate_ode
+    from phoscrosstalk.simulation import simulate
 
     m = _make_tiny_model(K=2, M=3, N=4, T=6)
     K, _M, _N = m["K"], m["M"], m["N"]
     t_rna = np.array([4.0, 8.0, 30.0, 60.0])
 
-    result = simulate_ode(
+    result = simulate(
         m["t"],
         m["P_data"],
         m["A_data"],
@@ -501,44 +501,6 @@ def test_plot_three_panel_fit(tmp_path):
     # At least one plot file should be created
     png_files = [f for f in os.listdir(outdir) if f.endswith(".png")]
     assert len(png_files) > 0, "No PNG file created by plot_fitted_simulation"
-
-
-# ---------------------------------------------------------------------------
-# 12. Backward-compatible simulate alias
-# ---------------------------------------------------------------------------
-
-
-def test_backward_simulate_alias():
-    """simulate_p_scipy must be the same function as simulate_ode."""
-    from phoscrosstalk.simulation import simulate_ode, simulate_p_scipy
-
-    assert simulate_p_scipy is simulate_ode, (
-        "simulate_p_scipy must be an alias for simulate_ode"
-    )
-
-    # Also verify it returns old-compatible 2-tuple by default
-    m = _make_tiny_model(K=2, M=3, N=4, T=4)
-    result = simulate_p_scipy(
-        m["t"],
-        m["P_data"],
-        m["A_data"],
-        m["theta"],
-        m["Cg"],
-        m["Cl"],
-        m["site_prot_idx"],
-        m["K_site_kin"],
-        m["R"],
-        m["L_alpha"],
-        m["kin_to_prot_idx"],
-        m["receptor_mask_prot"],
-        m["receptor_mask_kin"],
-        "dist",
-    )
-    assert len(result) == 2, "Default simulate_p_scipy should return (P_sim, A_sim)"
-    P_sim, A_sim = result
-    assert P_sim.shape == (m["N"], m["T"])
-    assert A_sim.shape == (m["K"], m["T"])
-
 
 # ---------------------------------------------------------------------------
 # 13. R(t) scale sanity warning in save_mrna_outputs

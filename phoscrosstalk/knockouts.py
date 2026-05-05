@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.logger import get_logger
-from phoscrosstalk.simulation import build_full_A0, simulate_p_scipy
+from phoscrosstalk.simulation import build_full_A0, simulate
 
 logger = get_logger(__name__)
 
@@ -35,7 +35,7 @@ def run_live_knockout(
     Run a pair of ODE simulations (WT vs. single knockout) and return results.
 
     This is a clean public helper called from the dashboard; all biology is
-    delegated to ``simulate_p_scipy``.
+    delegated to ``simulate``.
 
     Perturbation types
     ------------------
@@ -95,7 +95,7 @@ def run_live_knockout(
     )
 
     # WT baseline
-    P_wt, A_wt, S_wt, Kdyn_wt = simulate_p_scipy(theta=theta_opt, **common_kwargs)
+    P_wt, A_wt, S_wt, Kdyn_wt = simulate(theta=theta_opt, **common_kwargs)
 
     # Build KO theta / K_site_kin
     theta_ko = theta_opt.copy()
@@ -133,7 +133,7 @@ def run_live_knockout(
         )
 
     common_kwargs["K_site_kin"] = K_site_kin_ko
-    P_ko, A_ko, S_ko, Kdyn_ko = simulate_p_scipy(theta=theta_ko, **common_kwargs)
+    P_ko, A_ko, S_ko, Kdyn_ko = simulate(theta=theta_ko, **common_kwargs)
 
     return {
         "wt": {"P_sim": P_wt, "A_sim": A_wt, "S_sim": S_wt, "Kdyn_sim": Kdyn_wt},
@@ -168,7 +168,7 @@ def _prot_idx_for_A(A_scaled, proteins, a_proteins):
 
 
 def _build_A0(K, t_eval, A_scaled, prot_idx_for_A):
-    """Construct initial A matrix compatible with simulate_p_scipy."""
+    """Construct initial A matrix compatible with simulate."""
     A0 = np.zeros((K, len(t_eval)), dtype=float)
     if A_scaled is not None and A_scaled.size > 0 and len(prot_idx_for_A) > 0:
         for k, p_idx in enumerate(prot_idx_for_A):
@@ -224,7 +224,7 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
             problem.prot_idx_for_A,
         )
 
-        P, _, S, Kdyn = simulate_p_scipy(
+        P, _, S, Kdyn = simulate(
             t_eval,
             problem.P_data,
             A0,

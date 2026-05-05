@@ -4,10 +4,9 @@ test_jax_migration.py
 Regression tests for the JAX/Diffrax/Optimistix migration:
 
 1. Diffrax simulation tests:
-   - simulate_ode returns correct shape
+   - simulate returns correct shape
    - no NaNs for a valid synthetic model
    - deterministic for fixed inputs
-   - backward-compatible alias simulate_p_scipy works
    - full_output mode returns 4-tuple
    - all three mechanisms (dist, seq, rand) run without error
 
@@ -98,9 +97,9 @@ def _make_tiny_model(K=2, M=3, N=4, T=6, seed=42):
 class TestDiffraxSimulation:
     def test_output_shape_dist(self):
         m = _make_tiny_model()
-        from phoscrosstalk.simulation import simulate_ode
+        from phoscrosstalk.simulation import simulate
 
-        P_sim, A_sim = simulate_ode(
+        P_sim, A_sim = simulate(
             m["t"],
             m["P_data"],
             m["A_data"],
@@ -121,9 +120,9 @@ class TestDiffraxSimulation:
 
     def test_no_nans_dist(self):
         m = _make_tiny_model()
-        from phoscrosstalk.simulation import simulate_ode
+        from phoscrosstalk.simulation import simulate
 
-        P_sim, A_sim = simulate_ode(
+        P_sim, A_sim = simulate(
             m["t"],
             m["P_data"],
             m["A_data"],
@@ -144,10 +143,10 @@ class TestDiffraxSimulation:
 
     def test_deterministic(self):
         m = _make_tiny_model()
-        from phoscrosstalk.simulation import simulate_ode
+        from phoscrosstalk.simulation import simulate
 
         def run():
-            return simulate_ode(
+            return simulate(
                 m["t"],
                 m["P_data"],
                 m["A_data"],
@@ -169,17 +168,11 @@ class TestDiffraxSimulation:
         np.testing.assert_array_equal(P1, P2)
         np.testing.assert_array_equal(A1, A2)
 
-    def test_backward_compat_alias(self):
-        """simulate_p_scipy must be an alias for simulate_ode."""
-        from phoscrosstalk.simulation import simulate_ode, simulate_p_scipy
-
-        assert simulate_p_scipy is simulate_ode
-
     def test_full_output_shape(self):
         m = _make_tiny_model()
-        from phoscrosstalk.simulation import simulate_ode
+        from phoscrosstalk.simulation import simulate
 
-        result = simulate_ode(
+        result = simulate(
             m["t"],
             m["P_data"],
             m["A_data"],
@@ -206,9 +199,9 @@ class TestDiffraxSimulation:
     @pytest.mark.parametrize("mech", ["dist", "seq", "rand"])
     def test_all_mechanisms(self, mech):
         m = _make_tiny_model()
-        from phoscrosstalk.simulation import simulate_ode
+        from phoscrosstalk.simulation import simulate
 
-        P_sim, A_sim = simulate_ode(
+        P_sim, A_sim = simulate(
             m["t"],
             m["P_data"],
             m["A_data"],
@@ -227,13 +220,13 @@ class TestDiffraxSimulation:
         assert np.all(np.isfinite(P_sim)), f"NaN in P_sim for mechanism={mech}"
 
     def test_requires_modeldims(self):
-        from phoscrosstalk.simulation import simulate_ode
+        from phoscrosstalk.simulation import simulate
 
         saved = (ModelDims.K, ModelDims.M, ModelDims.N)
         ModelDims.K = ModelDims.M = ModelDims.N = None
         try:
             with pytest.raises(RuntimeError, match="ModelDims have not been set"):
-                simulate_ode(
+                simulate(
                     np.array([0.0, 1.0]),
                     np.zeros((2, 2)),
                     np.zeros((2, 2)),
@@ -255,9 +248,9 @@ class TestDiffraxSimulation:
     def test_p_sim_clipped(self):
         """P_sim (relative phosphosite signal) must be nonnegative (≥ 0)."""
         m = _make_tiny_model()
-        from phoscrosstalk.simulation import simulate_ode
+        from phoscrosstalk.simulation import simulate
 
-        P_sim, _ = simulate_ode(
+        P_sim, _ = simulate(
             m["t"],
             m["P_data"],
             m["A_data"],
