@@ -1290,6 +1290,14 @@ class NetworkProblem:
         # arrays / config strings used to build k_act_fn / s_prod_fn so that
         # spawned worker processes can reconstruct the JAX closures without
         # receiving a non-picklable callable across process boundaries.
+        #
+        # _k_act_rebuild_kwargs expected keys (matching make_k_act_fn signature):
+        #   t_rna, rna_data, tf_prot_weights, K, interp_mode,
+        #   protein_self_rna_idx
+        #
+        # _s_prod_rebuild_kwargs expected keys (matching make_s_prod_fn signature):
+        #   t_protein, Y_data, R_kin_site, kin_to_prot_idx, K, M,
+        #   s_prod_fn_type, interp_mode
         self._k_act_rebuild_kwargs: dict | None = None
         self._s_prod_rebuild_kwargs: dict | None = None
         # RNA-specific

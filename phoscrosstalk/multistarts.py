@@ -149,7 +149,7 @@ def _run_single_start_worker(task):
         )
         return (i, True, theta_opt, total_loss, f1, f2, f3, f4, None)
     except Exception as exc:
-        return (i, False, None, None, None, None, None, None, repr(exc))
+        return (i, False, None, None, None, None, None, None, f"{type(exc).__name__}: {exc}")
 
 
 def _frechet_worker(task):
@@ -465,7 +465,8 @@ def run_multi_start_optimization(problem, args, P_scaled):
         bad_keys = _find_non_picklable_items(residual_kwargs)
         logger.warning(
             "[runtime] residual_kwargs is not picklable; falling back to serial execution.\n"
-            "    This usually means problem contains non-picklable callables or objects.\n"
+            "    This usually means the residual kwargs contain non-picklable callables\n"
+            "    (e.g. JAX closures stored under k_act_fn / s_prod_fn).\n"
             f"    Non-picklable residual kwargs: {', '.join(bad_keys) if bad_keys else '(unknown)'}"  # noqa: E501
         )
         use_parallel = False
@@ -528,7 +529,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
                             None,
                             None,
                             None,
-                            repr(exc),
+                            f"{type(exc).__name__}: {exc}",
                         )
         except Exception as exc:
             logger.warning(
@@ -578,7 +579,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
                         None,
                         None,
                         None,
-                        repr(inner_exc),
+                        f"{type(inner_exc).__name__}: {inner_exc}",
                     )
 
         # Collect results in original start order
