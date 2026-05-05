@@ -952,7 +952,7 @@ parallel_frechet = "auto"
 #   true  – raise RuntimeError on non-finite results.
 # =============================================================================
 [steadystate]
-t_end                    = 10000.0
+t_end                    = 50000.0
 early_end                = 100.0
 n_early                  = 100
 n_late                   = 80

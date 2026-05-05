@@ -264,7 +264,16 @@ def _save_dense_simulation(
     t_max = float(np.nanmax(t_obs)) if len(t_obs) > 0 else 1.0
     t_dense = np.linspace(0.0, t_max, n_dense)
 
-    A0_full = build_full_A0(K, len(t_dense), A_scaled, prot_idx_for_A)
+    # Dense simulation needs only the initial abundance state, not an abundance
+    # matrix expanded to the dense time grid. `build_full_A0` expects the number
+    # of columns in the supplied A_scaled matrix to match its T argument, so pass
+    # only the observed initial column and request T=1.
+    if A_scaled is not None and np.asarray(A_scaled).size > 0:
+        A_scaled_initial = np.asarray(A_scaled, dtype=float)[:, :1]
+    else:
+        A_scaled_initial = np.zeros((0, 1), dtype=float)
+
+    A0_full = build_full_A0(K, 1, A_scaled_initial, prot_idx_for_A)
 
     P_sim_d, A_sim_d, _S_sim_d, _K_sim_d = simulate(
         t_dense,
