@@ -325,9 +325,9 @@ def make_rhs(
         # ------------------------------------------------------------------
         # Per-protein aggregate phosphosite summaries
         # ------------------------------------------------------------------
-        num_q = jnp.zeros(K, dtype=jnp.float32).at[site_prot_idx].add(q)
-        den = jnp.zeros(K, dtype=jnp.float32).at[site_prot_idx].add(1.0)
-        num_c = jnp.zeros(K, dtype=jnp.float32).at[site_prot_idx].add(coup)
+        num_q = jnp.zeros(K, dtype=jnp.float64).at[site_prot_idx].add(q)
+        den = jnp.zeros(K, dtype=jnp.float64).at[site_prot_idx].add(1.0)
+        num_c = jnp.zeros(K, dtype=jnp.float64).at[site_prot_idx].add(coup)
 
         safe_den = jnp.where(den > 0.0, den, 1.0)
         mq = num_q / safe_den
@@ -337,7 +337,7 @@ def make_rhs(
         # 0. mRNA / transcriptional state
         # ------------------------------------------------------------------
         # Relaxation to the external/derived transcriptional drive.
-        _rna_relax = jnp.float32(rna_relax)
+        _rna_relax = jnp.asarray(rna_relax, dtype=jnp.float64)
         dR_rna = _rna_relax * (k_act - R_rna)
 
         # ------------------------------------------------------------------
@@ -375,7 +375,7 @@ def make_rhs(
         safe_p_idx = jnp.where(valid_prot, kin_to_prot_idx, 0)
 
         S_for_kin = S[safe_p_idx]
-        A_for_kin = A[safe_p_idx] / jnp.float32(abundance_max)
+        A_for_kin = A[safe_p_idx] / jnp.asarray(abundance_max, dtype=jnp.float64)
 
         prot_contrib = gamma_A_S * S_for_kin + gamma_A_p * A_for_kin
         prot_contrib = jnp.where(valid_prot, prot_contrib, 0.0)
@@ -401,7 +401,7 @@ def make_rhs(
 
         if mechanism == "dist":
             # Distributive mechanism: each site can be phosphorylated independently.
-            gate = jnp.ones(N, dtype=jnp.float32)
+            gate = jnp.ones(N, dtype=jnp.float64)
 
         elif mechanism == "seq":
             # Sequential mechanism: downstream site depends on predecessor site.
@@ -431,7 +431,7 @@ def make_rhs(
         #   - mechanism-specific gate
         #   - remaining unphosphorylated fraction
         # Protein abundance provides available substrate scale for relative phosphosite signal.  # noqa: E501
-        A_site = A[site_prot_idx] / jnp.float32(abundance_max)
+        A_site = A[site_prot_idx] / jnp.asarray(abundance_max, dtype=jnp.float64)
         A_site = jnp.clip(A_site, 0.0, None)
 
         v_on_raw = k_on_eff * coup_factor * gate * (1.0 + A_site)

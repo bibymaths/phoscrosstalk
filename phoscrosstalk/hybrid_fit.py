@@ -212,10 +212,10 @@ def lhs_screen(
     def eval_batch(batch_theta: jnp.ndarray) -> jnp.ndarray:
         return jax.vmap(lambda th: loss_fn(th, None)[0])(batch_theta)
 
-    samples_f32 = jnp.asarray(samples, dtype=jnp.float32)
+    samples_j = jnp.asarray(samples, dtype=jnp.float64)
     loss_pieces = []
     for i in range(0, n_samples, batch_size):
-        loss_pieces.append(eval_batch(samples_f32[i : i + batch_size]))
+        loss_pieces.append(eval_batch(samples_j[i : i + batch_size]))
     losses_np = np.asarray(jnp.concatenate(loss_pieces), dtype=np.float64)
 
     # Return top_p seeds sorted ascending by loss
@@ -306,8 +306,8 @@ def run_evosax(
             "Install it with: pip install evosax==0.2.0"
         ) from exc
 
-    xl_j = jnp.asarray(xl, dtype=jnp.float32)
-    xu_j = jnp.asarray(xu, dtype=jnp.float32)
+    xl_j = jnp.asarray(xl, dtype=jnp.float64)
+    xu_j = jnp.asarray(xu, dtype=jnp.float64)
     span = xu_j - xl_j
 
     def to_original(theta_norm: jnp.ndarray) -> jnp.ndarray:
@@ -316,7 +316,7 @@ def run_evosax(
 
     def to_normalized(theta: np.ndarray) -> jnp.ndarray:
         """Map [xl, xu] → [0,1]^n_var (clipped)."""
-        return jnp.clip((jnp.asarray(theta, dtype=jnp.float32) - xl_j) / span, 0.0, 1.0)
+        return jnp.clip((jnp.asarray(theta, dtype=jnp.float64) - xl_j) / span, 0.0, 1.0)
 
     # normed_fitness must be defined before the scan so it is captured as a
     # closed-over constant and never retraced inside lax.scan.
@@ -332,7 +332,7 @@ def run_evosax(
         return {"best_fitness": state.best_fitness}
 
     # Instantiate strategy (with metrics_fn if the installed version supports it)
-    solution_init = jnp.zeros(n_var, dtype=jnp.float32)
+    solution_init = jnp.zeros(n_var, dtype=jnp.float64)
     if algo == "cma_es":
         try:
             es = CMA_ES(
@@ -353,7 +353,7 @@ def run_evosax(
         except TypeError:
             es = Sep_CMA_ES(population_size=popsize, solution=solution_init)
 
-    mean_init = jnp.full(n_var, 0.5, dtype=jnp.float32)  # centre of [0,1] space
+    mean_init = jnp.full(n_var, 0.5, dtype=jnp.float64)  # centre of [0,1] space
 
     # Start from default params
     params = es.default_params
@@ -680,11 +680,11 @@ def run_qdax_mapelites(
     K = ModelDims.K
     M = ModelDims.M
 
-    xl_j = jnp.asarray(xl, dtype=jnp.float32)
-    xu_j = jnp.asarray(xu, dtype=jnp.float32)
+    xl_j = jnp.asarray(xl, dtype=jnp.float64)
+    xu_j = jnp.asarray(xu, dtype=jnp.float64)
 
     # ------------------------------------------------------------------
-    # Behaviour descriptor function (pure JAX, float32)
+    # Behaviour descriptor function (pure JAX, float64)
     # ------------------------------------------------------------------
     # Parameter layout (from decode_theta / create_bounds):
     #   [0:K]       log_k_deact   (k_deact = exp(log_k_deact))
@@ -710,17 +710,17 @@ def run_qdax_mapelites(
         jnp.ndarray
             Shape ``(2,)`` with values in ``[log10(0.1), log10(1000)]``.
         """
-        theta_f32 = jnp.asarray(theta, dtype=jnp.float32)
+        theta_j = jnp.asarray(theta, dtype=jnp.float64)
         # log_kK_deact is at indices [2K+2+2M : 2K+2+3M]
-        log_kK_deact = theta_f32[2 * K + 2 + 2 * M : 2 * K + 2 + 3 * M]
+        log_kK_deact = theta_j[2 * K + 2 + 2 * M : 2 * K + 2 + 3 * M]
         # log_d_deg is at indices [K : 2K]
-        log_d_deg = theta_f32[K : 2 * K]
+        log_d_deg = theta_j[K : 2 * K]
 
         kK_deact = jnp.exp(jnp.clip(log_kK_deact, -20.0, 10.0))
         d_deg = jnp.exp(jnp.clip(log_d_deg, -20.0, 10.0))
 
-        t_half_kinase = jnp.float32(log2) / kK_deact  # shape (M,)
-        t_half_protein = jnp.float32(log2) / d_deg  # shape (K,)
+        t_half_kinase = jnp.asarray(log2, dtype=jnp.float64) / kK_deact  # shape (M,)
+        t_half_protein = jnp.asarray(log2, dtype=jnp.float64) / d_deg  # shape (K,)
 
         # Median via sort
         median_tK = jnp.median(t_half_kinase)
@@ -750,8 +750,8 @@ def run_qdax_mapelites(
     key = jax.random.PRNGKey(seed)
     key, centroid_key = jax.random.split(key)
 
-    min_bd = jnp.array([_bd_min, _bd_min], dtype=jnp.float32)
-    max_bd = jnp.array([_bd_max, _bd_max], dtype=jnp.float32)
+    min_bd = jnp.array([_bd_min, _bd_min], dtype=jnp.float64)
+    max_bd = jnp.array([_bd_max, _bd_max], dtype=jnp.float64)
 
     centroids, centroid_key = compute_cvt_centroids_compat(
         num_descriptors=2,
@@ -766,13 +766,13 @@ def run_qdax_mapelites(
     # Initial population: perturb theta_seed
     # ------------------------------------------------------------------
     rng = np.random.default_rng(seed)
-    perturb = rng.normal(0.0, iso_sigma, (batch_size, n_var)).astype(np.float32)
+    perturb = rng.normal(0.0, iso_sigma, (batch_size, n_var)).astype(np.float64)
     init_pop_np = np.clip(
-        np.asarray(theta_seed, dtype=np.float32)[None, :] + perturb,
-        np.asarray(xl, dtype=np.float32),
-        np.asarray(xu, dtype=np.float32),
+        np.asarray(theta_seed, dtype=np.float64)[None, :] + perturb,
+        np.asarray(xl, dtype=np.float64),
+        np.asarray(xu, dtype=np.float64),
     )
-    init_genotypes = jnp.asarray(init_pop_np, dtype=jnp.float32)
+    init_genotypes = jnp.asarray(init_pop_np, dtype=jnp.float64)
 
     # ------------------------------------------------------------------
     # Emitter: isoline variation
@@ -1034,9 +1034,9 @@ def run_hybrid_fit(
     )
 
     # Rank final population by loss to choose LM seeds
-    pop_f32 = jnp.asarray(final_pop, dtype=jnp.float32)
+    pop_j = jnp.asarray(final_pop, dtype=jnp.float64)
     pop_losses = np.asarray(
-        jax.vmap(lambda theta: loss_fn(theta, None)[0])(pop_f32), dtype=np.float64
+        jax.vmap(lambda theta: loss_fn(theta, None)[0])(pop_j), dtype=np.float64
     )
     top_k_idx = np.argsort(pop_losses)[:es_top_k]
     top_k_seeds = final_pop[top_k_idx]

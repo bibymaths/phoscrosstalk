@@ -53,7 +53,7 @@ class TestMakeKActFn:
 
         K = 4
         fn = make_k_act_fn(None, None, None, K)
-        result = fn(jnp.float32(10.0))
+        result = fn(jnp.asarray(10.0))
         assert result.shape == (K,)
         np.testing.assert_allclose(np.array(result), np.ones(K), rtol=1e-5)
 
@@ -62,7 +62,7 @@ class TestMakeKActFn:
 
         t_rna, rna_data, tf_prot_weights, K = _simple_rna()
         fn = make_k_act_fn(t_rna, rna_data, tf_prot_weights, K)
-        result = fn(jnp.float32(5.0))
+        result = fn(jnp.asarray(5.0))
         assert result.shape == (K,)
 
     def test_piecewise_constant_at_zero(self):
@@ -73,7 +73,7 @@ class TestMakeKActFn:
         fn = make_k_act_fn(
             t_rna, rna_data, tf_prot_weights, K, interp_mode="piecewise_constant"
         )
-        result = np.array(fn(jnp.float32(0.0)))
+        result = np.array(fn(jnp.asarray(0.0)))
         # protein 0 reads gene 0 at t=0: rna_data[0, 0] = 1.0
         assert abs(result[0] - 1.0) < 1e-4
 
@@ -83,7 +83,7 @@ class TestMakeKActFn:
 
         t_rna, rna_data, tf_prot_weights, K = _simple_rna()
         fn = make_k_act_fn(t_rna, rna_data, tf_prot_weights, K, interp_mode="linear")
-        result = np.array(fn(jnp.float32(5.0)))
+        result = np.array(fn(jnp.asarray(5.0)))
         # protein 0 reads gene 0: at t=5 = interp between 1.0 (t=0) and 2.0 (t=10) = 1.5
         assert abs(result[0] - 1.5) < 1e-4
 
@@ -96,7 +96,7 @@ class TestMakeKActFn:
         t_rna, rna_data, tf_prot_weights, K = _simple_rna()
         fn = make_k_act_fn(t_rna, rna_data, tf_prot_weights, K)
         jit_fn = jax.jit(fn)
-        result = jit_fn(jnp.float32(15.0))
+        result = jit_fn(jnp.asarray(15.0))
         assert result.shape == (K,)
 
 
@@ -118,7 +118,7 @@ class TestMakeSProdFn:
             K=K,
             M=M,
         )
-        result = fn(jnp.float32(0.0))
+        result = fn(jnp.asarray(0.0))
         assert result.shape == (K,)
         np.testing.assert_allclose(np.array(result), np.full(K, 0.1), rtol=1e-5)
 
@@ -127,7 +127,7 @@ class TestMakeSProdFn:
 
         t_protein, Y_data, R_kin_site, kin_to_prot_idx, K, M = _simple_phospho()
         fn = make_s_prod_fn(t_protein, Y_data, R_kin_site, kin_to_prot_idx, K, M)
-        result = fn(jnp.float32(5.0))
+        result = fn(jnp.asarray(5.0))
         assert result.shape == (K,)
 
     def test_softplus_output_positive(self):
@@ -144,7 +144,7 @@ class TestMakeSProdFn:
             M,
             s_prod_fn_type="softplus",
         )
-        result = np.array(fn(jnp.float32(5.0)))
+        result = np.array(fn(jnp.asarray(5.0)))
         assert np.all(result > 0), "softplus output should be positive"
 
     def test_linear_fn(self):
@@ -161,7 +161,7 @@ class TestMakeSProdFn:
             M,
             s_prod_fn_type="linear",
         )
-        result = fn(jnp.float32(5.0))
+        result = fn(jnp.asarray(5.0))
         assert result.shape == (K,)
 
     def test_jax_traceable(self):
@@ -173,5 +173,5 @@ class TestMakeSProdFn:
         t_protein, Y_data, R_kin_site, kin_to_prot_idx, K, M = _simple_phospho()
         fn = make_s_prod_fn(t_protein, Y_data, R_kin_site, kin_to_prot_idx, K, M)
         jit_fn = jax.jit(fn)
-        result = jit_fn(jnp.float32(10.0))
+        result = jit_fn(jnp.asarray(10.0))
         assert result.shape == (K,)

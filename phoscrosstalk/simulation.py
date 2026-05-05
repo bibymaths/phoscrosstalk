@@ -180,18 +180,18 @@ def simulate(
     # Precompute static topology for sequential mechanism
     prev_site_idx = compute_prev_site_idx(site_prot_idx.astype(np.int32), N)
 
-    # Convert all topology arrays to JAX float32
+    # Convert all topology arrays to JAX float64
     args = (
-        jnp.asarray(theta, dtype=jnp.float32),
-        jnp.asarray(Cg, dtype=jnp.float32),
-        jnp.asarray(Cl, dtype=jnp.float32),
+        jnp.asarray(theta, dtype=jnp.float64),
+        jnp.asarray(Cg, dtype=jnp.float64),
+        jnp.asarray(Cl, dtype=jnp.float64),
         jnp.asarray(site_prot_idx, dtype=jnp.int32),
-        jnp.asarray(K_site_kin, dtype=jnp.float32),
-        jnp.asarray(R, dtype=jnp.float32),
-        jnp.asarray(L_alpha, dtype=jnp.float32),
+        jnp.asarray(K_site_kin, dtype=jnp.float64),
+        jnp.asarray(R, dtype=jnp.float64),
+        jnp.asarray(L_alpha, dtype=jnp.float64),
         jnp.asarray(kin_to_prot_idx, dtype=jnp.int32),
-        jnp.asarray(receptor_mask_prot, dtype=jnp.float32),
-        jnp.asarray(receptor_mask_kin, dtype=jnp.float32),
+        jnp.asarray(receptor_mask_prot, dtype=jnp.float64),
+        jnp.asarray(receptor_mask_kin, dtype=jnp.float64),
         jnp.asarray(prev_site_idx, dtype=jnp.int32),
     )
 
@@ -199,8 +199,8 @@ def simulate(
         K, M, N, mechanism, k_act_fn=k_act_fn, s_prod_fn=s_prod_fn, rna_relax=rna_relax
     )
     term = diffrax.ODETerm(rhs_fn)
-    t_eval = jnp.asarray(solver_times, dtype=jnp.float32)
-    y0_jax = jnp.asarray(x0, dtype=jnp.float32)
+    t_eval = jnp.asarray(solver_times, dtype=jnp.float64)
+    y0_jax = jnp.asarray(x0, dtype=jnp.float64)
     saveat = diffrax.SaveAt(ts=t_eval)
     stepsize_ctrl = make_stepsize_controller(rtol=rtol, atol=atol)
     solver = make_diffrax_solver(

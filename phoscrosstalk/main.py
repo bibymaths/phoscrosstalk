@@ -75,6 +75,7 @@ def _read_runtime_config():
 
 
 from phoscrosstalk.runtime_env import (  # noqa: E402
+    enable_x64,
     log_env_summary,
     plan_cpu_runtime,
     setup_cpu_env,
@@ -90,6 +91,7 @@ _cpu_plan = plan_cpu_runtime(
     reserve_cores=_runtime_cfg["reserve_cores"],
 )
 _n_cpu_threads = setup_cpu_env(n_threads=_cpu_plan.threads_per_run)
+enable_x64()  # Must be before any JAX import
 
 # ---------------------------------------------------------------------------
 # Standard library and third-party imports (JAX enters here via phoscrosstalk

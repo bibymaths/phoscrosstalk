@@ -179,15 +179,15 @@ def make_k_act_fn(
     """
     if t_rna is None or rna_data is None or tf_prot_weights is None:
         # No TF/mRNA data: constant neutral activation
-        _ones = jnp.ones(K, dtype=jnp.float32)
+        _ones = jnp.ones(K, dtype=jnp.float64)
 
         def _k_act_const(t):
             return _ones
 
         return _k_act_const
 
-    rna_data_np = np.asarray(rna_data, dtype=np.float32)
-    tf_weights_np = np.asarray(tf_prot_weights, dtype=np.float32)
+    rna_data_np = np.asarray(rna_data, dtype=np.float64)
+    tf_weights_np = np.asarray(tf_prot_weights, dtype=np.float64)
 
     # Pre-compute weighted mRNA signals per protein: (K, T_rna)
     # signal[p, t] = Σ_g tf_prot_weights[p, g] * rna_data[g, t]
@@ -209,8 +209,8 @@ def make_k_act_fn(
                     # No self-RNA available: neutral constant 1.0
                     signal[p_idx, :] = 1.0
 
-    signal_j = jnp.asarray(signal, dtype=jnp.float32)
-    times_j = jnp.asarray(t_rna, dtype=jnp.float32)
+    signal_j = jnp.asarray(signal, dtype=jnp.float64)
+    times_j = jnp.asarray(t_rna, dtype=jnp.float64)
     _interp = _interp_fn(interp_mode)
 
     def _k_act_fn(t):
@@ -262,7 +262,7 @@ def make_s_prod_fn(
         A JAX function ``fn(t) -> jnp.array(shape=(K,))``.
     """
     if Y_data is None or Y_data.size == 0 or R_kin_site.shape[0] == 0:
-        _const = jnp.full(K, 0.1, dtype=jnp.float32)
+        _const = jnp.full(K, 0.1, dtype=jnp.float64)
 
         def _s_prod_const(t):
             return _const
@@ -270,20 +270,20 @@ def make_s_prod_fn(
         return _s_prod_const
 
     # Compute kinase activity time series: (M, T)
-    kin_activity = np.asarray(R_kin_site, dtype=np.float32) @ np.asarray(
-        Y_data, dtype=np.float32
+    kin_activity = np.asarray(R_kin_site, dtype=np.float64) @ np.asarray(
+        Y_data, dtype=np.float64
     )  # (M, T)
 
     # Aggregate to proteins: (K, T)
-    prot_signal = np.zeros((K, Y_data.shape[1]), dtype=np.float32)
+    prot_signal = np.zeros((K, Y_data.shape[1]), dtype=np.float64)
     for k_idx in range(M):
         p_idx = int(kin_to_prot_idx[k_idx])
         if 0 <= p_idx < K:
             prot_signal[p_idx] += kin_activity[k_idx]
 
     _f = _scale_fn(s_prod_fn_type)
-    prot_signal_j = jnp.asarray(prot_signal, dtype=jnp.float32)
-    times_j = jnp.asarray(t_protein, dtype=jnp.float32)
+    prot_signal_j = jnp.asarray(prot_signal, dtype=jnp.float64)
+    times_j = jnp.asarray(t_protein, dtype=jnp.float64)
     _interp = _interp_fn(interp_mode)
 
     def _s_prod_fn(t):

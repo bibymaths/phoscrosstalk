@@ -108,8 +108,8 @@ def _make_residuals_fn(m, *, with_rna=False, lambda_net=1e-4):
 
     if with_rna:
         t_rna = np.array([4.0, 8.0, 30.0, 60.0])
-        rna_obs = np.ones((K, len(t_rna)), dtype=np.float32) * 1.2
-        W_rna = np.ones((K, len(t_rna)), dtype=np.float32)
+        rna_obs = np.ones((K, len(t_rna)), dtype=np.float64) * 1.2
+        W_rna = np.ones((K, len(t_rna)), dtype=np.float64)
         kw.update(
             t_mrna=t_rna,
             rna_data_scaled=rna_obs,
@@ -177,7 +177,7 @@ def test_residuals_finite_tiny_model():
     m = _make_tiny_model()
     residuals_fn = _make_residuals_fn(m)
 
-    theta0 = jnp.asarray(m["theta"], dtype=jnp.float32)
+    theta0 = jnp.asarray(m["theta"], dtype=jnp.float64)
     r, (f1, f2, f3, f4) = residuals_fn(theta0, None)
 
     r_np = np.asarray(r)
@@ -203,7 +203,7 @@ def test_failed_solve_returns_finite_penalty():
     m = _make_tiny_model()
     # Use extreme theta to try to stress the solver
     residuals_fn = _make_residuals_fn(m)
-    theta_extreme = jnp.full((m["dim"],), 100.0, dtype=jnp.float32)
+    theta_extreme = jnp.full((m["dim"],), 100.0, dtype=jnp.float64)
 
     r, (f1, f2, f3, f4) = residuals_fn(theta_extreme, None)
     r_np = np.asarray(r)
@@ -228,11 +228,11 @@ def test_rna_residual_block_uses_W_data_mrna():
     m = _make_tiny_model(K=2, M=3, N=4, T=6)
     K, T = m["K"], m["T"]
     t_rna = np.array([4.0, 8.0, 30.0, 60.0])
-    rna_obs = np.ones((K, len(t_rna)), dtype=np.float32) * 1.5
-    theta0 = jnp.asarray(m["theta"], dtype=jnp.float32)
+    rna_obs = np.ones((K, len(t_rna)), dtype=np.float64) * 1.5
+    theta0 = jnp.asarray(m["theta"], dtype=jnp.float64)
 
     def _build(w_scale):
-        W_rna = np.ones((K, len(t_rna)), dtype=np.float32) * w_scale
+        W_rna = np.ones((K, len(t_rna)), dtype=np.float64) * w_scale
         return make_residuals_fn(
             t=m["t"],
             P_data=m["P_data"],
@@ -287,7 +287,7 @@ def test_rna_disabled_gives_f4_zero():
 
     m = _make_tiny_model()
     residuals_fn = _make_residuals_fn(m, with_rna=False)
-    theta0 = jnp.asarray(m["theta"], dtype=jnp.float32)
+    theta0 = jnp.asarray(m["theta"], dtype=jnp.float64)
 
     r, (f1, f2, f3, f4) = residuals_fn(theta0, None)
 
@@ -387,7 +387,7 @@ def test_residuals_block_sizes():
 
     # Use lambda_net=0.0 to disable Laplacian regularisation for clean block size check
     residuals_fn = _make_residuals_fn(m, with_rna=False, lambda_net=0.0)
-    theta0 = jnp.asarray(m["theta"], dtype=jnp.float32)
+    theta0 = jnp.asarray(m["theta"], dtype=jnp.float64)
     r, _ = residuals_fn(theta0, None)
 
     # Without RNA and without lambda_net:
@@ -409,7 +409,7 @@ def test_residuals_block_sizes_with_rna():
 
     # Use lambda_net=0.0 to disable Laplacian regularisation for clean block size check
     residuals_fn = _make_residuals_fn(m, with_rna=True, lambda_net=0.0)
-    theta0 = jnp.asarray(m["theta"], dtype=jnp.float32)
+    theta0 = jnp.asarray(m["theta"], dtype=jnp.float64)
     r, _ = residuals_fn(theta0, None)
 
     # phospho: N*T, abundance: 0, rna: K*T_rna, reg: dim (L2 only)

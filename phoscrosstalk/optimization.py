@@ -64,13 +64,12 @@ logger = get_logger(__name__)
 
 
 # Upper bound for clipping R_rna (fold-change scale).
-# RNA fold-change values >20 are biologically implausible and risk float32 overflow.
+# RNA fold-change values >20 are biologically implausible.
 # This bound is a soft cap that still allows the optimizer to distinguish signals.
 _RNA_CLIP_UPPER: float = 20.0
 
 # Per-element penalty value returned when the ODE solve fails or produces non-finite
-# states.  This is large enough to guide the optimizer away from bad regions
-# but small enough to remain representable in float32 (~3.4e38 max).
+# states.  Large enough to guide the optimizer away from bad regions.
 _FAILED_SOLVE_PENALTY: float = 1e3
 
 @partial(jax.jit, static_argnames=("K", "M", "N"))
@@ -382,26 +381,26 @@ def make_loss_fn(
     x0[3 * K + M :] = np.clip(p0, 0.0, None)
 
     # JAX static arrays
-    Cg_j = jnp.asarray(Cg, dtype=jnp.float32)
-    Cl_j = jnp.asarray(Cl, dtype=jnp.float32)
-    K_sk_j = jnp.asarray(K_site_kin, dtype=jnp.float32)
-    R_j = jnp.asarray(R, dtype=jnp.float32)
-    La_j = jnp.asarray(L_alpha, dtype=jnp.float32)
+    Cg_j = jnp.asarray(Cg, dtype=jnp.float64)
+    Cl_j = jnp.asarray(Cl, dtype=jnp.float64)
+    K_sk_j = jnp.asarray(K_site_kin, dtype=jnp.float64)
+    R_j = jnp.asarray(R, dtype=jnp.float64)
+    La_j = jnp.asarray(L_alpha, dtype=jnp.float64)
     spi_j = jnp.asarray(site_prot_idx, dtype=jnp.int32)
     k2p_j = jnp.asarray(kin_to_prot_idx, dtype=jnp.int32)
-    rmp_j = jnp.asarray(receptor_mask_prot, dtype=jnp.float32)
-    rmk_j = jnp.asarray(receptor_mask_kin, dtype=jnp.float32)
+    rmp_j = jnp.asarray(receptor_mask_prot, dtype=jnp.float64)
+    rmk_j = jnp.asarray(receptor_mask_kin, dtype=jnp.float64)
     psi_j = jnp.asarray(prev_site_idx, dtype=jnp.int32)
 
-    y0_j = jnp.asarray(x0, dtype=jnp.float32)
-    t_eval = jnp.asarray(all_times, dtype=jnp.float32)
+    y0_j = jnp.asarray(x0, dtype=jnp.float64)
+    t_eval = jnp.asarray(all_times, dtype=jnp.float64)
 
-    P_data_j = jnp.asarray(P_data, dtype=jnp.float32)
-    A_scaled_j = jnp.asarray(A_scaled, dtype=jnp.float32)
-    W_data_j = jnp.asarray(W_data, dtype=jnp.float32)
-    W_prot_j = jnp.asarray(W_data_prot, dtype=jnp.float32)
+    P_data_j = jnp.asarray(P_data, dtype=jnp.float64)
+    A_scaled_j = jnp.asarray(A_scaled, dtype=jnp.float64)
+    W_data_j = jnp.asarray(W_data, dtype=jnp.float64)
+    W_prot_j = jnp.asarray(W_data_prot, dtype=jnp.float64)
     prot_idx_j = jnp.asarray(prot_idx_for_A, dtype=jnp.int32)
-    La_loss_j = jnp.asarray(L_alpha, dtype=jnp.float32)
+    La_loss_j = jnp.asarray(L_alpha, dtype=jnp.float64)
 
     prot_idx_solver = jnp.asarray(prot_time_idx, dtype=jnp.int32)
 
@@ -422,15 +421,15 @@ def make_loss_fn(
         # All of t_mrna, rna_data_scaled, rna_model_prot_idx are guaranteed non-None
         # and non-empty here by the has_mrna gate above.
         assert t_mrna is not None  # type checker hint
-        rna_j = jnp.asarray(rna_data_scaled, dtype=jnp.float32)
+        rna_j = jnp.asarray(rna_data_scaled, dtype=jnp.float64)
         mrna_idx_j = jnp.asarray(mrna_time_idx, dtype=jnp.int32)
         rna_prot_idx_j = jnp.asarray(rna_model_prot_idx, dtype=jnp.int32)
         n_matched = len(rna_model_prot_idx)
         T_rna = len(t_mrna)
         if W_data_rna is not None:
-            W_rna_j = jnp.asarray(W_data_rna, dtype=jnp.float32)
+            W_rna_j = jnp.asarray(W_data_rna, dtype=jnp.float64)
         else:
-            W_rna_j = jnp.ones((n_matched, T_rna), dtype=jnp.float32)
+            W_rna_j = jnp.ones((n_matched, T_rna), dtype=jnp.float64)
         n_rna = max(1, rna_data_scaled.size)
     else:
         rna_j = None
@@ -456,10 +455,10 @@ def make_loss_fn(
     t0_val = float(all_times[0])
     t1_val = float(all_times[-1])
 
-    FAILED_SOLVE_PENALTY = jnp.float32(1e6)
+    FAILED_SOLVE_PENALTY = jnp.asarray(1e6, dtype=jnp.float64)
 
     def loss_fn(theta, _args):
-        theta_j = jnp.asarray(theta, dtype=jnp.float32)
+        theta_j = jnp.asarray(theta, dtype=jnp.float64)
 
         ode_args = (
             theta_j,
@@ -524,18 +523,18 @@ def make_loss_fn(
             xs_rna = xs[mrna_idx_j, :]
             R_sim_rna = jnp.clip(
                 xs_rna[:, :K], 0.0, _RNA_CLIP_UPPER
-            ).T  # (K, T_rna); clip to prevent float32 overflow
+            ).T  # (K, T_rna); clip to prevent overflow
             R_sim_matched = R_sim_rna[rna_prot_idx_j, :]  # (n_match, T_rna)
             diff_R = rna_j - R_sim_matched
             f4 = jnp.sum(W_rna_j * diff_R * diff_R) / n_rna
         else:
-            f4 = jnp.float32(0.0)
+            f4 = jnp.asarray(0.0, dtype=jnp.float64)
 
         total = (
-            jnp.float32(w_phospho) * f1
-            + jnp.float32(w_abundance) * f2
-            + jnp.float32(w_reg) * f3
-            + jnp.float32(w_mrna) * f4
+            jnp.asarray(w_phospho, dtype=jnp.float64) * f1
+            + jnp.asarray(w_abundance, dtype=jnp.float64) * f2
+            + jnp.asarray(w_reg, dtype=jnp.float64) * f3
+            + jnp.asarray(w_mrna, dtype=jnp.float64) * f4
         )
 
         # Penalise non-finite results without crashing
@@ -656,42 +655,42 @@ def make_residuals_fn(
     x0[3 * K + M :] = np.clip(p0, 0.0, None)
 
     # JAX static arrays
-    Cg_j = jnp.asarray(Cg, dtype=jnp.float32)
-    Cl_j = jnp.asarray(Cl, dtype=jnp.float32)
-    K_sk_j = jnp.asarray(K_site_kin, dtype=jnp.float32)
-    R_j = jnp.asarray(R, dtype=jnp.float32)
-    La_j = jnp.asarray(L_alpha, dtype=jnp.float32)
+    Cg_j = jnp.asarray(Cg, dtype=jnp.float64)
+    Cl_j = jnp.asarray(Cl, dtype=jnp.float64)
+    K_sk_j = jnp.asarray(K_site_kin, dtype=jnp.float64)
+    R_j = jnp.asarray(R, dtype=jnp.float64)
+    La_j = jnp.asarray(L_alpha, dtype=jnp.float64)
     spi_j = jnp.asarray(site_prot_idx, dtype=jnp.int32)
     k2p_j = jnp.asarray(kin_to_prot_idx, dtype=jnp.int32)
-    rmp_j = jnp.asarray(receptor_mask_prot, dtype=jnp.float32)
-    rmk_j = jnp.asarray(receptor_mask_kin, dtype=jnp.float32)
+    rmp_j = jnp.asarray(receptor_mask_prot, dtype=jnp.float64)
+    rmk_j = jnp.asarray(receptor_mask_kin, dtype=jnp.float64)
     psi_j = jnp.asarray(prev_site_idx, dtype=jnp.int32)
 
-    y0_j = jnp.asarray(x0, dtype=jnp.float32)
-    t_eval = jnp.asarray(all_times, dtype=jnp.float32)
+    y0_j = jnp.asarray(x0, dtype=jnp.float64)
+    t_eval = jnp.asarray(all_times, dtype=jnp.float64)
 
-    P_data_j = jnp.asarray(P_data, dtype=jnp.float32)
-    A_scaled_j = jnp.asarray(A_scaled, dtype=jnp.float32)
+    P_data_j = jnp.asarray(P_data, dtype=jnp.float64)
+    A_scaled_j = jnp.asarray(A_scaled, dtype=jnp.float64)
     prot_idx_j = jnp.asarray(prot_idx_for_A, dtype=jnp.int32)
     prot_idx_solver = jnp.asarray(prot_time_idx, dtype=jnp.int32)
 
     # Weight arrays with modality loss weights baked in as sqrt factors
     # so that ||sqrt(w*W)*(sim-obs)||^2 == w * sum(W * (sim-obs)^2)
-    sqrt_wp = jnp.sqrt(jnp.float32(w_phospho)) * jnp.sqrt(
-        jnp.asarray(W_data, dtype=jnp.float32)
+    sqrt_wp = jnp.sqrt(jnp.asarray(w_phospho, dtype=jnp.float64)) * jnp.sqrt(
+        jnp.asarray(W_data, dtype=jnp.float64)
     )
     has_abundance = A_scaled.size > 0
     if has_abundance:
-        sqrt_wa = jnp.sqrt(jnp.float32(w_abundance)) * jnp.sqrt(
-            jnp.asarray(W_data_prot, dtype=jnp.float32)
+        sqrt_wa = jnp.sqrt(jnp.asarray(w_abundance, dtype=jnp.float64)) * jnp.sqrt(
+            jnp.asarray(W_data_prot, dtype=jnp.float64)
         )
     else:
         sqrt_wa = None
 
     # Convert weight arrays to JAX for use inside the JIT-traced residuals_fn
-    W_data_j_diag = jnp.asarray(W_data, dtype=jnp.float32)
+    W_data_j_diag = jnp.asarray(W_data, dtype=jnp.float64)
     W_prot_j_diag = (
-        jnp.asarray(W_data_prot, dtype=jnp.float32) if has_abundance else None
+        jnp.asarray(W_data_prot, dtype=jnp.float64) if has_abundance else None
     )
 
     # mRNA arrays
@@ -706,35 +705,35 @@ def make_residuals_fn(
 
     if has_mrna:
         assert t_mrna is not None
-        rna_j = jnp.asarray(rna_data_scaled, dtype=jnp.float32)
+        rna_j = jnp.asarray(rna_data_scaled, dtype=jnp.float64)
         mrna_idx_j = jnp.asarray(mrna_time_idx, dtype=jnp.int32)
         rna_prot_idx_j = jnp.asarray(rna_model_prot_idx, dtype=jnp.int32)
         n_matched = len(rna_model_prot_idx)
         T_rna = len(t_mrna)
         W_rna_base = (
-            np.asarray(W_data_mrna, dtype=np.float32)
+            np.asarray(W_data_mrna, dtype=np.float64)
             if W_data_mrna is not None
-            else np.ones((n_matched, T_rna), dtype=np.float32)
+            else np.ones((n_matched, T_rna), dtype=np.float64)
         )
-        W_rna_j_diag = jnp.asarray(W_rna_base, dtype=jnp.float32)
-        sqrt_wr = jnp.sqrt(jnp.float32(w_mrna)) * jnp.sqrt(W_rna_j_diag)
+        W_rna_j_diag = jnp.asarray(W_rna_base, dtype=jnp.float64)
+        sqrt_wr = jnp.sqrt(jnp.asarray(w_mrna, dtype=jnp.float64)) * jnp.sqrt(W_rna_j_diag)
         n_rna = max(1, rna_data_scaled.size)
     else:
         rna_j = mrna_idx_j = rna_prot_idx_j = sqrt_wr = W_rna_j_diag = None
         n_rna = 1
 
     # Regularisation residuals – fixed structure, no ODE needed
-    sqrt_reg = jnp.float32(np.sqrt(float(reg_lambda)))
+    sqrt_reg = jnp.asarray(np.sqrt(float(reg_lambda)), dtype=jnp.float64)
     has_net_reg = lambda_net > 0.0
     if has_net_reg:
-        sqrt_lnet = jnp.float32(np.sqrt(float(lambda_net)))
+        sqrt_lnet = jnp.asarray(np.sqrt(float(lambda_net)), dtype=jnp.float64)
 
     # Bounds for hard-clipping theta inside residuals_fn (prevents LM from escaping
     # the biological parameter space and producing stiff/divergent ODEs).
     has_bounds = xl is not None and xu is not None
     if has_bounds:
-        xl_j = jnp.asarray(xl, dtype=jnp.float32)
-        xu_j = jnp.asarray(xu, dtype=jnp.float32)
+        xl_j = jnp.asarray(xl, dtype=jnp.float64)
+        xu_j = jnp.asarray(xu, dtype=jnp.float64)
 
     rhs_fn = make_rhs(
         K, M, N, mechanism, k_act_fn=k_act_fn, s_prod_fn=s_prod_fn, rna_relax=rna_relax
@@ -754,7 +753,7 @@ def make_residuals_fn(
     t0_val = float(all_times[0])
     t1_val = float(all_times[-1])
 
-    PENALTY = jnp.float32(_FAILED_SOLVE_PENALTY)
+    PENALTY = jnp.asarray(_FAILED_SOLVE_PENALTY, dtype=jnp.float64)
 
     def residuals_fn(theta, _args):
         """
@@ -766,9 +765,7 @@ def make_residuals_fn(
         Uses diffrax.DirectAdjoint so that Optimistix LM can compute JVPs
         through the ODE solve without storing all intermediate states.
         """
-        theta_j = jnp.asarray(theta, dtype=jnp.float32)
-
-        # Clip theta to parameter bounds.  Optimistix LM is unconstrained by
+        theta_j = jnp.asarray(theta, dtype=jnp.float64)
         # default; without this guard the solver can drift to biologically
         # implausible values (e.g. alpha > 1000) that cause stiff/divergent ODEs.
         if has_bounds:
@@ -829,21 +826,21 @@ def make_residuals_fn(
             r_abund = (sqrt_wa * diff_A).ravel()
             f2 = jnp.sum(W_prot_j_diag * diff_A * diff_A) / n_A
         else:
-            r_abund = jnp.zeros(0, dtype=jnp.float32)
-            f2 = jnp.float32(0.0)
+            r_abund = jnp.zeros(0, dtype=jnp.float64)
+            f2 = jnp.asarray(0.0, dtype=jnp.float64)
 
         # --- mRNA residuals ---
         if has_mrna:
             xs_rna = xs[mrna_idx_j, :]
-            # Clip to prevent float32 overflow; R_rna is on fold-change scale (~0-20)
+            # Clip to prevent overflow; R_rna is on fold-change scale (~0-20)
             R_sim_rna = jnp.clip(xs_rna[:, :K], 0.0, _RNA_CLIP_UPPER).T  # (K, T_rna)
             R_sim_matched = R_sim_rna[rna_prot_idx_j, :]  # (n_match, T_rna)
             diff_R = R_sim_matched - rna_j  # (n_match, T_rna)
             r_rna = (sqrt_wr * diff_R).ravel()
             f4 = jnp.sum(W_rna_j_diag * diff_R * diff_R) / n_rna
         else:
-            r_rna = jnp.zeros(0, dtype=jnp.float32)
-            f4 = jnp.float32(0.0)
+            r_rna = jnp.zeros(0, dtype=jnp.float64)
+            f4 = jnp.asarray(0.0, dtype=jnp.float64)
 
         # --- Regularisation residuals (no ODE needed) ---
         # L2 on theta
@@ -858,14 +855,14 @@ def make_residuals_fn(
             r_reg = r_reg_l2
 
         # f3 diagnostic
-        f3_l2 = jnp.float32(reg_lambda) * jnp.dot(theta_j, theta_j)
+        f3_l2 = jnp.asarray(reg_lambda, dtype=jnp.float64) * jnp.dot(theta_j, theta_j)
         if has_net_reg:
             alpha_raw = theta_j[2 * K + 2 : 2 * K + 2 + M]
             alpha = jnp.exp(jnp.clip(alpha_raw, -20.0, 10.0))
-            f3_net = jnp.float32(lambda_net) * jnp.dot(alpha, La_j @ alpha)
+            f3_net = jnp.asarray(lambda_net, dtype=jnp.float64) * jnp.dot(alpha, La_j @ alpha)
         else:
-            f3_net = jnp.float32(0.0)
-        f3 = (f3_l2 + f3_net) / jnp.float32(max(n_var, 1))
+            f3_net = jnp.asarray(0.0, dtype=jnp.float64)
+        f3 = (f3_l2 + f3_net) / jnp.asarray(max(n_var, 1), dtype=jnp.float64)
 
         # --- Concatenate residual vector ---
         residuals = jnp.concatenate([r_phospho, r_abund, r_rna, r_reg])
@@ -878,10 +875,10 @@ def make_residuals_fn(
         )
 
         # Recalculate finite diagnostics for aux output
-        f1 = jnp.where(jnp.isfinite(f1), f1, jnp.float32(1e6))
-        f2 = jnp.where(jnp.isfinite(f2), f2, jnp.float32(1e6))
-        f3 = jnp.where(jnp.isfinite(f3), f3, jnp.float32(1e6))
-        f4 = jnp.where(jnp.isfinite(f4), f4, jnp.float32(1e6))
+        f1 = jnp.where(jnp.isfinite(f1), f1, jnp.asarray(1e6, dtype=jnp.float64))
+        f2 = jnp.where(jnp.isfinite(f2), f2, jnp.asarray(1e6, dtype=jnp.float64))
+        f3 = jnp.where(jnp.isfinite(f3), f3, jnp.asarray(1e6, dtype=jnp.float64))
+        f4 = jnp.where(jnp.isfinite(f4), f4, jnp.asarray(1e6, dtype=jnp.float64))
 
         return finite_residuals, (f1, f2, f3, f4)
 
@@ -957,7 +954,7 @@ def run_single_optimisation(
     sol = optx.least_squares(
         residuals_fn,
         solver,
-        jnp.asarray(theta0, dtype=jnp.float32),
+        jnp.asarray(theta0, dtype=jnp.float64),
         args=None,
         options={"jac": jac_mode},
         has_aux=True,
@@ -1519,12 +1516,11 @@ def compute_second_order_sensitivities(
       ``scan_kind="bounded"`` (i.e. ``Tsit5(scan_kind="bounded")``).
       :func:`make_loss_fn` already sets this; other solver paths (residuals,
       LM) are **not** modified.
-    * The Hessian is computed in float32 (matching JAX's default) and
-      immediately up-cast to float64 for numerical consistency.
+    * The Hessian is computed in float64.
     * For ``n > 40`` parameter labels the heatmap omits dense tick labels
       to remain readable.
     """
-    theta_j = jnp.asarray(theta, dtype=jnp.float32)
+    theta_j = jnp.asarray(theta, dtype=jnp.float64)
     n = len(param_labels)
 
     def _loss_only(th):
