@@ -28,6 +28,7 @@ import numpy as np
 
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.jax_mechanisms import compute_prev_site_idx, make_rhs
+from phoscrosstalk.solver_config import make_diffrax_solver, make_stepsize_controller, make_diffrax_adjoint
 
 
 def simulate_ode(
@@ -51,12 +52,15 @@ def simulate_ode(
     atol=1e-9,
     max_steps=16384,
     dt0=0.01,
+    ode_solver_kind="tsit5",
+    root_find_max_steps=10,
     k_act_fn=None,
     s_prod_fn=None,
     t_extra=None,
     t_rna=None,
     R_data0=None,
     rna_relax=0.1,
+    ode_adjoint_kind="recursive",
 ):
     """
     Simulate the phosphoproteomic network dynamics using Diffrax (JAX backend).
@@ -195,8 +199,12 @@ def simulate_ode(
     t_eval = jnp.asarray(solver_times, dtype=jnp.float32)
     y0_jax = jnp.asarray(x0, dtype=jnp.float32)
     saveat = diffrax.SaveAt(ts=t_eval)
-    stepsize_ctrl = diffrax.PIDController(rtol=rtol, atol=atol)
-    solver = diffrax.Tsit5()
+    stepsize_ctrl = make_stepsize_controller(rtol=rtol, atol=atol)
+    solver = make_diffrax_solver(
+        ode_solver_kind,
+        root_find_max_steps=root_find_max_steps,
+    )
+    adjoint = make_diffrax_adjoint(ode_adjoint_kind)
 
     try:
         sol = diffrax.diffeqsolve(
@@ -211,6 +219,7 @@ def simulate_ode(
             stepsize_controller=stepsize_ctrl,
             max_steps=max_steps,
             throw=False,
+            adjoint=adjoint,
         )
     except Exception as exc:
         raise RuntimeError(

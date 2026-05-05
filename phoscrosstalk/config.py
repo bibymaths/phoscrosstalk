@@ -87,7 +87,10 @@ _DEFAULTS = {
     "optimisation": {
         "n_starts": 3,
         "max_steps": 500,
-        "solver": "hybrid",
+        "solver": "lm",
+        "ls_solver": "lm",
+        "optx_adjoint": "implicit",
+        "jac_mode": "fwd",
         "verbose": False,
         "rtol": 1e-8,
         "atol": 1e-8,
@@ -124,9 +127,13 @@ _DEFAULTS = {
         "reg": 1.0,
     },
     "solver": {
+        "ode_solver": "tsit5",
+        "ode_adjoint": "forward",
         "rtol": 1e-6,
         "atol": 1e-9,
         "max_steps": 16384,
+        "dt0": 0.01,
+        "root_find_max_steps": 10,
     },
     "time": {
         "mrna_time_points": [4, 8, 15, 30, 60, 120, 240, 480, 960],
@@ -219,7 +226,37 @@ _VALID_INTERP = {"piecewise_constant", "linear"}
 _VALID_SCALE = {"none", "minmax", "zscore"}
 _VALID_WEIGHT = {"uniform", "inverse_variance", "time_weighted"}
 _VALID_SPROD = {"softplus", "linear"}
+_VALID_ODE_SOLVERS = {
+    "tsit5",
+    "dopri5",
+    "dopri8",
+    "bosh3",
+    "kvaerno3",
+    "kvaerno4",
+    "kvaerno5",
+}
 
+_VALID_ODE_ADJOINTS = {
+    "forward",
+    "checkpoint",
+    "direct",
+    "backsolve",
+    "none",
+}
+
+_VALID_LS_SOLVERS = {
+    "lm",
+    "indirect_lm",
+    "dogleg",
+    "gauss_newton",
+}
+
+_VALID_OPTX_ADJOINTS = {
+    "implicit",
+    "checkpoint"
+}
+
+_VALID_JAC_MODES = {"fwd", "bwd"}
 
 def _opt(val: str) -> str | None:
     """Return *val* stripped, or ``None`` if it is empty/absent."""
@@ -412,6 +449,76 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
             f"  [solver] max_steps = {solver_max!r} must be a positive integer."
         )
 
+    ode_solver = getattr(cfg.solver, "ode_solver", "tsit5")
+    if ode_solver not in _VALID_ODE_SOLVERS:
+        errors.append(
+            f"  [solver] ode_solver = {ode_solver!r} is invalid. "
+            f"Must be one of: {sorted(_VALID_ODE_SOLVERS)}"
+        )
+
+    ode_adjoint = getattr(cfg.solver, "ode_adjoint", "forward")
+    if ode_adjoint not in _VALID_ODE_ADJOINTS:
+        errors.append(
+            f"  [solver] ode_adjoint = {ode_adjoint!r} is invalid. "
+            f"Must be one of: {sorted(_VALID_ODE_ADJOINTS)}"
+        )
+
+    dt0 = getattr(cfg.solver, "dt0", 0.01)
+    if dt0 is not None and (not isinstance(dt0, (int, float)) or dt0 <= 0):
+        errors.append(f"  [solver] dt0 = {dt0!r} must be null or a positive number.")
+
+    root_find_max_steps = getattr(cfg.solver, "root_find_max_steps", 10)
+    if not isinstance(root_find_max_steps, int) or root_find_max_steps < 1:
+        errors.append(
+            f"  [solver] root_find_max_steps = {root_find_max_steps!r} "
+            "must be a positive integer."
+        )
+
+    ls_solver = getattr(cfg.optimisation, "ls_solver", "lm")
+    if ls_solver not in _VALID_LS_SOLVERS:
+        errors.append(
+            f"  [optimisation] ls_solver = {ls_solver!r} is invalid. "
+            f"Must be one of: {sorted(_VALID_LS_SOLVERS)}"
+        )
+
+    optx_adjoint = getattr(cfg.optimisation, "optx_adjoint", "implicit")
+    if optx_adjoint not in _VALID_OPTX_ADJOINTS:
+        errors.append(
+            f"  [optimisation] optx_adjoint = {optx_adjoint!r} is invalid. "
+            f"Must be one of: {sorted(_VALID_OPTX_ADJOINTS)}"
+        )
+
+    jac_mode = getattr(cfg.optimisation, "jac_mode", "fwd")
+    if jac_mode not in _VALID_JAC_MODES:
+        errors.append(
+            f"  [optimisation] jac_mode = {jac_mode!r} is invalid. "
+            f"Must be one of: {sorted(_VALID_JAC_MODES)}"
+        )
+
+    if jac_mode == "fwd" and ode_adjoint in {"recursive", "checkpoint"}:
+        errors.append(
+            "  Invalid autodiff combination: [optimisation] jac_mode = 'fwd' "
+            "requires [solver] ode_adjoint = 'forward' or 'direct'. "
+            "RecursiveCheckpointAdjoint does not support forward-mode AD."
+        )
+
+    if jac_mode == "bwd" and ode_adjoint == "forward":
+        warnings.append(
+            "  [optimisation] jac_mode = 'bwd' with [solver] ode_adjoint = 'forward' "
+            "is probably inefficient or invalid. Prefer ode_adjoint = 'recursive'."
+        )
+
+    if ode_adjoint == "direct":
+        warnings.append(
+            "  [solver] ode_adjoint = 'direct' supports mixed AD but is usually slower. "
+            "Use it mainly for Hessian/mixed-AD diagnostics."
+        )
+
+    if ode_adjoint == "backsolve":
+        warnings.append(
+            "  [solver] ode_adjoint = 'backsolve' gives approximate gradients and "
+            "is not recommended as the main fitting path."
+        )
     # -------------------------------------------------------------------
     # Derived rates
     # -------------------------------------------------------------------

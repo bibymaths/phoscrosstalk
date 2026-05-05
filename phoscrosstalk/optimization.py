@@ -40,6 +40,7 @@ import numpy as np
 import optimistix as optx
 from numba import njit
 
+from phoscrosstalk.logger import get_logger
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.core_mechanisms import decode_theta
 from phoscrosstalk.jax_mechanisms import (
@@ -48,10 +49,20 @@ from phoscrosstalk.jax_mechanisms import (
     make_rhs,
 )
 from phoscrosstalk.simulation import build_full_A0, simulate_ode
+from phoscrosstalk.solver_config import (
+    make_diffrax_adjoint,
+    make_diffrax_solver,
+    make_ls_solver,
+    make_optx_adjoint,
+    make_stepsize_controller,
+)
+
+logger = get_logger()
 
 # ---------------------------------------------------------------------------
 # Module-level constants
 # ---------------------------------------------------------------------------
+
 
 # Upper bound for clipping R_rna (fold-change scale).
 # RNA fold-change values >20 are biologically implausible and risk float32 overflow.
@@ -263,6 +274,11 @@ def make_loss_fn(
     R_data0=None,
     W_data_rna=None,
     rna_relax=0.1,
+    ode_solver_kind="tsit5",
+    ode_adjoint_kind="recursive",
+    dt0=0.01,
+    root_find_max_steps=10,
+    scan_kind=None,
 ):
     """
     Build a JAX-differentiable scalarized loss function for Optimistix.
@@ -386,12 +402,17 @@ def make_loss_fn(
         K, M, N, mechanism, k_act_fn=k_act_fn, s_prod_fn=s_prod_fn, rna_relax=rna_relax
     )
     term = diffrax.ODETerm(rhs_fn)
-    # scan_kind="bounded" is required for compatibility with jax.hessian /
-    # higher-order autodiff through Diffrax (unbounded scan cannot be unrolled
-    # by second-order AD).
-    solver = diffrax.Tsit5(scan_kind="bounded")
-    sctrl = diffrax.PIDController(rtol=rtol, atol=atol)
+    solver = make_diffrax_solver(
+        ode_solver_kind,
+        root_find_max_steps=root_find_max_steps,
+        scan_kind=scan_kind
+    )
+    sctrl = make_stepsize_controller(rtol=rtol, atol=atol)
     saveat = diffrax.SaveAt(ts=t_eval)
+    adjoint = make_diffrax_adjoint(ode_adjoint_kind)
+
+    logger.info(f"Using Diffrax adjoint: {adjoint}")
+    logger.info(f"Using Diffrax solver: {solver}")
 
     t0_val = float(all_times[0])
     t1_val = float(all_times[-1])
@@ -420,13 +441,14 @@ def make_loss_fn(
             solver,
             t0=t0_val,
             t1=t1_val,
-            dt0=0.01,
+            dt0=dt0,
             y0=y0_j,
             args=ode_args,
             saveat=saveat,
             stepsize_controller=sctrl,
             max_steps=max_steps,
             throw=False,
+            adjoint=adjoint
         )
 
         xs = sol.ys  # (T_unified, 3K+M+N) – new state layout
@@ -520,6 +542,10 @@ def make_residuals_fn(
     R_data0=None,
     W_data_mrna=None,
     rna_relax=0.1,
+    ode_solver_kind="tsit5",
+    ode_adjoint_kind="forward",
+    dt0=0.01,
+    root_find_max_steps=10,
 ):
     """
     Build a JAX-differentiable residual-vector function for Optimistix least_squares.
@@ -667,12 +693,16 @@ def make_residuals_fn(
     )
 
     term = diffrax.ODETerm(rhs_fn)
-    # Use Tsit5 + PIDController + ForwardMode for Optimistix LM.
-    # ForwardMode is the recommended adjoint when you need forward-mode autodiff (jvp).
-    ode_solver = diffrax.Tsit5()
-    sctrl = diffrax.PIDController(rtol=rtol, atol=atol)
+    ode_solver = make_diffrax_solver(
+        ode_solver_kind,
+        root_find_max_steps=root_find_max_steps
+    )
+    sctrl = make_stepsize_controller(rtol=rtol, atol=atol)
     saveat = diffrax.SaveAt(ts=t_eval)
-    adjoint = diffrax.ForwardMode()
+    adjoint = make_diffrax_adjoint(ode_adjoint_kind)
+
+    logger.info(f"Using Diffrax adjoint: {adjoint}")
+    logger.info(f"Using Diffrax solver: {ode_solver}")
 
     t0_val = float(all_times[0])
     t1_val = float(all_times[-1])
@@ -710,7 +740,7 @@ def make_residuals_fn(
             ode_solver,
             t0=t0_val,
             t1=t1_val,
-            dt0=0.01,
+            dt0=dt0,
             y0=y0_j,
             args=ode_args,
             saveat=saveat,
@@ -800,62 +830,6 @@ def make_residuals_fn(
 
     return residuals_fn
 
-
-def make_ls_solver(kind: str, rtol: float, atol: float):
-    """
-    Factory for Optimistix least-squares solvers used in run_single_optimisation.
-
-    Parameters
-    ----------
-    kind : {"lm", "indirect_lm", "dogleg", "gauss_newton"}
-        - "lm"           : LevenbergMarquardt (default)
-        - "indirect_lm" : IndirectLevenbergMarquardt (trust-region LM)
-        - "dogleg"      : Dogleg trust-region method
-        - "gauss_newton": Plain Gauss-Newton
-    rtol, atol : float
-        Convergence tolerances passed through to the solver.
-
-    Returns
-    -------
-    optimistix.AbstractLeastSquaresSolver
-    """
-    kind = kind.lower()
-    if kind == "lm":
-        return optx.LevenbergMarquardt(rtol=rtol, atol=atol)
-    if kind == "indirect_lm":
-        return optx.IndirectLevenbergMarquardt(rtol=rtol, atol=atol)
-    if kind == "dogleg":
-        return optx.Dogleg(rtol=rtol, atol=atol)
-    if kind == "gauss_newton":
-        return optx.GaussNewton(rtol=rtol, atol=atol)
-    raise ValueError(f"Unknown least-squares solver kind={kind!r}")
-
-
-def make_optx_adjoint(kind: str):
-    """
-    Factory for Optimistix adjoints used in run_single_optimisation.
-
-    These control how gradients are taken THROUGH the fixed-point solve
-    (meta-gradients), not how the Diffrax ODE is differentiated.
-
-    Parameters
-    ----------
-    kind : {"implicit", "checkpoint"}
-        - "implicit"   : ImplicitAdjoint (default in Optimistix; recommended)
-        - "checkpoint" : RecursiveCheckpointAdjoint
-
-    Returns
-    -------
-    optimistix.AbstractAdjoint
-    """
-    kind = kind.lower()
-    if kind == "implicit":
-        return optx.ImplicitAdjoint()
-    if kind == "checkpoint":
-        return optx.RecursiveCheckpointAdjoint()
-    raise ValueError(f"Unknown Optimistix adjoint kind={kind!r}")
-
-
 def run_single_optimisation(
     residuals_fn,
     theta0,
@@ -866,6 +840,7 @@ def run_single_optimisation(
     *,
     ls_solver: str = "lm",
     optx_adjoint: str = "implicit",
+    jac_mode: str = "fwd",
 ):
     """
     Run a single Optimistix least-squares optimisation of the parameter vector.
@@ -898,6 +873,8 @@ def run_single_optimisation(
     optx_adjoint : {"implicit", "checkpoint"}
         Optimistix adjoint used to differentiate through the fixed-point solve.
         Default "implicit" is Optimistix's recommended choice.
+    jac_mode : {"fwd", "rev"}
+        Jacobian mode for Optimistix. Default "fwd" is recommended for most cases.
 
     Returns
     -------
@@ -910,14 +887,20 @@ def run_single_optimisation(
         Diagnostic loss components.
     """
     # Construct solver and adjoint from simple string flags.
-    solver = make_ls_solver(ls_solver, rtol=rtol, atol=atol)
+    solver = make_ls_solver(ls_solver, rtol=rtol, atol=atol, verbose=verbose)
     adjoint = make_optx_adjoint(optx_adjoint)
+
+    if verbose:
+        logger.info(f"Using Optimistix adjoint: {optx_adjoint}")
+        logger.info(f"Using Optimistix solver: {ls_solver}")
+        logger.info(f"Using Optimistix Jacobian mode: {jac_mode}")
 
     sol = optx.least_squares(
         residuals_fn,
         solver,
         jnp.asarray(theta0, dtype=jnp.float32),
         args=None,
+        options={"jac": jac_mode},
         has_aux=True,
         max_steps=max_steps,
         adjoint=adjoint,
@@ -1247,6 +1230,10 @@ class NetworkProblem:
         R_data0=None,
         rna_relax=0.1,
         W_data_mrna=None,
+        ode_solver_kind="tsit5",
+        ode_dt0=0.01,
+        ode_root_find_max_steps=10,
+        ode_adjoint_kind="adjoint",
         **kwargs,  # absorb legacy keyword args (elementwise_runner, etc.)
     ):
         self.t = t
@@ -1281,6 +1268,10 @@ class NetworkProblem:
         self.rna_fit_genes = rna_fit_genes
         self.loss_weight_rna = loss_weight_rna
         self.R_data0 = R_data0
+        self.ode_solver_kind = ode_solver_kind
+        self.ode_dt0 = ode_dt0
+        self.ode_root_find_max_steps = ode_root_find_max_steps
+        self.ode_adjoint_kind = ode_adjoint_kind
 
     def simulate(self, x):
         """
@@ -1315,6 +1306,10 @@ class NetworkProblem:
             s_prod_fn=self.s_prod_fn,
             R_data0=self.R_data0,
             rna_relax=self.rna_relax,
+            ode_adjoint_kind=self.ode_adjoint_kind,
+            root_find_max_steps=self.ode_root_find_max_steps,
+            ode_solver_kind=self.ode_solver_kind,
+            dt0=self.ode_dt0
         )
         return P_sim
 
