@@ -46,10 +46,13 @@ def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
 
     df = pd.read_csv(path, sep=None, engine="python")
 
-    value_cols = [c for c in df.columns if c.startswith("v") or c.startswith("x")]
+    value_cols = [
+        c for c in df.columns if re.fullmatch(r"[vx]\d+", str(c), re.IGNORECASE)
+    ]
     if len(value_cols) != len(timepoints):
         raise ValueError(
-            f"Expected {len(timepoints)} value columns, found {len(value_cols)}"
+            f"Expected {len(timepoints)} value columns matching pattern [vx]<number> "
+            f"(e.g. v1, x1), found {len(value_cols)}: {value_cols}"
         )
 
     if "Protein" in df.columns:
@@ -676,6 +679,23 @@ def build_tf_prot_weights(tf_net_df, gene_ids, proteins):
         p_idx = prot_idx.get(tgt)
         if g_idx is not None and p_idx is not None:
             W[p_idx, g_idx] += w
+
+    if W.sum() == 0.0 and len(tf_net_df) > 0:
+        unmatched_tgts = sorted(set(tf_net_df["target"].astype(str)) - set(proteins))
+        unmatched_srcs = sorted(set(tf_net_df["source"].astype(str)) - set(gene_ids))
+        logger.warning(
+            "[!] build_tf_prot_weights: TF weight matrix is all-zeros despite "
+            f"{len(tf_net_df)} edge(s) in the TF network. "
+            "k_act will default to constant 1.0, effectively disabling TF regulation. "
+            "Check that TF target names match model protein names and TF source names "
+            "match RNA gene IDs. "
+            f"Unmatched targets ({len(unmatched_tgts)}): "
+            + ", ".join(unmatched_tgts[:5])
+            + ("..." if len(unmatched_tgts) > 5 else "")
+            + f" | Unmatched sources ({len(unmatched_srcs)}): "
+            + ", ".join(unmatched_srcs[:5])
+            + ("..." if len(unmatched_srcs) > 5 else "")
+        )
 
     return W
 
