@@ -13,6 +13,7 @@ Provides:
 """
 
 import os
+import threading
 from types import SimpleNamespace
 
 import numpy as np
@@ -34,11 +35,19 @@ class ModelDims:
 
     Acts as a static state holder to avoid passing dimensions recursively
     through every function in the simulation pipeline.
+
+    Note: class-level mutable state is shared across all instances and is not
+    thread-safe for concurrent writes.  A module-level lock protects
+    ``set_dims`` so that concurrent test runs (pytest-xdist) do not corrupt
+    the global state.  Worker processes that call ``set_dims`` at startup are
+    safe because spawn mode means each worker has its own address space.
     """
 
     K: int = None  # Number of Proteins
     M: int = None  # Number of Kinases
     N: int = None  # Number of Phosphosites
+
+    _lock: threading.Lock = threading.Lock()
 
     @classmethod
     def set_dims(cls, k, m, n):
@@ -53,9 +62,10 @@ class ModelDims:
         Returns:
             None
         """
-        cls.K = k
-        cls.M = m
-        cls.N = n
+        with cls._lock:
+            cls.K = k
+            cls.M = m
+            cls.N = n
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +255,7 @@ def load_config(path: str | None = None) -> SimpleNamespace:
 
 _VALID_MECHANISMS = {"dist", "seq", "rand"}
 _VALID_INTERP = {"piecewise_constant", "linear"}
-_VALID_SCALE = {"none", "minmax", "zscore"}
+_VALID_SCALE = {"none", "minmax", "log-minmax"}
 _VALID_WEIGHT = {"uniform", "early_emphasis", "early_emphasis_moderate", "late_emphasis", "flat_no_noise"}
 _VALID_SPROD = {"softplus", "linear"}
 _VALID_ODE_SOLVERS = {

@@ -117,7 +117,7 @@ def bio_score(theta):
     return float(bio_score_nb(theta, ModelDims.K, ModelDims.M, ModelDims.N))
 
 
-def create_bounds(K, M, N):
+def create_bounds(K, M, N, bounds=None):
     """
     Generates the lower (xl) and upper (xu) bound vectors for the optimization search space.
 
@@ -126,46 +126,66 @@ def create_bounds(K, M, N):
 
     Args:
         K, M, N (int): Model dimensions.
+        bounds (SimpleNamespace | None): Optional config ``[bounds]`` section.
+            When provided, ``rate_min``, ``rate_max``, ``protein_degradation_max``,
+            ``kinase_rate_max``, ``phosphatase_rate_max``, and ``gamma_abs_max``
+            override the hard-coded defaults.
 
     Returns:
         tuple: (xl, xu, dim)
     """  # noqa: E501
+    # Resolve bound values from config or fall back to hard-coded defaults.
+    if bounds is not None:
+        _rate_min = float(getattr(bounds, "rate_min", 1e-5))
+        _rate_max = float(getattr(bounds, "rate_max", 10.0))
+        _ddeg_max = float(getattr(bounds, "protein_degradation_max", 0.5))
+        _kin_max = float(getattr(bounds, "kinase_rate_max", 3.0))
+        _phos_max = float(getattr(bounds, "phosphatase_rate_max", 5.0))
+        _gamma_max = float(getattr(bounds, "gamma_abs_max", 3.0))
+    else:
+        _rate_min = 1e-5
+        _rate_max = 10.0
+        _ddeg_max = 0.5
+        _kin_max = 3.0
+        _phos_max = 5.0
+        _gamma_max = 3.0
+
     dim = 2 * K + 2 + 3 * M + N + 4
     xl, xu = np.zeros(dim), np.zeros(dim)
     idx = 0
     # Protein: k_deact, d_deg (k_act and s_prod removed – derived from data)
     # k_deact
-    xl[idx : idx + K] = np.log(1e-5)
-    xu[idx : idx + K] = np.log(10.0)
+    xl[idx : idx + K] = np.log(_rate_min)
+    xu[idx : idx + K] = np.log(_rate_max)
     idx += K
     # d_deg (restricted upper bound for biological plausibility)
-    xl[idx : idx + K] = np.log(1e-5)
-    xu[idx : idx + K] = np.log(0.5)
+    xl[idx : idx + K] = np.log(_rate_min)
+    xu[idx : idx + K] = np.log(_ddeg_max)
     idx += K
     # Coupling
-    xl[idx] = np.log(1e-5)
-    xu[idx] = np.log(10.0)
+    xl[idx] = np.log(_rate_min)
+    xu[idx] = np.log(_rate_max)
     idx += 1
-    xl[idx] = np.log(1e-5)
-    xu[idx] = np.log(10.0)
+    xl[idx] = np.log(_rate_min)
+    xu[idx] = np.log(_rate_max)
     idx += 1
     # Kinase: alpha, kK_act, kK_deact
-    xl[idx : idx + M] = np.log(1e-5)
-    xu[idx : idx + M] = np.log(10.0)
+    xl[idx : idx + M] = np.log(_rate_min)
+    xu[idx : idx + M] = np.log(_rate_max)
     idx += M
-    xl[idx : idx + M] = np.log(1e-5)
-    xu[idx : idx + M] = np.log(3.0)
+    xl[idx : idx + M] = np.log(_rate_min)
+    xu[idx : idx + M] = np.log(_kin_max)
     idx += M
-    xl[idx : idx + M] = np.log(1e-5)
-    xu[idx : idx + M] = np.log(3.0)
+    xl[idx : idx + M] = np.log(_rate_min)
+    xu[idx : idx + M] = np.log(_kin_max)
     idx += M
     # Site: k_off
-    xl[idx : idx + N] = np.log(1e-5)
-    xu[idx : idx + N] = np.log(5.0)
+    xl[idx : idx + N] = np.log(_rate_min)
+    xu[idx : idx + N] = np.log(_phos_max)
     idx += N
     # Gammas (tanh raw)
-    xl[idx : idx + 4] = -3.0
-    xu[idx : idx + 4] = 3.0
+    xl[idx : idx + 4] = -_gamma_max
+    xu[idx : idx + 4] = _gamma_max
     idx += 4
     return xl, xu, dim
 
@@ -275,7 +295,7 @@ def make_loss_fn(
     W_data_rna=None,
     rna_relax=0.1,
     ode_solver_kind="tsit5",
-    ode_adjoint_kind="recursive",
+    ode_adjoint_kind="forward",
     dt0=0.01,
     root_find_max_steps=10,
     scan_kind=None,
@@ -898,8 +918,8 @@ def run_single_optimisation(
     theta_opt : np.ndarray
         Best-fit parameter vector (float64).
     total_loss : float
-        f1 + f2 + f3 + f4 (diagnostic sum; per-modality weights already included
-        in the residuals).
+        f1 + f2 + f3 (selection metric; f4 is excluded to avoid scale domination
+        by the RNA loss which operates on a different scale from f1/f2).
     f1, f2, f3, f4 : float
         Diagnostic loss components.
     """
@@ -928,7 +948,10 @@ def run_single_optimisation(
     # Recompute diagnostics at the optimal point (aux from the last solver step)
     _, (f1, f2, f3, f4) = residuals_fn(sol.value, None)
     f1, f2, f3, f4 = float(f1), float(f2), float(f3), float(f4)
-    total_loss = f1 + f2 + f3 + f4  # diagnostic sum; modality weights are in residuals
+    # Use f1+f2+f3 only for best-run selection to avoid scale domination by f4
+    # (f1/f2 are phosphosite/abundance MSE; f4 is RNA MSE which can be much larger).
+    # f4 is returned for diagnostic reporting but excluded from the selection metric.
+    total_loss = f1 + f2 + f3  # selection metric; f4 treated as regulariser diagnostic
 
     return theta_opt, total_loss, f1, f2, f3, f4
 
