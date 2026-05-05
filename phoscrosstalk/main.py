@@ -824,6 +824,9 @@ def main():
         ode_dt0=args.ode_dt0,
         ode_root_find_max_steps=args.ode_root_find_max_steps,
         ode_adjoint_kind=args.ode_adjoint,
+        rtol=args.rtol,
+        atol=args.atol,
+        max_steps=args.solver_max_steps,
     )
 
     # Validate problem shapes before starting optimization
