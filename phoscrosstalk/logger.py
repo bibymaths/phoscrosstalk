@@ -42,7 +42,7 @@ class RichLogger:
 
     def __new__(cls, name="PhosCrosstalk", log_file="pipeline.log", level=logging.INFO):
         if cls._instance is None:
-            cls._instance = super(RichLogger, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
             cls._instance._setup(name, log_file, level)
         return cls._instance
 
@@ -168,7 +168,7 @@ class RichLogger:
 
         Args:
             msg (str): The header title text.
-        """
+        """  # noqa: E501
         console.print()
         console.rule(f"[header]{msg}[/header]")
         self.logger.info(f"=== {msg} ===")

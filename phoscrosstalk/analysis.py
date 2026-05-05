@@ -32,8 +32,8 @@ def save_run_results(outdir, F, X, f1, f2, f3, J, F_best):
         f1 (np.ndarray): Phosphosite error component for each solution.
         f2 (np.ndarray): Protein abundance error component for each solution.
         f3 (np.ndarray): Regularization component for each solution.
-        J (np.ndarray): Total loss (scalar objective) per solution, used for model selection.
-        F_best (np.ndarray): The loss components corresponding to the selected best solution.
+        J (np.ndarray): Total loss per solution, used for model selection.
+        F_best (np.ndarray): The loss components for the best solution.
 
     Returns:
         None: Files are written to `outdir`.  Output filenames are preserved for
@@ -226,7 +226,8 @@ def save_fitted_simulation(
     kinases=None,
 ):
     """
-    Run a simulation with optimized parameters, rescale outputs, and save comparison data.
+    Run a simulation with optimized parameters,
+    rescale outputs, and save comparison data.
 
     This function simulates the model using `theta_opt`, rescales the results to match
     experimental data units (using baselines/amplitudes), and aggregates both simulated
@@ -285,7 +286,7 @@ def save_fitted_simulation(
         "proteins": np.array(proteins),
         "sites": np.array(sites),
     }
-    for name, val in zip(param_names, params_decoded):
+    for name, val in zip(param_names, params_decoded, strict=True):
         save_dict[name] = val
     np.savez(os.path.join(outdir, "fitted_params.npz"), **save_dict)
 
@@ -516,7 +517,7 @@ def plot_fitted_simulation(outdir):
             n_panels,
             figsize=(9 * n_panels, 7),
             gridspec_kw={"wspace": 0.12},
-            constrained_layout=True
+            constrained_layout=True,
         )
         axes = list(axes)
 
@@ -728,7 +729,7 @@ def plot_goodness_of_fit(file, outdir):
 
     Returns:
         None: Saves 'goodness_of_fit.png' to `outdir`.
-    """
+    """  # noqa: E501
     df = pd.read_csv(file, sep="\t")
 
     sim_cols = [c for c in df.columns if c.startswith("sim_t")]
@@ -782,7 +783,7 @@ def plot_goodness_of_fit(file, outdir):
     delta = float(np.quantile(abs_resid, 0.975))
 
     # Identify outside-band points at the per-item level (row label)
-    # We'll label only those with any timepoint outside band, and choose the worst deviation.
+    # We'll label only those with any timepoint outside band, and choose the worst deviation.  # noqa: E501
     outside_items = []
     outside_points = []  # (x, y, label, dev)
 
@@ -865,7 +866,7 @@ def plot_goodness_of_fit(file, outdir):
     plt.plot(xx, xx - delta, "k:", lw=1.5)
 
     # Label outside-band points (top deviators only)
-    for px, py, lab, dev in outside_points:
+    for px, py, lab, _dev in outside_points:
         plt.scatter(
             [px], [py], s=70, facecolors="none", edgecolors="black", linewidths=1.5
         )
@@ -1023,7 +1024,7 @@ def _save_preopt_snapshot_txt_csv(
 
     Returns:
         None: Creates a 'preopt_snapshot' folder containing metadata and data files.
-    """
+    """  # noqa: E501
     snap_dir = os.path.join(outdir, "preopt_snapshot")
     os.makedirs(snap_dir, exist_ok=True)
 
@@ -1117,15 +1118,28 @@ def _save_preopt_snapshot_txt_csv(
     _save_vector_tsv(os.path.join(snap_dir, "xu.tsv"), xu)
 
     # Also write a consolidated NPZ for faster dashboard loading
-    save_preopt_snapshot_npz(snap_dir, t=t, Y=Y, P_scaled=P_scaled,
-                             A_data=A_data, A_scaled=A_scaled, Cg=Cg, Cl=Cl,
-                             K_site_kin=K_site_kin, R=R, L_alpha=L_alpha,
-                             W_data=W_data, W_data_prot=W_data_prot,
-                             site_prot_idx=site_prot_idx,
-                             kin_to_prot_idx=kin_to_prot_idx,
-                             receptor_mask_prot=receptor_mask_prot,
-                             receptor_mask_kin=receptor_mask_kin,
-                             positions=positions, xl=xl, xu=xu)
+    save_preopt_snapshot_npz(
+        snap_dir,
+        t=t,
+        Y=Y,
+        P_scaled=P_scaled,
+        A_data=A_data,
+        A_scaled=A_scaled,
+        Cg=Cg,
+        Cl=Cl,
+        K_site_kin=K_site_kin,
+        R=R,
+        L_alpha=L_alpha,
+        W_data=W_data,
+        W_data_prot=W_data_prot,
+        site_prot_idx=site_prot_idx,
+        kin_to_prot_idx=kin_to_prot_idx,
+        receptor_mask_prot=receptor_mask_prot,
+        receptor_mask_kin=receptor_mask_kin,
+        positions=positions,
+        xl=xl,
+        xu=xu,
+    )
 
     # Write entity labels NPZ
     _labels_npz = os.path.join(snap_dir, "entity_labels.npz")
@@ -1140,11 +1154,29 @@ def _save_preopt_snapshot_txt_csv(
         )
 
 
-def save_preopt_snapshot_npz(snap_dir, *, t, Y, P_scaled, A_data, A_scaled,
-                              Cg, Cl, K_site_kin, R, L_alpha, W_data,
-                              W_data_prot, site_prot_idx, kin_to_prot_idx,
-                              receptor_mask_prot, receptor_mask_kin,
-                              positions, xl, xu) -> None:
+def save_preopt_snapshot_npz(
+    snap_dir,
+    *,
+    t,
+    Y,
+    P_scaled,
+    A_data,
+    A_scaled,
+    Cg,
+    Cl,
+    K_site_kin,
+    R,
+    L_alpha,
+    W_data,
+    W_data_prot,
+    site_prot_idx,
+    kin_to_prot_idx,
+    receptor_mask_prot,
+    receptor_mask_kin,
+    positions,
+    xl,
+    xu,
+) -> None:
     """
     Save a consolidated machine-readable NPZ of all pre-optimisation inputs.
 

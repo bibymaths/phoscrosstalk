@@ -160,7 +160,7 @@ def test_extended_mode_warns_on_filtered_inputs(monkeypatch, tmp_path, capsys):
     _make_rna_csv(rna_csv, ["PROT1"])
     _make_tf_net_csv(tf_net_csv, [("TF1", "PROT1", 1.0)])
 
-    # Simulate calling main() with the filtered flag by inspecting warning logic directly
+    # Simulate calling main() with the filtered flag by inspecting warning logic directly  # noqa: E501
     # We patch logger to capture warnings
     warnings_seen = []
 
@@ -185,8 +185,7 @@ def test_extended_mode_warns_on_filtered_inputs(monkeypatch, tmp_path, capsys):
     orig_logger = _mod.logger
     _mod.logger = _FakeLogger()
     try:
-        # Call the validation logic inline (it's part of main; we test the logic, not the full run)
-        include_tfs_as_proteins = True
+        # Call the validation logic inline (it's part of main; we test the logic, not the full run)  # noqa: E501
         for _path in [filtered_data, rna_csv]:
             if _path and "filtered" in os.path.basename(_path).lower():
                 _mod.logger.warning(
@@ -223,7 +222,7 @@ def test_tf_source_included_as_model_protein_without_tf_upstream():
         }
     )
     gene_ids = ["TF_SOURCE", "TARGET_PROT"]
-    rna_matrix = np.ones((2, 9), dtype=float)
+    np.ones((2, 9), dtype=float)
 
     tf_prot_weights = build_tf_prot_weights(tf_net_df, gene_ids, proteins)
 
@@ -338,7 +337,6 @@ def test_tf_protein_self_rna_k_act_fallback():
     """make_k_act_fn uses self-RNA signal for a protein without TF upstream
     edges when protein_self_rna_idx specifies a valid RNA row."""
     K = 2
-    T_rna = 4
     t_rna = np.array([0.0, 1.0, 2.0, 3.0])
     # Gene 0 = TF_SOURCE, Gene 1 = TARGET (should have TF input)
     rna_data = np.array(

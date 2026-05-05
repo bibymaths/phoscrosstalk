@@ -164,7 +164,7 @@ def test_build_c_matrices_missing_inter(tmp_path):
     conn = sqlite3.connect(intra_path)
     conn.execute(
         "CREATE TABLE intra_pairs "
-        "(id INTEGER PRIMARY KEY, protein TEXT, residue1 TEXT, score1 REAL, residue2 TEXT, score2 REAL)"
+        "(id INTEGER PRIMARY KEY, protein TEXT, residue1 TEXT, score1 REAL, residue2 TEXT, score2 REAL)"  # noqa: E501
     )
     conn.commit()
     conn.close()

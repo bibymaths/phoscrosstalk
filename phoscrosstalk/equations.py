@@ -50,7 +50,7 @@ def _latex_preamble(
     orient = "landscape" if landscape else "portrait"
 
     # Keep packages minimal but robust for long equations.
-    # - breqn helps line-breaking in displayed equations (can be imperfect, but useful here).
+    # - breqn helps line-breaking in displayed equations (can be imperfect, but useful here).  # noqa: E501
     # - longtable for multi-page tables.
     # - geometry for paper/margins/orientation.
     return rf"""
@@ -131,8 +131,6 @@ def _generate_latex_source(
             gamma_K_net,
         ) = decode_theta(theta, K, M, N)
         # k_act and s_prod are derived from data, not fitted
-        k_act = None
-        s_prod = None
 
     # Parameter lookup helper
     def get_p(arr_name, idx, symbol_base):
@@ -338,11 +336,11 @@ def _generate_latex_source(
 
     if mechanism == "seq":
         lines.append(
-            r"\textcolor{blue}{\textbf{Sequential Model:}} Rate depends on predecessor $p_{i-1}$. \\"
+            r"\textcolor{blue}{\textbf{Sequential Model:}} Rate depends on predecessor $p_{i-1}$. \\"  # noqa: E501
         )
     elif mechanism == "rand":
         lines.append(
-            r"\textcolor{blue}{\textbf{Cooperative Model:}} Rate depends on mean protein occupancy $\bar{p}$. \\"
+            r"\textcolor{blue}{\textbf{Cooperative Model:}} Rate depends on mean protein occupancy $\bar{p}$. \\"  # noqa: E501
         )
 
     prev_prot_idx = -1

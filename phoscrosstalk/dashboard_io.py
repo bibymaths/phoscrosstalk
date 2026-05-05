@@ -19,7 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import numpy as np
@@ -336,7 +336,7 @@ def load_derived_rates(results_dir: str) -> dict[str, Any] | None:
     Returns dict with possible keys:
       'proteins', 't_k_act', 't_s_prod', 'k_act', 's_prod'
     Returns None if neither source is available.
-    """
+    """  # noqa: E501
     # Try NPZ first
     npz_path = os.path.join(results_dir, "derived_rates.npz")
     if os.path.exists(npz_path):
@@ -657,7 +657,7 @@ def build_dashboard_cache(results_dir: str, force: bool = False) -> dict[str, An
     # ------------------------------------------------------------------
     manifest = {
         "schema_version": _SCHEMA_VERSION,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "results_dir": os.path.abspath(results_dir),
         "created_files": created,
         "skipped_files": skipped,

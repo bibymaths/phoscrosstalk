@@ -5,6 +5,7 @@ Entry point for the Global Phospho-Network Model orchestration.
 """
 
 import os
+
 os.environ["JAX_PLATFORMS"] = "cpu"
 
 import argparse
@@ -24,6 +25,8 @@ from phoscrosstalk.logo import print_logo
 from phoscrosstalk.multistarts import run_multi_start_optimization
 from phoscrosstalk.optimization import (
     NetworkProblem as NetworkOptimizationProblem,
+)
+from phoscrosstalk.optimization import (
     create_bounds,
     make_loss_fn,
     make_residuals_fn,
@@ -337,7 +340,7 @@ def main():
     receptor_names = set(list(cfg.model.receptors))
     receptor_kin_names = set(list(cfg.model.receptor_kinases))
 
-    # Optimisation / solver / misc – expose on a namespace for run_multi_start_optimization
+    # Optimisation / solver / misc – expose on a namespace for run_multi_start_optimization  # noqa: E501
     args = SimpleNamespace(
         data=data_path,
         ptm_intra=ptm_intra_path,
@@ -478,14 +481,14 @@ def main():
             df = pd.read_csv(path, sep="\t")
             s = set()
             for c in ["Site1", "Site2"]:
-                for p, site in zip(df["Protein"], df[c]):
+                for p, site in zip(df["Protein"], df[c], strict=False):
                     if pd.notna(p) and pd.notna(site):
                         s.add(f"{p}_{site}")
             return s
 
         allowed = load_allowed(args.crosstalk_tsv)
         mask = np.array([s in allowed for s in sites], dtype=bool)
-        sites = [s for s, m in zip(sites, mask) if m]
+        sites = [s for s, m in zip(sites, mask, strict=False) if m]
         positions = positions[mask]
         Y = Y[mask, :]
         site_prot_idx = site_prot_idx[mask]
@@ -754,7 +757,7 @@ def main():
             W_data_mrna_matched = W_data_mrna[rna_obs_idx_raw, :]
             R_data0 = data_loader.build_full_R0(K, gene_ids, rna_matrix, proteins)
             logger.info(
-                f"[*] RNA-to-model mapping: {len(rna_fit_genes)} matched genes/proteins."
+                f"[*] RNA-to-model mapping: {len(rna_fit_genes)} matched genes/proteins."  # noqa: E501
             )
         else:
             logger.warning(
@@ -921,7 +924,7 @@ def main():
     f2 = F[:, 1]
     f3 = F[:, 2]
     # f4 (RNA loss) is in column 3 when present
-    f4 = F[:, 3] if F.shape[1] > 3 else np.zeros(len(f1))
+    F[:, 3] if F.shape[1] > 3 else np.zeros(len(f1))
 
     analysis.save_derived_rates(
         outdir=outdir,

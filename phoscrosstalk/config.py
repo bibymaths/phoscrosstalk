@@ -248,7 +248,7 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
     Args:
         cfg:         Loaded config namespace from :func:`load_config`.
         config_path: Path that was passed to :func:`load_config` (for error messages).
-    """
+    """  # noqa: E501
     errors: list[str] = []
     warnings: list[str] = []
 
@@ -311,7 +311,7 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
     if not kinase_tsv and not kea_ks_table:
         warnings.append(
             "  [paths] Neither kinase_tsv nor kea_ks_table is set. "
-            "The model will fall back to an identity kinase mapping (no biological priors). "
+            "The model will fall back to an identity kinase mapping (no biological priors). "  # noqa: E501
             "Set [paths] kinase_tsv or [paths] kea_ks_table in config.toml."
         )
 
@@ -352,18 +352,18 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
     if include_tfs:
         if not rna_data:
             errors.append(
-                "  [model] include_tfs_as_proteins = true requires [paths] rna_data to be set."
+                "  [model] include_tfs_as_proteins = true requires [paths] rna_data to be set."  # noqa: E501
             )
         if not tf_net:
             errors.append(
-                "  [model] include_tfs_as_proteins = true requires [paths] tf_net to be set."
+                "  [model] include_tfs_as_proteins = true requires [paths] tf_net to be set."  # noqa: E501
             )
         # Warn if filenames look like filtered data
         for field, path in [("data", data), ("rna_data", rna_data)]:
             if path and "filtered" in os.path.basename(path).lower():
                 warnings.append(
-                    f"  [model] include_tfs_as_proteins = true expects full (unfiltered) "
-                    f"time-series files. [paths] {field} appears to be filtered: {path!r}. "
+                    f"  [model] include_tfs_as_proteins = true expects full (unfiltered) "  # noqa: E501
+                    f"time-series files. [paths] {field} appears to be filtered: {path!r}. "  # noqa: E501
                     "Filtered files may exclude TF proteins before modeling."
                 )
 
@@ -476,7 +476,7 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
             )
         if not isinstance(ss_early_end, (int, float)) or ss_early_end <= 0:
             errors.append(
-                f"  [steadystate] early_end = {ss_early_end!r} must be a positive number."
+                f"  [steadystate] early_end = {ss_early_end!r} must be a positive number."  # noqa: E501
             )
         if (
             isinstance(ss_t_end, (int, float))
@@ -508,15 +508,13 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
             errors.append(
                 f"  [steadystate] atol = {ss_atol!r} must be a positive number."
             )
-        if ss_dt0 is not None and (
-            not isinstance(ss_dt0, (int, float)) or ss_dt0 <= 0
-        ):
+        if ss_dt0 is not None and (not isinstance(ss_dt0, (int, float)) or ss_dt0 <= 0):
             errors.append(
                 f"  [steadystate] dt0 = {ss_dt0!r} must be null or a positive number."
             )
         if not isinstance(ss_max_steps, int) or ss_max_steps < 1:
             errors.append(
-                f"  [steadystate] max_steps = {ss_max_steps!r} must be a positive integer."
+                f"  [steadystate] max_steps = {ss_max_steps!r} must be a positive integer."  # noqa: E501
             )
         if not isinstance(ss_top_n, int) or ss_top_n < 1:
             errors.append(

@@ -69,7 +69,7 @@ def export_network_for_cytoscape(
         for j in range(M):  # Kinase j
             weight_base = K_site_kin[i, j]
             if weight_base > 1e-6:
-                # Effective strength = Connectivity * Kinase_Global_Alpha * Kinase_Activity_Rate
+                # Effective strength = Connectivity * Kinase_Global_Alpha * Kinase_Activity_Rate  # noqa: E501
                 eff_weight = weight_base * alpha[j] * kK_act[j]
 
                 edges.append(
@@ -101,7 +101,7 @@ def export_network_for_cytoscape(
     df_edges = pd.DataFrame(edges)
     df_edges.to_csv(os.path.join(outdir, "network_cytoscape_edges.csv"), index=False)
 
-    # Save Node Attributes (e.g. Total Activity) can be added here if simulated data is passed
+    # Save Node Attributes (e.g. Total Activity) can be added here if simulated data is passed  # noqa: E501
     logger.success(f"    -> Saved {len(edges)} edges to network_cytoscape_edges.csv")
 
 
@@ -133,7 +133,7 @@ def plot_residual_heatmap(outdir, P_obs, P_sim, sites, t):
     )
 
     plt.title(
-        "Residuals (Observed - Simulated)\nRed = Model Underestimates | Blue = Model Overestimates"
+        "Residuals (Observed - Simulated)\nRed = Model Underestimates | Blue = Model Overestimates"  # noqa: E501
     )
     plt.xlabel("Time (min)")
     plt.ylabel("Phosphosites (Sorted by Error)")

@@ -167,7 +167,7 @@ def make_k_act_fn(
     # A protein has TF input if its tf_prot_weights row is non-zero.
     if protein_self_rna_idx is not None:
         self_rna_idx = np.asarray(protein_self_rna_idx, dtype=int)
-        T_rna = rna_data_np.shape[1]
+        rna_data_np.shape[1]
         for p_idx in range(K):
             row_sum = float(tf_weights_np[p_idx].sum())
             if row_sum == 0.0:

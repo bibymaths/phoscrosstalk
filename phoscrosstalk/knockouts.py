@@ -95,9 +95,7 @@ def run_live_knockout(
     )
 
     # WT baseline
-    P_wt, A_wt, S_wt, Kdyn_wt = simulate_p_scipy(
-        theta=theta_opt, **common_kwargs
-    )
+    P_wt, A_wt, S_wt, Kdyn_wt = simulate_p_scipy(theta=theta_opt, **common_kwargs)
 
     # Build KO theta / K_site_kin
     theta_ko = theta_opt.copy()
@@ -118,7 +116,9 @@ def run_live_knockout(
             p_idx = proteins.index(ko_target)
             theta_ko[p_idx] = 10.0  # log(k_deact) = 10 → k_deact ≈ 22026
         except (ValueError, IndexError) as exc:
-            raise ValueError(f"Protein '{ko_target}' not found in protein list.") from exc
+            raise ValueError(
+                f"Protein '{ko_target}' not found in protein list."
+            ) from exc
 
     elif ko_type_lower == "site":
         try:
@@ -128,12 +128,12 @@ def run_live_knockout(
             raise ValueError(f"Site '{ko_target}' not found in site list.") from exc
 
     else:
-        raise ValueError(f"Unknown ko_type '{ko_type}'. Use 'kinase', 'protein', or 'site'.")
+        raise ValueError(
+            f"Unknown ko_type '{ko_type}'. Use 'kinase', 'protein', or 'site'."
+        )
 
     common_kwargs["K_site_kin"] = K_site_kin_ko
-    P_ko, A_ko, S_ko, Kdyn_ko = simulate_p_scipy(
-        theta=theta_ko, **common_kwargs
-    )
+    P_ko, A_ko, S_ko, Kdyn_ko = simulate_p_scipy(theta=theta_ko, **common_kwargs)
 
     return {
         "wt": {"P_sim": P_wt, "A_sim": A_wt, "S_sim": S_wt, "Kdyn_sim": Kdyn_wt},
@@ -203,7 +203,7 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
 
     Returns:
         None: Saves 'knockout_l2fc.tsv' and 'knockout_clustermap.png' to disk.
-    """
+    """  # noqa: E501
     logger.info("\n[*] Running Systematic Knockout Screen (Fold Change)...")
     ko_dir = os.path.join(outdir, "knockouts")
     os.makedirs(ko_dir, exist_ok=True)
@@ -249,7 +249,7 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
     res_P, res_S, res_Kdyn = {}, {}, {}
 
     # 2. Kinase Knockouts (Set Alpha -> 0)
-    # Alpha index in parameter vector: 2*K + 2  (k_deact: K, d_deg: K, beta_g: 1, beta_l: 1)
+    # Alpha index in parameter vector: 2*K + 2  (k_deact: K, d_deg: K, beta_g: 1, beta_l: 1)  # noqa: E501
     idx_alpha = 2 * K + 2
     for m, kin_name in enumerate(tqdm(kinases, desc="Kinase KOs")):
         theta_ko = theta_opt.copy()

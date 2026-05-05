@@ -470,7 +470,7 @@ class TestCLIRegression:
         assert exc.value.code == 0
 
     def test_old_flags_removed(self, monkeypatch):
-        """Legacy flags --gen, --pop-size, --algorithm, --data, etc. are now rejected."""
+        """Legacy flags --gen, --pop-size, --algorithm, --data, etc. are now rejected."""  # noqa: E501
         monkeypatch.setattr(
             sys,
             "argv",

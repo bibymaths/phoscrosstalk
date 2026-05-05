@@ -122,8 +122,8 @@ def run_multi_start_optimization(problem, args, P_scaled):
     xu = problem.xu
 
     # Build the residual-vector function for LevenbergMarquardt + optx.least_squares.
-    # This is the primary fitting path following the canonical Diffrax+Optimistix approach.
-    # We use make_residuals_fn (not make_loss_fn) so the optimizer sees a residual vector.
+    # This is the primary fitting path following the canonical Diffrax+Optimistix approach.  # noqa: E501
+    # We use make_residuals_fn (not make_loss_fn) so the optimizer sees a residual vector.  # noqa: E501
     residuals_fn = make_residuals_fn(
         t=problem.t,
         P_data=problem.P_data,
@@ -169,11 +169,11 @@ def run_multi_start_optimization(problem, args, P_scaled):
     logger.info("    ODE solver: Diffrax Tsit5 + PIDController + DirectAdjoint")
     logger.info(f"    {len(starts)} starting points, max_steps={max_steps} each")
     logger.info(
-        f"    weights: phospho={w_phospho}, abundance={w_abundance}, reg={w_reg}, mrna={w_mrna}"
+        f"    weights: phospho={w_phospho}, abundance={w_abundance}, reg={w_reg}, mrna={w_mrna}"  # noqa: E501
     )
     logger.info(f"    Optimistix rtol={opt_rtol}, atol={opt_atol}")
     logger.info(
-        f"    ODE rtol={getattr(args, 'rtol', 1e-6)}, atol={getattr(args, 'atol', 1e-9)}, max_steps={getattr(args, 'solver_max_steps', 16384)}"
+        f"    ODE rtol={getattr(args, 'rtol', 1e-6)}, atol={getattr(args, 'atol', 1e-9)}, max_steps={getattr(args, 'solver_max_steps', 16384)}"  # noqa: E501
     )
 
     all_X, all_F, all_total = [], [], []
@@ -194,7 +194,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
             all_F.append([f1, f2, f3, f4])
             all_total.append(total_loss)
             logger.info(
-                f"    -> total={total_loss:.4f}  f1={f1:.4f}  f2={f2:.4f}  f3={f3:.4f}  f4={f4:.4f}"
+                f"    -> total={total_loss:.4f}  f1={f1:.4f}  f2={f2:.4f}  f3={f3:.4f}  f4={f4:.4f}"  # noqa: E501
             )
         except Exception as e:
             logger.warning(f"    -> Run {i + 1} failed: {e}")

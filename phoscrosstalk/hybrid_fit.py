@@ -27,17 +27,14 @@ function is called.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass, replace
 from types import SimpleNamespace
-from dataclasses import fields, is_dataclass, replace
 
 import jax
 import jax.numpy as jnp
 import numpy as np
-
 from evosax.algorithms import CMA_ES, Sep_CMA_ES
 from evosax.core.restart import RestartParams, RestartState, cma_cond, spread_cond
-
 from qdax.core.containers.mapelites_repertoire import (
     MapElitesRepertoire,
     compute_cvt_centroids,
@@ -45,12 +42,13 @@ from qdax.core.containers.mapelites_repertoire import (
 from qdax.core.emitters.mutation_operators import isoline_variation
 
 from phoscrosstalk.config import ModelDims
+from phoscrosstalk.logger import get_logger
 from phoscrosstalk.optimization import (
     run_single_optimisation,
 )
-from phoscrosstalk.logger import get_logger
 
 logger = get_logger()
+
 
 # ---------------------------------------------------------------------------
 # Result container
@@ -101,13 +99,14 @@ class HybridFitResult:
     qdax_genotypes: np.ndarray
 
     def __iter__(self):
-        """Enable 6-tuple unpacking: ``theta_opt, total_loss, f1, f2, f3, f4 = result``."""
+        """Enable 6-tuple unpacking: ``theta_opt, total_loss, f1, f2, f3, f4 = result``."""  # noqa: E501
         yield self.theta_opt
         yield self.total_loss
         yield self.f1
         yield self.f2
         yield self.f3
         yield self.f4
+
 
 def make_restart_params():
     """
@@ -139,9 +138,12 @@ def make_restart_params():
 
     except Exception:
         return SimpleNamespace(**values)
+
+
 # ---------------------------------------------------------------------------
 # Phase 0 – Latin Hypercube Sampling screen
 # ---------------------------------------------------------------------------
+
 
 def lhs_screen(
     loss_fn,
@@ -191,15 +193,17 @@ def lhs_screen(
     # Divide [0,1] into n_samples equal strata per dimension;
     # draw one point uniformly from each stratum, then shuffle columns.
     strata_width = 1.0 / n_samples
-    lower_edges = np.arange(n_samples, dtype=np.float64) * strata_width   # (n_samples,)
+    lower_edges = np.arange(n_samples, dtype=np.float64) * strata_width  # (n_samples,)
     unit_samples = np.empty((n_samples, n_var), dtype=np.float64)
     for d in range(n_var):
         perm = rng.permutation(n_samples)
-        unit_samples[:, d] = lower_edges[perm] + rng.uniform(0.0, strata_width, n_samples)
+        unit_samples[:, d] = lower_edges[perm] + rng.uniform(
+            0.0, strata_width, n_samples
+        )
 
     # Un-normalise to [xl, xu]
     span = xu - xl
-    samples = xl + unit_samples * span   # (n_samples, n_var) float64
+    samples = xl + unit_samples * span  # (n_samples, n_var) float64
 
     # ----- JIT-compiled batched loss evaluation -----
     @jax.jit
@@ -215,6 +219,7 @@ def lhs_screen(
     # Return top_p seeds sorted ascending by loss
     order = np.argsort(losses_np)[:top_p]
     return samples[order].astype(np.float64)
+
 
 # ---------------------------------------------------------------------------
 # Phase 1 – evosax global search
@@ -402,7 +407,14 @@ def run_evosax(
             # cma_cond accesses state.C / B / D (full covariance) — Sep_CMA_ES is
             # diagonal-only and does not carry those fields; skip for sep_cma_es.
             _cma = (
-                cma_cond(last_pop, last_losses, state, params, _restart_state, _restart_params)
+                cma_cond(
+                    last_pop,
+                    last_losses,
+                    state,
+                    params,
+                    _restart_state,
+                    _restart_params,
+                )
                 if algo == "cma_es"
                 else jnp.bool_(False)
             )
@@ -554,6 +566,7 @@ def compute_cvt_centroids_compat(
         new_key = key
 
     return centroids, new_key
+
 
 def run_qdax_mapelites(
     loss_fn,
@@ -723,7 +736,9 @@ def run_qdax_mapelites(
     # ------------------------------------------------------------------
     # Emitter: isoline variation
     # ------------------------------------------------------------------
-    def variation_fn(x1: jnp.ndarray, x2: jnp.ndarray, isoline_key: jax.Array) -> jnp.ndarray:
+    def variation_fn(
+        x1: jnp.ndarray, x2: jnp.ndarray, isoline_key: jax.Array
+    ) -> jnp.ndarray:
         """
         Apply QDax isoline variation and clip to parameter bounds.
 
@@ -848,6 +863,7 @@ def run_qdax_mapelites(
             )
 
     return repertoire
+
 
 # ---------------------------------------------------------------------------
 # Top-level orchestrator

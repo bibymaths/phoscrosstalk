@@ -39,7 +39,7 @@ def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
             - Y (np.ndarray): Phosphosite intensity matrix (N_sites x T).
             - A_data (np.ndarray or None): Protein abundance matrix (N_proteins x T) if available.
             - A_proteins (np.ndarray or None): Names of proteins in A_data.
-    """
+    """  # noqa: E501
     if not os.path.exists(path):
         raise FileNotFoundError(f"Data file not found: {path}")
 
@@ -93,7 +93,7 @@ def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
                 positions.append(int(m.group(1)) if m else np.nan)
 
     positions = np.array(positions, dtype=float)
-    sites = [f"{p}_{r}" for p, r in zip(proteins_raw, residues_raw)]
+    sites = [f"{p}_{r}" for p, r in zip(proteins_raw, residues_raw, strict=False)]
     proteins = sorted(set(proteins_raw))
     prot_index = {p: k for k, p in enumerate(proteins)}
     site_prot_idx = np.array([prot_index[p] for p in proteins_raw], dtype=int)
@@ -226,7 +226,7 @@ def build_C_matrices_from_db(
 
     Returns:
         tuple: (Cg, Cl) - The global and local adjacency matrices.
-    """
+    """  # noqa: E501
     if not os.path.exists(ptm_intra_path):
         raise FileNotFoundError(
             f"Intra-protein PTM database not found: {ptm_intra_path}"
@@ -329,7 +329,7 @@ def build_kinase_site_from_kea(ks_psite_table_path, sites):
         tuple:
             - K_site_kin (np.ndarray): Row-normalized interaction matrix (Sites x Kinases).
             - kinases (list): Sorted list of kinase names.
-    """
+    """  # noqa: E501
     if not os.path.exists(ks_psite_table_path):
         raise FileNotFoundError(
             f"KEA kinase-substrate table not found: {ks_psite_table_path}"
@@ -695,7 +695,7 @@ def build_alpha_laplacian_from_unified_graph(
 
     Returns:
         np.ndarray: The Laplacian matrix (M_kinases x M_kinases).
-    """
+    """  # noqa: E501
     if not os.path.exists(pkl_path):
         raise FileNotFoundError(f"Unified kinase graph pickle not found: {pkl_path}")
     with open(pkl_path, "rb") as f:

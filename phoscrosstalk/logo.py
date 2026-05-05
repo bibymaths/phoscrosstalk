@@ -81,7 +81,7 @@ def print_logo(
     """
     Animated terminal logo with clickable email, ORCID, and website links.
     """
-    console = Console(width=86)
+    Console(width=86)
     W = 80
     INNER = W - 2
 

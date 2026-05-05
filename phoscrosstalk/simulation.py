@@ -314,7 +314,7 @@ def build_full_A0(K, T, A_scaled, prot_idx_for_A):
 
     Returns:
         np.ndarray: Full abundance matrix (K x T).
-    """
+    """  # noqa: E501
     A0_full = np.zeros((K, T), dtype=float)
     if A_scaled.size > 0:
         for k, p_idx in enumerate(prot_idx_for_A):

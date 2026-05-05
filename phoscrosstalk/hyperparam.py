@@ -69,7 +69,7 @@ def run_hyperparameter_scan(
 
     Returns:
         dict: Best hyperparameter combination (length_scale, lambda_net, reg_lambda, score).
-    """
+    """  # noqa: E501
     logger.info("\n" + "=" * 60)
     logger.header("[*] STARTING HYPERPARAMETER TUNING SCAN")
     logger.info("=" * 60)
@@ -80,8 +80,10 @@ def run_hyperparameter_scan(
         "reg_lambda": [1e-4, 1e-2],
     }
 
-    keys, values = zip(*grid.items())
-    combinations = [dict(zip(keys, v)) for v in itertools.product(*values)]
+    keys, values = zip(*grid.items(), strict=False)
+    combinations = [
+        dict(zip(keys, v, strict=False)) for v in itertools.product(*values)
+    ]
 
     logger.info(f"[*] Total combinations to test: {len(combinations)}")
     logger.info("[*] Using 'Coarse' settings: max_steps=40")
