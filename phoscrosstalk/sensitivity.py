@@ -227,7 +227,11 @@ def run_global_sensitivity(
         )
         param_names = [f"p_{i}" for i in range(dim)]
 
-    problem_spec = {"num_vars": dim, "names": param_names, "bounds": list(zip(xl, xu))}
+    problem_spec = {
+        "num_vars": dim,
+        "names": param_names,
+        "bounds": list(zip(xl, xu, strict=False)),
+    }
 
     # 2. Generate Samples
     # calc_second_order=False keeps total runs manageable
@@ -271,7 +275,7 @@ def run_global_sensitivity(
 
     # Run parallel simulations
     # 1. Create a generator for the delayed tasks
-    # NOTE: We pass the RAW param_values (log scale) to simulation because simulate_p_scipy expects them.
+    # NOTE: We pass the RAW param_values (log scale) to simulation because simulate_p_scipy expects them.  # noqa: E501
     tasks = (
         delayed(_evaluate_single_sample)(
             i, theta, problem, K, M, N, sites, proteins, kinases
@@ -338,7 +342,7 @@ def run_global_sensitivity(
         label="Total Effect",
     )
     # Overlay first order?
-    # Usually easier to just plot Total for ranking, but we can do a dodged bar or overlay.
+    # Usually easier to just plot Total for ranking, but we can do a dodged bar or overlay.  # noqa: E501
     # Simple bar chart is clearer for labels.
 
     plt.title("Top 20 Parameters driving Model Error (Sobol ST)")

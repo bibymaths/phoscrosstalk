@@ -52,14 +52,14 @@ from phoscrosstalk.dashboard_io import (
     validate_run_directory,
 )
 from phoscrosstalk.knockouts import run_live_knockout
-from phoscrosstalk.simulation import build_full_A0, simulate_p_scipy
+from phoscrosstalk.simulation import simulate_p_scipy
 
 # ──────────────────────────────────────────────────────────────────────────
 # Page config
 # ──────────────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="PhosCrosstalk Explorer",
-    page_icon="\U0001F9EC",
+    page_icon="\U0001f9ec",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -169,13 +169,356 @@ def _run_simulation(results_dir: str, t_max: float, num_points: int, mechanism: 
         mechanism,
         full_output=True,
     )
-    return {"t": t_fine, "P_sim": P_sim, "A_sim": A_sim, "S_sim": S_sim, "Kdyn_sim": Kdyn_sim}
+    return {
+        "t": t_fine,
+        "P_sim": P_sim,
+        "A_sim": A_sim,
+        "S_sim": S_sim,
+        "Kdyn_sim": Kdyn_sim,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Plot helpers
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def _render_plotly_network(df_net: pd.DataFrame, src_col: str, tgt_col: str) -> None:
+    """Render a small directed network as a Plotly scatter-with-lines figure."""
+    if not _HAS_NX:
+        st.info("networkx is not installed; cannot render interactive network.")
+        return
+
+    if df_net is None or df_net.empty:
+        st.info("No network edges available for rendering.")
+        return
+
+    if src_col not in df_net.columns or tgt_col not in df_net.columns:
+        st.error(f"Missing network columns: {src_col!r}, {tgt_col!r}")
+        return
+
+    weight_col = (
+        "Weight_Fitted"
+        if "Weight_Fitted" in df_net.columns
+        else (df_net.columns[2] if df_net.shape[1] > 2 else None)
+    )
+
+    G = _nx.DiGraph()
+
+    for _, row in df_net.iterrows():
+        src = str(row[src_col])
+        tgt = str(row[tgt_col])
+
+        if not src or not tgt or src.lower() == "nan" or tgt.lower() == "nan":
+            continue
+
+        weight = 1.0
+        if weight_col is not None:
+            try:
+                weight = float(row[weight_col])
+                if not np.isfinite(weight):
+                    weight = 1.0
+            except Exception:
+                weight = 1.0
+
+        G.add_edge(src, tgt, weight=weight)
+
+    if G.number_of_nodes() == 0 or G.number_of_edges() == 0:
+        st.info("No valid edges after filtering.")
+        return
+
+    pos = _nx.spring_layout(G, seed=42, k=1.5)
+
+    edge_x: list[float | None] = []
+    edge_y: list[float | None] = []
+
+    for u, v in G.edges():
+        x0, y0 = pos[u]
+        x1, y1 = pos[v]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+
+    node_labels = list(G.nodes())
+    node_x = [pos[n][0] for n in node_labels]
+    node_y = [pos[n][1] for n in node_labels]
+    node_degree = [G.degree(n) for n in node_labels]
+
+    fig_net = go.Figure()
+
+    fig_net.add_trace(
+        go.Scatter(
+            x=edge_x,
+            y=edge_y,
+            mode="lines",
+            line=dict(width=0.8, color="lightgrey"),
+            hoverinfo="none",
+            showlegend=False,
+        )
+    )
+
+    fig_net.add_trace(
+        go.Scatter(
+            x=node_x,
+            y=node_y,
+            mode="markers+text",
+            marker=dict(
+                size=[max(8, min(40, d * 2.5)) for d in node_degree],
+                color=node_degree,
+                colorscale="Viridis",
+                showscale=True,
+                colorbar=dict(title="Degree"),
+                line=dict(width=0.5, color="black"),
+            ),
+            text=node_labels,
+            textposition="top center",
+            hovertext=[
+                f"{node}<br>degree={deg}"
+                for node, deg in zip(node_labels, node_degree, strict=False)
+            ],
+            hoverinfo="text",
+            name="Nodes",
+        )
+    )
+
+    fig_net.update_layout(
+        height=650,
+        template="plotly_white",
+        showlegend=False,
+        title="Network topology",
+        margin=dict(l=10, r=10, t=50, b=10),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+    )
+
+    st.plotly_chart(fig_net, use_container_width=True)
+
+
+def _pseudo_log_time_axis(
+    t: np.ndarray, use_log_time: bool = True
+) -> tuple[np.ndarray, list[float], list[str]]:
+    """
+    Plotly-safe pseudo-log time axis.
+
+    Uses x = log10(t + 1), so t=0 is valid.
+    Tick labels are shown in original time units.
+    """
+    t = np.asarray(t, dtype=float)
+    t = np.where(np.isfinite(t), t, np.nan)
+
+    if use_log_time:
+        x = np.log10(t + 1.0)
+    else:
+        x = t
+
+    finite_t = t[np.isfinite(t)]
+    if finite_t.size == 0:
+        return x, [], []
+
+    t_max = float(np.nanmax(finite_t))
+
+    candidate_ticks = np.array(
+        [0, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000],
+        dtype=float,
+    )
+    tick_t = candidate_ticks[candidate_ticks <= t_max]
+
+    if tick_t.size == 0 or tick_t[0] != 0:
+        tick_t = np.insert(tick_t, 0, 0.0)
+
+    tick_x = np.log10(tick_t + 1.0)
+    tick_labels = [f"{v:g}" for v in tick_t]
+
+    return x, list(tick_x), tick_labels
+
+
+def _plot_ss_results(
+    t: np.ndarray,
+    P_sim: np.ndarray,
+    A_sim: np.ndarray,
+    S_sim: np.ndarray,
+    Kdyn_sim: np.ndarray,
+    proteins: list[str],
+    sites: list[str],
+    kinases: list[str],
+    snap: dict,
+    selected_protein: str | None,
+    use_logx: bool,
+) -> None:
+    """Plot long-horizon steady-state simulation results with finite-safe Plotly traces.
+
+    When ``use_logx`` is enabled, this function does not use a true Plotly log
+    axis because steady-state simulations usually include t=0, which cannot be
+    displayed on a logarithmic axis. Instead, it plots against log10(t + 1) and
+    displays tick labels in the original time units.
+    """
+    t = np.asarray(t, dtype=float)
+
+    if t.size == 0:
+        st.warning("Cannot plot steady-state results: empty time vector.")
+        return
+
+    if use_logx:
+        x_plot, tickvals, ticktext = _pseudo_log_time_axis(t)
+        xaxis_title = "Time (min, pseudo-log: log10(t + 1))"
+    else:
+        x_plot = t
+        tickvals = None
+        ticktext = None
+        xaxis_title = "Time (min)"
+
+    if selected_protein and selected_protein in proteins:
+        p_idx = proteins.index(selected_protein)
+    else:
+        p_idx = 0 if proteins else None
+
+    if p_idx is None:
+        st.warning("Cannot plot steady-state results: no protein labels available.")
+        return
+
+    protein_label = selected_protein or proteins[p_idx]
+
+    site_prot_idx = np.asarray(snap.get("site_prot_idx", []), dtype=int)
+    if site_prot_idx.size > 0:
+        site_idxs = list(np.where(site_prot_idx == p_idx)[0])
+    else:
+        site_idxs = list(range(min(8, P_sim.shape[0])))
+
+    kin_to_prot_idx = np.asarray(snap.get("kin_to_prot_idx", []), dtype=int)
+    if kin_to_prot_idx.size > 0:
+        rel_kins = list(np.where(kin_to_prot_idx == p_idx)[0])
+    else:
+        rel_kins = list(range(min(5, Kdyn_sim.shape[0])))
+
+    if len(site_idxs) == 0:
+        site_idxs = list(range(min(8, P_sim.shape[0])))
+
+    if len(rel_kins) == 0:
+        rel_kins = list(range(min(5, Kdyn_sim.shape[0])))
+
+    fig_ss = make_subplots(
+        rows=2,
+        cols=2,
+        subplot_titles=(
+            "Relative phosphosite signal",
+            "Protein abundance",
+            "S – activity fraction",
+            "Kdyn – kinase activity fraction",
+        ),
+    )
+
+    colors = px.colors.qualitative.Plotly
+
+    for i, si in enumerate(site_idxs[:8]):
+        if si >= P_sim.shape[0]:
+            continue
+
+        sname = sites[si] if si < len(sites) else f"site_{si}"
+        y = np.asarray(P_sim[si], dtype=float)
+        y = np.where(np.isfinite(y), y, np.nan)
+
+        fig_ss.add_trace(
+            go.Scatter(
+                x=x_plot,
+                y=y,
+                mode="lines",
+                name=sname,
+                line=dict(color=colors[i % len(colors)], width=2),
+            ),
+            row=1,
+            col=1,
+        )
+
+    if p_idx < A_sim.shape[0]:
+        y_a = np.asarray(A_sim[p_idx], dtype=float)
+        y_a = np.where(np.isfinite(y_a), y_a, np.nan)
+
+        fig_ss.add_trace(
+            go.Scatter(
+                x=x_plot,
+                y=y_a,
+                mode="lines",
+                name="A",
+                line=dict(width=2.5, color="black"),
+            ),
+            row=1,
+            col=2,
+        )
+
+    if p_idx < S_sim.shape[0]:
+        y_s = np.asarray(S_sim[p_idx], dtype=float)
+        y_s = np.where(np.isfinite(y_s), y_s, np.nan)
+
+        fig_ss.add_trace(
+            go.Scatter(
+                x=x_plot,
+                y=y_s,
+                mode="lines",
+                name="S",
+                line=dict(width=2.5, color="purple"),
+            ),
+            row=2,
+            col=1,
+        )
+
+    for ri, ki in enumerate(rel_kins[:5]):
+        if ki >= Kdyn_sim.shape[0]:
+            continue
+
+        kname = kinases[ki] if ki < len(kinases) else f"kinase_{ki}"
+        y_k = np.asarray(Kdyn_sim[ki], dtype=float)
+        y_k = np.where(np.isfinite(y_k), y_k, np.nan)
+
+        fig_ss.add_trace(
+            go.Scatter(
+                x=x_plot,
+                y=y_k,
+                mode="lines",
+                name=f"Kdyn {kname}",
+                line=dict(color=colors[ri % len(colors)], width=2),
+            ),
+            row=2,
+            col=2,
+        )
+
+    fig_ss.update_xaxes(title_text=xaxis_title)
+
+    if use_logx and tickvals is not None and ticktext is not None:
+        fig_ss.update_xaxes(
+            type="linear",
+            tickmode="array",
+            tickvals=tickvals,
+            ticktext=ticktext,
+        )
+
+    fig_ss.update_yaxes(title_text="Relative phosphosite signal", row=1, col=1)
+    fig_ss.update_yaxes(title_text="Protein abundance", row=1, col=2)
+    fig_ss.update_yaxes(title_text="Activity fraction [0–1]", row=2, col=1)
+    fig_ss.update_yaxes(title_text="Activity fraction [0–1]", row=2, col=2)
+
+    fig_ss.update_layout(
+        height=720,
+        template="plotly_white",
+        hovermode="x unified",
+        title=f"Long-horizon relaxation — {protein_label}",
+    )
+
+    st.plotly_chart(fig_ss, use_container_width=True)
+
+    # Finite-safe convergence summary from relative phosphosite signal.
+    if P_sim.ndim == 2 and P_sim.shape[1] >= 2:
+        final_delta = np.nanmean(np.abs(P_sim[:, -1] - P_sim[:, -2]))
+        if np.isfinite(final_delta):
+            st.caption(
+                f"Final-step mean Δ relative phosphosite signal: `{final_delta:.3e}`"
+            )
+        else:
+            st.caption("Final-step convergence metric is NaN/Inf.")
 
 
 # ──────────────────────────────────────────────────────────────────────────
 # Sidebar
 # ──────────────────────────────────────────────────────────────────────────
-st.sidebar.title("\U0001F9EC PhosCrosstalk Explorer")
+st.sidebar.title("\U0001f9ec PhosCrosstalk Explorer")
 
 results_dir = st.sidebar.text_input(
     "Results directory path",
@@ -228,8 +571,7 @@ site_prot_idx_arr = snap.get("site_prot_idx", np.array([])) if snap else np.arra
 if selected_protein and len(site_prot_idx_arr) > 0:
     prot_idx_sel = proteins.index(selected_protein)
     sites_for_prot = [
-        sites[i]
-        for i in np.where(np.asarray(site_prot_idx_arr) == prot_idx_sel)[0]
+        sites[i] for i in np.where(np.asarray(site_prot_idx_arr) == prot_idx_sel)[0]
     ]
 else:
     sites_for_prot = []
@@ -246,7 +588,8 @@ t_max_data = float(t_orig[-1]) if len(t_orig) > 0 else 240.0
 
 time_range = st.sidebar.slider(
     "Time range (min)",
-    0.0, float(t_max_data * 2),
+    0.0,
+    float(t_max_data * 2),
     (0.0, float(t_max_data)),
     step=1.0,
 )
@@ -254,7 +597,7 @@ time_range = st.sidebar.slider(
 show_obs = st.sidebar.toggle("Show observed data", value=True)
 use_logx = st.sidebar.toggle("Log x-axis (where applicable)", value=False)
 
-if st.sidebar.button("\U0001F504 Rebuild dashboard cache"):
+if st.sidebar.button("\U0001f504 Rebuild dashboard cache"):
     with st.spinner("Rebuilding cache…"):
         cache_result = build_dashboard_cache(results_dir, force=True)
     st.sidebar.success(
@@ -272,7 +615,6 @@ if manifest is None:
         build_dashboard_cache(results_dir, force=False)
     manifest = load_dashboard_manifest(results_dir)
 
-
 # ──────────────────────────────────────────────────────────────────────────
 # Tabs
 # ──────────────────────────────────────────────────────────────────────────
@@ -286,18 +628,19 @@ if manifest is None:
     tab_sens,
     tab_ss,
     tab_net,
-) = st.tabs([
-    "A \u00b7 Overview",
-    "B \u00b7 Fit Explorer",
-    "C \u00b7 Internal States",
-    "D \u00b7 Derived Rates",
-    "E \u00b7 Forward Simulation",
-    "F \u00b7 Live Knockout",
-    "G \u00b7 Sensitivity",
-    "H \u00b7 Steady-State",
-    "I \u00b7 Network",
-])
-
+) = st.tabs(
+    [
+        "A \u00b7 Overview",
+        "B \u00b7 Fit Explorer",
+        "C \u00b7 Internal States",
+        "D \u00b7 Derived Rates",
+        "E \u00b7 Forward Simulation",
+        "F \u00b7 Live Knockout",
+        "G \u00b7 Sensitivity",
+        "H \u00b7 Steady-State",
+        "I \u00b7 Network",
+    ]
+)
 
 # ══════════════════════════════════════════════════════════════════════════
 # A · RUN OVERVIEW
@@ -374,9 +717,20 @@ with tab_overview:
                 try:
                     theta = params["theta"]
                     dec = decode_theta(theta, K, M, N)
-                    (k_deact, d_deg, beta_g, beta_l, alpha,
-                     kK_act, kK_deact, k_off,
-                     gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net) = dec
+                    (
+                        k_deact,
+                        d_deg,
+                        beta_g,
+                        beta_l,
+                        alpha,
+                        kK_act,
+                        kK_deact,
+                        k_off,
+                        gamma_S_p,
+                        gamma_A_S,
+                        gamma_A_p,
+                        gamma_K_net,
+                    ) = dec
 
                     st.markdown(
                         f"**beta_g** = {beta_g:.4f} &nbsp; "
@@ -386,21 +740,24 @@ with tab_overview:
                         f"**\u03b3_A_p** = {gamma_A_p:.3f} &nbsp; "
                         f"**\u03b3_K_net** = {gamma_K_net:.3f}"
                     )
-                    df_kin_dec = pd.DataFrame({
-                        "Kinase": kinases,
-                        "alpha": alpha,
-                        "kK_act": kK_act,
-                        "kK_deact": kK_deact,
-                    })
+                    df_kin_dec = pd.DataFrame(
+                        {
+                            "Kinase": kinases,
+                            "alpha": alpha,
+                            "kK_act": kK_act,
+                            "kK_deact": kK_deact,
+                        }
+                    )
                     fig_dec = px.box(
                         df_kin_dec.melt(id_vars="Kinase"),
-                        x="variable", y="value", points="all",
+                        x="variable",
+                        y="value",
+                        points="all",
                         title="Kinase parameter distributions",
                     )
                     st.plotly_chart(fig_dec, use_container_width=True)
                 except Exception as exc:
                     st.warning(f"Could not decode parameters: {exc}")
-
 
 # ══════════════════════════════════════════════════════════════════════════
 # B · FIT EXPLORER
@@ -418,14 +775,24 @@ with tab_fit:
         t_vals = extract_time_axis(df_ft, prefix="sim_t")
         t_axis = t_orig if len(t_vals) == len(t_orig) > 0 else t_vals
 
-        t_mask = (t_axis >= time_range[0]) & (t_axis <= time_range[1]) if len(t_axis) > 0 else np.ones(len(t_vals), dtype=bool)
-        sim_cols_f = [c for c, m in zip(sim_cols, t_mask) if m]
-        data_cols_f = [c for c, m in zip(data_cols, t_mask) if m]
+        t_mask = (
+            (t_axis >= time_range[0]) & (t_axis <= time_range[1])
+            if len(t_axis) > 0
+            else np.ones(len(t_vals), dtype=bool)
+        )
+        sim_cols_f = [c for c, m in zip(sim_cols, t_mask, strict=False) if m]
+        data_cols_f = [c for c, m in zip(data_cols, t_mask, strict=False) if m]
         t_filt = t_axis[t_mask] if len(t_axis) > 0 else t_vals
 
         if selected_protein:
-            df_prot_row = df_ft[(df_ft["Type"] == "ProteinAbundance") & (df_ft["Protein"] == selected_protein)]
-            df_site_rows = df_ft[(df_ft["Type"] == "Phosphosite") & (df_ft["Protein"] == selected_protein)]
+            df_prot_row = df_ft[
+                (df_ft["Type"] == "ProteinAbundance")
+                & (df_ft["Protein"] == selected_protein)
+            ]
+            df_site_rows = df_ft[
+                (df_ft["Type"] == "Phosphosite")
+                & (df_ft["Protein"] == selected_protein)
+            ]
 
             mrna_path = os.path.join(results_dir, "mrna_fit_timeseries.tsv")
             df_mrna = None
@@ -455,37 +822,76 @@ with tab_fit:
             col_offset = 1
 
             if n_panels == 3 and df_mrna is not None:
-                rna_sub = df_mrna.sort_values("time") if "time" in df_mrna.columns else df_mrna
-                t_rna = rna_sub["time"].values if "time" in rna_sub.columns else np.array([])
-                rna_fit_col = "fitted" if "fitted" in rna_sub.columns else ("simulated" if "simulated" in rna_sub.columns else None)
+                rna_sub = (
+                    df_mrna.sort_values("time")
+                    if "time" in df_mrna.columns
+                    else df_mrna
+                )
+                t_rna = (
+                    rna_sub["time"].values
+                    if "time" in rna_sub.columns
+                    else np.array([])
+                )
+                rna_fit_col = (
+                    "fitted"
+                    if "fitted" in rna_sub.columns
+                    else ("simulated" if "simulated" in rna_sub.columns else None)
+                )
                 if rna_fit_col:
                     fig_fit.add_trace(
-                        go.Scatter(x=t_rna, y=rna_sub[rna_fit_col].values, mode="lines",
-                                   name="mRNA model", line=dict(width=2)),
-                        row=1, col=col_offset,
+                        go.Scatter(
+                            x=t_rna,
+                            y=rna_sub[rna_fit_col].values,
+                            mode="lines",
+                            name="mRNA model",
+                            line=dict(width=2),
+                        ),
+                        row=1,
+                        col=col_offset,
                     )
                 if show_obs and "observed" in rna_sub.columns:
                     fig_fit.add_trace(
-                        go.Scatter(x=t_rna, y=rna_sub["observed"].values, mode="markers",
-                                   name="mRNA observed", marker=dict(size=8)),
-                        row=1, col=col_offset,
+                        go.Scatter(
+                            x=t_rna,
+                            y=rna_sub["observed"].values,
+                            mode="markers",
+                            name="mRNA observed",
+                            marker=dict(size=8),
+                        ),
+                        row=1,
+                        col=col_offset,
                     )
-                fig_fit.update_yaxes(title_text="mRNA / transcriptional activation R_rna(t)", row=1, col=col_offset)
+                fig_fit.update_yaxes(
+                    title_text="mRNA / transcriptional activation R_rna(t)",
+                    row=1,
+                    col=col_offset,
+                )
                 col_offset += 1
 
             if not df_prot_row.empty:
                 row_p = df_prot_row.iloc[0]
                 fig_fit.add_trace(
-                    go.Scatter(x=t_filt, y=row_p[sim_cols_f].values.astype(float),
-                               mode="lines", name="abundance (model)", line=dict(width=2, color="royalblue")),
-                    row=1, col=col_offset,
+                    go.Scatter(
+                        x=t_filt,
+                        y=row_p[sim_cols_f].values.astype(float),
+                        mode="lines",
+                        name="abundance (model)",
+                        line=dict(width=2, color="royalblue"),
+                    ),
+                    row=1,
+                    col=col_offset,
                 )
                 if show_obs:
                     fig_fit.add_trace(
-                        go.Scatter(x=t_filt, y=row_p[data_cols_f].values.astype(float),
-                                   mode="markers", name="abundance (data)",
-                                   marker=dict(size=8, symbol="square", color="royalblue")),
-                        row=1, col=col_offset,
+                        go.Scatter(
+                            x=t_filt,
+                            y=row_p[data_cols_f].values.astype(float),
+                            mode="markers",
+                            name="abundance (data)",
+                            marker=dict(size=8, symbol="square", color="royalblue"),
+                        ),
+                        row=1,
+                        col=col_offset,
                     )
             fig_fit.update_yaxes(title_text="Protein abundance", row=1, col=col_offset)
             col_offset += 1
@@ -495,30 +901,48 @@ with tab_fit:
                 label = f"{row_s['Protein']}_{row_s['Residue']}"
                 c = colors[i % len(colors)]
                 fig_fit.add_trace(
-                    go.Scatter(x=t_filt, y=row_s[sim_cols_f].values.astype(float),
-                               mode="lines", name=f"{label} (model)", line=dict(width=2, color=c)),
-                    row=1, col=col_offset,
+                    go.Scatter(
+                        x=t_filt,
+                        y=row_s[sim_cols_f].values.astype(float),
+                        mode="lines",
+                        name=f"{label} (model)",
+                        line=dict(width=2, color=c),
+                    ),
+                    row=1,
+                    col=col_offset,
                 )
                 if show_obs:
                     fig_fit.add_trace(
-                        go.Scatter(x=t_filt, y=row_s[data_cols_f].values.astype(float),
-                                   mode="markers", name=f"{label} (data)",
-                                   marker=dict(size=8, color=c), showlegend=False),
-                        row=1, col=col_offset,
+                        go.Scatter(
+                            x=t_filt,
+                            y=row_s[data_cols_f].values.astype(float),
+                            mode="markers",
+                            name=f"{label} (data)",
+                            marker=dict(size=8, color=c),
+                            showlegend=False,
+                        ),
+                        row=1,
+                        col=col_offset,
                     )
-            fig_fit.update_yaxes(title_text="Relative phosphosite signal", row=1, col=col_offset)
+            fig_fit.update_yaxes(
+                title_text="Relative phosphosite signal", row=1, col=col_offset
+            )
             fig_fit.update_xaxes(title_text="Time (min)")
             fig_fit.update_layout(
-                height=480, template="plotly_white", hovermode="x unified",
+                height=480,
+                template="plotly_white",
+                hovermode="x unified",
                 title=f"Fit trajectories — {selected_protein}",
             )
             st.plotly_chart(fig_fit, use_container_width=True)
 
         with st.expander("Download fit table"):
             st.dataframe(df_ft, use_container_width=True)
-            st.download_button("Download CSV", df_ft.to_csv(index=False).encode(),
-                               file_name="fit_timeseries.csv")
-
+            st.download_button(
+                "Download CSV",
+                df_ft.to_csv(index=False).encode(),
+                file_name="fit_timeseries.csv",
+            )
 
 # ══════════════════════════════════════════════════════════════════════════
 # C · INTERNAL STATES
@@ -536,9 +960,13 @@ with tab_states:
         st.warning("internal_states.tsv not found.")
     else:
         t_cols = [c for c in df_is.columns if c.startswith("t")]
-        t_is = t_orig if len(t_orig) == len(t_cols) else np.arange(len(t_cols), dtype=float)
+        t_is = (
+            t_orig
+            if len(t_orig) == len(t_cols)
+            else np.arange(len(t_cols), dtype=float)
+        )
         t_is_mask = (t_is >= time_range[0]) & (t_is <= time_range[1])
-        t_cols_f = [c for c, m in zip(t_cols, t_is_mask) if m]
+        t_cols_f = [c for c, m in zip(t_cols, t_is_mask, strict=False) if m]
         t_is_f = t_is[t_is_mask]
 
         df_S = df_is[df_is["Type"] == "S_sim"]
@@ -550,17 +978,36 @@ with tab_states:
             st.subheader("S — protein signalling/activity fraction")
             fig_s = go.Figure()
             for _, row in df_S[~df_S["ID"].isin([selected_protein])].head(9).iterrows():
-                fig_s.add_trace(go.Scatter(x=t_is_f, y=row[t_cols_f].values.astype(float),
-                                           mode="lines", opacity=0.4, line=dict(width=1), name=row["ID"]))
+                fig_s.add_trace(
+                    go.Scatter(
+                        x=t_is_f,
+                        y=row[t_cols_f].values.astype(float),
+                        mode="lines",
+                        opacity=0.4,
+                        line=dict(width=1),
+                        name=row["ID"],
+                    )
+                )
             if selected_protein:
                 sel_row = df_S[df_S["ID"] == selected_protein]
                 for _, row in sel_row.iterrows():
-                    fig_s.add_trace(go.Scatter(x=t_is_f, y=row[t_cols_f].values.astype(float),
-                                               mode="lines", line=dict(width=3, color="crimson"),
-                                               name=f"\u2605 {row['ID']}"))
-            fig_s.update_layout(height=380, template="plotly_white", xaxis_title="Time (min)",
-                                 yaxis_title="S (activity fraction)",
-                                 yaxis=dict(range=[0, 1.05]), title="Protein activity (S)")
+                    fig_s.add_trace(
+                        go.Scatter(
+                            x=t_is_f,
+                            y=row[t_cols_f].values.astype(float),
+                            mode="lines",
+                            line=dict(width=3, color="crimson"),
+                            name=f"\u2605 {row['ID']}",
+                        )
+                    )
+            fig_s.update_layout(
+                height=380,
+                template="plotly_white",
+                xaxis_title="Time (min)",
+                yaxis_title="S (activity fraction)",
+                yaxis=dict(range=[0, 1.05]),
+                title="Protein activity (S)",
+            )
             if use_logx:
                 fig_s.update_xaxes(type="log")
             st.plotly_chart(fig_s, use_container_width=True)
@@ -569,26 +1016,47 @@ with tab_states:
             st.subheader("Kdyn — kinase activity fraction")
             fig_k = go.Figure()
             for _, row in df_K[~df_K["ID"].isin(selected_kinases)].head(9).iterrows():
-                fig_k.add_trace(go.Scatter(x=t_is_f, y=row[t_cols_f].values.astype(float),
-                                           mode="lines", opacity=0.4, line=dict(width=1), name=row["ID"]))
+                fig_k.add_trace(
+                    go.Scatter(
+                        x=t_is_f,
+                        y=row[t_cols_f].values.astype(float),
+                        mode="lines",
+                        opacity=0.4,
+                        line=dict(width=1),
+                        name=row["ID"],
+                    )
+                )
             for kin in selected_kinases:
                 sel_rows = df_K[df_K["ID"] == kin]
                 for _, row in sel_rows.iterrows():
-                    fig_k.add_trace(go.Scatter(x=t_is_f, y=row[t_cols_f].values.astype(float),
-                                               mode="lines", line=dict(width=3, color="darkorange"),
-                                               name=f"\u2605 {row['ID']}"))
-            fig_k.update_layout(height=380, template="plotly_white", xaxis_title="Time (min)",
-                                 yaxis_title="Kdyn (kinase activity fraction)",
-                                 yaxis=dict(range=[0, 1.05]), title="Kinase activity (Kdyn)")
+                    fig_k.add_trace(
+                        go.Scatter(
+                            x=t_is_f,
+                            y=row[t_cols_f].values.astype(float),
+                            mode="lines",
+                            line=dict(width=3, color="darkorange"),
+                            name=f"\u2605 {row['ID']}",
+                        )
+                    )
+            fig_k.update_layout(
+                height=380,
+                template="plotly_white",
+                xaxis_title="Time (min)",
+                yaxis_title="Kdyn (kinase activity fraction)",
+                yaxis=dict(range=[0, 1.05]),
+                title="Kinase activity (Kdyn)",
+            )
             if use_logx:
                 fig_k.update_xaxes(type="log")
             st.plotly_chart(fig_k, use_container_width=True)
 
         with st.expander("Download internal states table"):
             st.dataframe(df_is, use_container_width=True)
-            st.download_button("Download CSV", df_is.to_csv(index=False).encode(),
-                               file_name="internal_states.csv")
-
+            st.download_button(
+                "Download CSV",
+                df_is.to_csv(index=False).encode(),
+                file_name="internal_states.csv",
+            )
 
 # ══════════════════════════════════════════════════════════════════════════
 # D · DERIVED RATES
@@ -607,8 +1075,11 @@ with tab_rates:
         st.warning("Derived rates artefacts not found.")
     else:
         dr_proteins = list(dr.get("proteins", []))
-        show_ents = ([selected_protein] if selected_protein and selected_protein in dr_proteins
-                     else dr_proteins[:5])
+        show_ents = (
+            [selected_protein]
+            if selected_protein and selected_protein in dr_proteins
+            else dr_proteins[:5]
+        )
 
         col_ka, col_sp = st.columns(2)
 
@@ -621,11 +1092,18 @@ with tab_rates:
                 for ename in show_ents:
                     idx = dr_proteins.index(ename) if ename in dr_proteins else -1
                     if 0 <= idx < k_act_mat.shape[0]:
-                        fig_ka.add_trace(go.Scatter(x=t_ka, y=k_act_mat[idx],
-                                                     mode="lines", name=ename))
-                fig_ka.update_layout(height=350, template="plotly_white",
-                                     xaxis_title="Time (min)", yaxis_title="k_act(t)",
-                                     title="Transcriptional activation rate k_act(t)")
+                        fig_ka.add_trace(
+                            go.Scatter(
+                                x=t_ka, y=k_act_mat[idx], mode="lines", name=ename
+                            )
+                        )
+                fig_ka.update_layout(
+                    height=350,
+                    template="plotly_white",
+                    xaxis_title="Time (min)",
+                    yaxis_title="k_act(t)",
+                    title="Transcriptional activation rate k_act(t)",
+                )
                 st.plotly_chart(fig_ka, use_container_width=True)
             else:
                 st.info("k_act not available.")
@@ -639,15 +1117,21 @@ with tab_rates:
                 for ename in show_ents:
                     idx = dr_proteins.index(ename) if ename in dr_proteins else -1
                     if 0 <= idx < s_prod_mat.shape[0]:
-                        fig_sp.add_trace(go.Scatter(x=t_sp, y=s_prod_mat[idx],
-                                                     mode="lines", name=ename))
-                fig_sp.update_layout(height=350, template="plotly_white",
-                                     xaxis_title="Time (min)", yaxis_title="s_prod(t)",
-                                     title="Kinase-signal-driven synthesis rate s_prod(t)")
+                        fig_sp.add_trace(
+                            go.Scatter(
+                                x=t_sp, y=s_prod_mat[idx], mode="lines", name=ename
+                            )
+                        )
+                fig_sp.update_layout(
+                    height=350,
+                    template="plotly_white",
+                    xaxis_title="Time (min)",
+                    yaxis_title="s_prod(t)",
+                    title="Kinase-signal-driven synthesis rate s_prod(t)",
+                )
                 st.plotly_chart(fig_sp, use_container_width=True)
             else:
                 st.info("s_prod not available.")
-
 
 # ══════════════════════════════════════════════════════════════════════════
 # E · FORWARD SIMULATION
@@ -664,17 +1148,25 @@ with tab_sim:
     else:
         c_sim1, c_sim2 = st.columns([1, 3])
         with c_sim1:
-            sim_t_max = st.number_input("Simulation horizon (min)", min_value=float(t_max_data),
-                                        max_value=float(t_max_data * 20),
-                                        value=float(t_max_data), step=float(max(1.0, t_max_data / 10)))
+            sim_t_max = st.number_input(
+                "Simulation horizon (min)",
+                min_value=float(t_max_data),
+                max_value=float(t_max_data * 20),
+                value=float(t_max_data),
+                step=float(max(1.0, t_max_data / 10)),
+            )
             sim_n_pts = st.slider("Grid points", 50, 500, 200, key="sim_npts")
             run_sim_btn = st.button("\u25b6 Run simulation", type="primary")
 
         with c_sim2:
             if run_sim_btn:
                 with st.spinner("Integrating ODE…"):
-                    sim_result = _run_simulation(results_dir, t_max=sim_t_max,
-                                                  num_points=sim_n_pts, mechanism=mechanism)
+                    sim_result = _run_simulation(
+                        results_dir,
+                        t_max=sim_t_max,
+                        num_points=sim_n_pts,
+                        mechanism=mechanism,
+                    )
                 if sim_result is None:
                     st.error("Simulation failed.")
                 else:
@@ -691,46 +1183,92 @@ with tab_sim:
                         kin_to_prot = np.asarray(snap.get("kin_to_prot_idx", []))
                         rel_kins = list(np.where(kin_to_prot == p_idx)[0])
 
-                        fig_esim = make_subplots(rows=2, cols=2, subplot_titles=(
-                            "Relative phosphosite signal", "Protein abundance",
-                            "S \u2013 activity fraction", "Kdyn \u2013 kinase activity fraction",
-                        ))
+                        fig_esim = make_subplots(
+                            rows=2,
+                            cols=2,
+                            subplot_titles=(
+                                "Relative phosphosite signal",
+                                "Protein abundance",
+                                "S \u2013 activity fraction",
+                                "Kdyn \u2013 kinase activity fraction",
+                            ),
+                        )
                         colors = px.colors.qualitative.Plotly
 
                         for i, si in enumerate(site_idxs[:12]):
                             sname = sites[si] if si < len(sites) else str(si)
                             fig_esim.add_trace(
-                                go.Scatter(x=t_sim, y=P_sim[si], mode="lines", name=sname,
-                                           line=dict(color=colors[i % len(colors)])),
-                                row=1, col=1)
+                                go.Scatter(
+                                    x=t_sim,
+                                    y=P_sim[si],
+                                    mode="lines",
+                                    name=sname,
+                                    line=dict(color=colors[i % len(colors)]),
+                                ),
+                                row=1,
+                                col=1,
+                            )
 
                         fig_esim.add_trace(
-                            go.Scatter(x=t_sim, y=A_sim[p_idx], mode="lines", name="A",
-                                       line=dict(width=2, color="black")), row=1, col=2)
+                            go.Scatter(
+                                x=t_sim,
+                                y=A_sim[p_idx],
+                                mode="lines",
+                                name="A",
+                                line=dict(width=2, color="black"),
+                            ),
+                            row=1,
+                            col=2,
+                        )
                         fig_esim.add_trace(
-                            go.Scatter(x=t_sim, y=S_sim[p_idx], mode="lines", name="S",
-                                       line=dict(width=2, color="purple")), row=2, col=1)
+                            go.Scatter(
+                                x=t_sim,
+                                y=S_sim[p_idx],
+                                mode="lines",
+                                name="S",
+                                line=dict(width=2, color="purple"),
+                            ),
+                            row=2,
+                            col=1,
+                        )
 
                         for ri, ki in enumerate(rel_kins[:5]):
                             kname = kinases[ki] if ki < len(kinases) else str(ki)
                             fig_esim.add_trace(
-                                go.Scatter(x=t_sim, y=Kdyn_sim[ki], mode="lines",
-                                           name=f"Kdyn {kname}", line=dict(color=colors[ri % len(colors)])),
-                                row=2, col=2)
+                                go.Scatter(
+                                    x=t_sim,
+                                    y=Kdyn_sim[ki],
+                                    mode="lines",
+                                    name=f"Kdyn {kname}",
+                                    line=dict(color=colors[ri % len(colors)]),
+                                ),
+                                row=2,
+                                col=2,
+                            )
 
                         fig_esim.update_xaxes(title_text="Time (min)")
-                        fig_esim.update_yaxes(title_text="Relative phosphosite signal", row=1, col=1)
-                        fig_esim.update_yaxes(title_text="Protein abundance", row=1, col=2)
-                        fig_esim.update_yaxes(title_text="Activity fraction [0-1]", row=2, col=1)
-                        fig_esim.update_yaxes(title_text="Activity fraction [0-1]", row=2, col=2)
-                        fig_esim.update_layout(height=700, template="plotly_white",
-                                               title=f"Forward simulation \u2014 {selected_protein}")
+                        fig_esim.update_yaxes(
+                            title_text="Relative phosphosite signal", row=1, col=1
+                        )
+                        fig_esim.update_yaxes(
+                            title_text="Protein abundance", row=1, col=2
+                        )
+                        fig_esim.update_yaxes(
+                            title_text="Activity fraction [0-1]", row=2, col=1
+                        )
+                        fig_esim.update_yaxes(
+                            title_text="Activity fraction [0-1]", row=2, col=2
+                        )
+                        fig_esim.update_layout(
+                            height=700,
+                            template="plotly_white",
+                            title=f"Forward simulation \u2014 {selected_protein}",
+                        )
                         if use_logx:
                             fig_esim.update_xaxes(type="log")
                         st.plotly_chart(fig_esim, use_container_width=True)
             else:
                 st.info("Configure parameters and press **\u25b6 Run simulation**.")
-
 
 # ══════════════════════════════════════════════════════════════════════════
 # F · LIVE KNOCKOUT
@@ -742,7 +1280,7 @@ with tab_ko:
         "parameters and the simulation pipeline (no new biology in the dashboard)."
     )
 
-    with st.expander("\U0001F4C2 Saved knockout outputs"):
+    with st.expander("\U0001f4c2 Saved knockout outputs"):
         ko_data = _load_ko(results_dir)
         if ko_data is None:
             st.info("No knockout output files found in `knockouts/`.")
@@ -755,15 +1293,23 @@ with tab_ko:
                 arr = df_ko.values.astype(float)
                 finite_arr = np.where(np.isfinite(arr), arr, np.nan)
                 fig_ko_heat = px.imshow(
-                    finite_arr, x=list(df_ko.columns), y=list(df_ko.index),
-                    color_continuous_scale="RdBu_r", color_continuous_midpoint=1.0,
+                    finite_arr,
+                    x=list(df_ko.columns),
+                    y=list(df_ko.index),
+                    color_continuous_scale="RdBu_r",
+                    color_continuous_midpoint=1.0,
                     title=f"Fold-change heatmap \u2014 {key}",
-                    labels={"color": "FC (KO/WT)"}, aspect="auto",
+                    labels={"color": "FC (KO/WT)"},
+                    aspect="auto",
                 )
                 fig_ko_heat.update_layout(height=min(600, max(300, 20 * len(df_ko))))
                 st.plotly_chart(fig_ko_heat, use_container_width=True)
-                st.download_button(f"Download {key}.csv", df_ko.to_csv().encode(),
-                                   file_name=f"{key}.csv", key=f"dl_ko_{key}")
+                st.download_button(
+                    f"Download {key}.csv",
+                    df_ko.to_csv().encode(),
+                    file_name=f"{key}.csv",
+                    key=f"dl_ko_{key}",
+                )
 
     st.divider()
     st.subheader("Live knockout simulation")
@@ -773,7 +1319,9 @@ with tab_ko:
     else:
         ck1, ck2, ck3 = st.columns(3)
         with ck1:
-            ko_type = st.selectbox("Knockout type", ["kinase", "protein", "site"], key="live_ko_type")
+            ko_type = st.selectbox(
+                "Knockout type", ["kinase", "protein", "site"], key="live_ko_type"
+            )
         with ck2:
             if ko_type == "kinase":
                 target_list = kinases
@@ -783,9 +1331,12 @@ with tab_ko:
                 target_list = sites
             ko_target = st.selectbox("Target", target_list, key="live_ko_target")
         with ck3:
-            observe_ko_prot = st.selectbox("Observe on protein", proteins, key="ko_obs_prot")
-            ko_t_max = st.slider("Simulation horizon (min)", 50, 2000,
-                                  int(t_max_data), key="ko_t_max")
+            observe_ko_prot = st.selectbox(
+                "Observe on protein", proteins, key="ko_obs_prot"
+            )
+            ko_t_max = st.slider(
+                "Simulation horizon (min)", 50, 2000, int(t_max_data), key="ko_t_max"
+            )
 
         run_ko_btn = st.button("\u25b6 Run live KO", type="primary")
 
@@ -810,39 +1361,81 @@ with tab_ko:
                     spi = np.asarray(snap.get("site_prot_idx", []))
                     site_idxs_ko = list(np.where(spi == obs_prot_idx)[0])
 
-                    fig_ko_traj = make_subplots(rows=1, cols=2, subplot_titles=(
-                        "Relative phosphosite signal (WT vs KO)",
-                        "S \u2013 activity fraction (WT vs KO)",
-                    ))
+                    fig_ko_traj = make_subplots(
+                        rows=1,
+                        cols=2,
+                        subplot_titles=(
+                            "Relative phosphosite signal (WT vs KO)",
+                            "S \u2013 activity fraction (WT vs KO)",
+                        ),
+                    )
                     colors = px.colors.qualitative.Bold
 
                     for i, si in enumerate(site_idxs_ko[:8]):
                         sname = sites[si] if si < len(sites) else str(si)
                         c = colors[i % len(colors)]
                         fig_ko_traj.add_trace(
-                            go.Scatter(x=t_ko_eval, y=ko_result["wt"]["P_sim"][si],
-                                       mode="lines", name=f"WT {sname}", line=dict(color=c, width=2)),
-                            row=1, col=1)
+                            go.Scatter(
+                                x=t_ko_eval,
+                                y=ko_result["wt"]["P_sim"][si],
+                                mode="lines",
+                                name=f"WT {sname}",
+                                line=dict(color=c, width=2),
+                            ),
+                            row=1,
+                            col=1,
+                        )
                         fig_ko_traj.add_trace(
-                            go.Scatter(x=t_ko_eval, y=ko_result["ko"]["P_sim"][si],
-                                       mode="lines", name=f"KO {sname}",
-                                       line=dict(color=c, width=2, dash="dot"), showlegend=False),
-                            row=1, col=1)
+                            go.Scatter(
+                                x=t_ko_eval,
+                                y=ko_result["ko"]["P_sim"][si],
+                                mode="lines",
+                                name=f"KO {sname}",
+                                line=dict(color=c, width=2, dash="dot"),
+                                showlegend=False,
+                            ),
+                            row=1,
+                            col=1,
+                        )
 
                     fig_ko_traj.add_trace(
-                        go.Scatter(x=t_ko_eval, y=ko_result["wt"]["S_sim"][obs_prot_idx],
-                                   mode="lines", name="WT S", line=dict(color="purple", width=2)),
-                        row=1, col=2)
+                        go.Scatter(
+                            x=t_ko_eval,
+                            y=ko_result["wt"]["S_sim"][obs_prot_idx],
+                            mode="lines",
+                            name="WT S",
+                            line=dict(color="purple", width=2),
+                        ),
+                        row=1,
+                        col=2,
+                    )
                     fig_ko_traj.add_trace(
-                        go.Scatter(x=t_ko_eval, y=ko_result["ko"]["S_sim"][obs_prot_idx],
-                                   mode="lines", name="KO S", line=dict(color="purple", width=2, dash="dot")),
-                        row=1, col=2)
+                        go.Scatter(
+                            x=t_ko_eval,
+                            y=ko_result["ko"]["S_sim"][obs_prot_idx],
+                            mode="lines",
+                            name="KO S",
+                            line=dict(color="purple", width=2, dash="dot"),
+                        ),
+                        row=1,
+                        col=2,
+                    )
 
                     fig_ko_traj.update_xaxes(title_text="Time (min)")
-                    fig_ko_traj.update_yaxes(title_text="Relative phosphosite signal", row=1, col=1)
-                    fig_ko_traj.update_yaxes(title_text="Activity fraction [0-1]", row=1, col=2, range=[0, 1.05])
-                    fig_ko_traj.update_layout(height=450, template="plotly_white",
-                                              title=f"WT vs {ko_target} ({ko_type} KO) \u2192 {observe_ko_prot}")
+                    fig_ko_traj.update_yaxes(
+                        title_text="Relative phosphosite signal", row=1, col=1
+                    )
+                    fig_ko_traj.update_yaxes(
+                        title_text="Activity fraction [0-1]",
+                        row=1,
+                        col=2,
+                        range=[0, 1.05],
+                    )
+                    fig_ko_traj.update_layout(
+                        height=450,
+                        template="plotly_white",
+                        title=f"WT vs {ko_target} ({ko_type} KO) \u2192 {observe_ko_prot}",  # noqa: E501
+                    )
                     st.plotly_chart(fig_ko_traj, use_container_width=True)
 
                     # Fold-change ranking
@@ -850,43 +1443,57 @@ with tab_ko:
                     wt_f = ko_result["wt"]["P_sim"][:, -1]
                     ko_f = ko_result["ko"]["P_sim"][:, -1]
                     fc = (ko_f + eps) / (wt_f + eps)
-                    df_fc = pd.DataFrame({
-                        "Site": sites,
-                        "WT_signal": wt_f,
-                        "KO_signal": ko_f,
-                        "FC_KO_over_WT": fc,
-                    })
+                    df_fc = pd.DataFrame(
+                        {
+                            "Site": sites,
+                            "WT_signal": wt_f,
+                            "KO_signal": ko_f,
+                            "FC_KO_over_WT": fc,
+                        }
+                    )
 
                     st.subheader("Ranked fold-change (final time point)")
-                    sort_abs = st.checkbox("Sort by |FC| (largest absolute change first)",
-                                           value=True, key="ko_sort_abs")
+                    sort_abs = st.checkbox(
+                        "Sort by |FC| (largest absolute change first)",
+                        value=True,
+                        key="ko_sort_abs",
+                    )
                     if sort_abs:
-                        df_fc = df_fc.sort_values("FC_KO_over_WT", key=abs, ascending=False)
+                        df_fc = df_fc.sort_values(
+                            "FC_KO_over_WT", key=abs, ascending=False
+                        )
                     else:
                         df_fc = df_fc.sort_values("FC_KO_over_WT", ascending=False)
 
                     fig_fc_bar = px.bar(
-                        df_fc.head(30), x="Site", y="FC_KO_over_WT",
-                        color="FC_KO_over_WT", color_continuous_scale="RdBu_r",
+                        df_fc.head(30),
+                        x="Site",
+                        y="FC_KO_over_WT",
+                        color="FC_KO_over_WT",
+                        color_continuous_scale="RdBu_r",
                         color_continuous_midpoint=1.0,
                         title=f"Top 30 affected phosphosites \u2014 {ko_target} KO",
                         labels={"FC_KO_over_WT": "FC (KO/WT)"},
                     )
                     fig_fc_bar.update_layout(height=400, template="plotly_white")
                     st.plotly_chart(fig_fc_bar, use_container_width=True)
-                    st.download_button("Download FC table", df_fc.to_csv(index=False).encode(),
-                                       file_name=f"ko_fc_{ko_target}.csv")
+                    st.download_button(
+                        "Download FC table",
+                        df_fc.to_csv(index=False).encode(),
+                        file_name=f"ko_fc_{ko_target}.csv",
+                    )
 
                 except Exception as exc:
                     st.error(f"Knockout simulation failed: {exc}")
-
 
 # ══════════════════════════════════════════════════════════════════════════
 # G · SENSITIVITY
 # ══════════════════════════════════════════════════════════════════════════
 with tab_sens:
     st.header("Sensitivity Analysis")
-    st.caption("Source: `sensitivity/sobol_indices_labeled.tsv`, `perturbation_data.tsv`")
+    st.caption(
+        "Source: `sensitivity/sobol_indices_labeled.tsv`, `perturbation_data.tsv`"
+    )
 
     sens = _load_sens(results_dir)
     if sens is None:
@@ -898,29 +1505,61 @@ with tab_sens:
         cs1, cs2 = st.columns([1, 3])
         with cs1:
             top_n = st.slider("Top N", 5, min(60, len(df_sobol)), 20, key="sobol_top")
-            sort_by = st.radio("Sort by", ["Total_Order", "First_Order"], key="sobol_sort")
+            sort_by = st.radio(
+                "Sort by", ["Total_Order", "First_Order"], key="sobol_sort"
+            )
         with cs2:
             df_ps = df_sobol.sort_values(sort_by, ascending=False).head(top_n)
             fig_sobol = go.Figure()
-            param_axis = df_ps.get("Parameter", df_ps.index) if "Parameter" in df_ps.columns else df_ps.index
+            param_axis = (
+                df_ps.get("Parameter", df_ps.index)
+                if "Parameter" in df_ps.columns
+                else df_ps.index
+            )
             if "Total_Order" in df_ps.columns:
                 err_y = None
                 if "Confidence_Total" in df_ps.columns:
-                    err_y = dict(type="data", array=df_ps["Confidence_Total"].values, visible=True)
-                fig_sobol.add_trace(go.Bar(x=param_axis, y=df_ps["Total_Order"],
-                                           name="Total effect (ST)", marker_color="steelblue", error_y=err_y))
+                    err_y = dict(
+                        type="data",
+                        array=df_ps["Confidence_Total"].values,
+                        visible=True,
+                    )
+                fig_sobol.add_trace(
+                    go.Bar(
+                        x=param_axis,
+                        y=df_ps["Total_Order"],
+                        name="Total effect (ST)",
+                        marker_color="steelblue",
+                        error_y=err_y,
+                    )
+                )
             if "First_Order" in df_ps.columns:
-                fig_sobol.add_trace(go.Bar(x=param_axis, y=df_ps["First_Order"],
-                                           name="First order (S1)", marker_color="navy", opacity=0.7))
-            fig_sobol.update_layout(barmode="overlay", height=450, template="plotly_white",
-                                    xaxis_title="Parameter", yaxis_title="Sobol index",
-                                    title=f"Top {top_n} sensitive parameters")
+                fig_sobol.add_trace(
+                    go.Bar(
+                        x=param_axis,
+                        y=df_ps["First_Order"],
+                        name="First order (S1)",
+                        marker_color="navy",
+                        opacity=0.7,
+                    )
+                )
+            fig_sobol.update_layout(
+                barmode="overlay",
+                height=450,
+                template="plotly_white",
+                xaxis_title="Parameter",
+                yaxis_title="Sobol index",
+                title=f"Top {top_n} sensitive parameters",
+            )
             st.plotly_chart(fig_sobol, use_container_width=True)
 
         with st.expander("Full Sobol table"):
             st.dataframe(df_sobol, use_container_width=True)
-            st.download_button("Download CSV", df_sobol.to_csv(index=False).encode(),
-                               file_name="sobol_indices.csv")
+            st.download_button(
+                "Download CSV",
+                df_sobol.to_csv(index=False).encode(),
+                file_name="sobol_indices.csv",
+            )
 
         st.divider()
         st.subheader("2. Output variance (perturbation envelopes)")
@@ -929,37 +1568,85 @@ with tab_sens:
             st.info("perturbation_data.tsv not found.")
         else:
             cp1, cp2, cp3 = st.columns(3)
-            avail_types = sorted(df_pert["Type"].unique()) if "Type" in df_pert.columns else []
+            avail_types = (
+                sorted(df_pert["Type"].unique()) if "Type" in df_pert.columns else []
+            )
             with cp1:
                 sel_type = st.selectbox("Entity type", avail_types, key="pert_type")
             with cp2:
-                avail_ents = sorted(df_pert[df_pert["Type"] == sel_type]["Entity"].unique()) if sel_type and "Entity" in df_pert.columns else []
+                avail_ents = (
+                    sorted(df_pert[df_pert["Type"] == sel_type]["Entity"].unique())
+                    if sel_type and "Entity" in df_pert.columns
+                    else []
+                )
                 sel_entity = st.selectbox("Entity", avail_ents, key="pert_entity")
             with cp3:
                 max_samp = st.slider("Max samples", 10, 200, 50, key="pert_samp")
 
-            subset = df_pert[(df_pert["Type"] == sel_type) & (df_pert["Entity"] == sel_entity)] if sel_type and sel_entity else pd.DataFrame()
+            subset = (
+                df_pert[
+                    (df_pert["Type"] == sel_type) & (df_pert["Entity"] == sel_entity)
+                ]
+                if sel_type and sel_entity
+                else pd.DataFrame()
+            )
             if not subset.empty:
                 shown_ids = subset["Sample_ID"].unique()[:max_samp]
                 subset = subset[subset["Sample_ID"].isin(shown_ids)]
                 fig_pert = go.Figure()
-                for sid, grp in subset.groupby("Sample_ID"):
-                    fig_pert.add_trace(go.Scatter(x=grp["Time"], y=grp["Value"],
-                                                   mode="lines", line=dict(color="gray", width=1),
-                                                   opacity=0.2, showlegend=False))
-                stats_df = subset.groupby("Time")["Value"].agg(["mean", "median", "std"]).reset_index()
-                fig_pert.add_trace(go.Scatter(x=stats_df["Time"], y=stats_df["median"],
-                                              mode="lines", line=dict(color="red", width=2.5), name="Median"))
-                fig_pert.add_trace(go.Scatter(x=stats_df["Time"], y=stats_df["mean"] + stats_df["std"],
-                                              mode="lines", line=dict(width=0), showlegend=False))
-                fig_pert.add_trace(go.Scatter(x=stats_df["Time"], y=stats_df["mean"] - stats_df["std"],
-                                              mode="lines", line=dict(width=0), fill="tonexty",
-                                              fillcolor="rgba(255,0,0,0.12)", name="Mean \u00b1 1 SD"))
-                fig_pert.update_layout(height=450, template="plotly_white",
-                                       xaxis_title="Time (min)", yaxis_title="Simulated value",
-                                       title=f"Perturbation variance \u2014 {sel_entity}")
+                for _sid, grp in subset.groupby("Sample_ID"):
+                    fig_pert.add_trace(
+                        go.Scatter(
+                            x=grp["Time"],
+                            y=grp["Value"],
+                            mode="lines",
+                            line=dict(color="gray", width=1),
+                            opacity=0.2,
+                            showlegend=False,
+                        )
+                    )
+                stats_df = (
+                    subset.groupby("Time")["Value"]
+                    .agg(["mean", "median", "std"])
+                    .reset_index()
+                )
+                fig_pert.add_trace(
+                    go.Scatter(
+                        x=stats_df["Time"],
+                        y=stats_df["median"],
+                        mode="lines",
+                        line=dict(color="red", width=2.5),
+                        name="Median",
+                    )
+                )
+                fig_pert.add_trace(
+                    go.Scatter(
+                        x=stats_df["Time"],
+                        y=stats_df["mean"] + stats_df["std"],
+                        mode="lines",
+                        line=dict(width=0),
+                        showlegend=False,
+                    )
+                )
+                fig_pert.add_trace(
+                    go.Scatter(
+                        x=stats_df["Time"],
+                        y=stats_df["mean"] - stats_df["std"],
+                        mode="lines",
+                        line=dict(width=0),
+                        fill="tonexty",
+                        fillcolor="rgba(255,0,0,0.12)",
+                        name="Mean \u00b1 1 SD",
+                    )
+                )
+                fig_pert.update_layout(
+                    height=450,
+                    template="plotly_white",
+                    xaxis_title="Time (min)",
+                    yaxis_title="Simulated value",
+                    title=f"Perturbation variance \u2014 {sel_entity}",
+                )
                 st.plotly_chart(fig_pert, use_container_width=True)
-
 
 # ══════════════════════════════════════════════════════════════════════════
 # H · STEADY-STATE
@@ -980,20 +1667,43 @@ with tab_ss:
             st.subheader("Live long-horizon simulation")
             css1, css2 = st.columns([1, 3])
             with css1:
-                ss_t_end = st.slider("End time (min)", 1000, 50000, 10000, 1000, key="ss_t_end")
-                run_ss_btn = st.button("\u25b6 Run steady-state sim", type="primary", key="run_ss")
+                ss_t_end = st.slider(
+                    "End time (min)", 1000, 50000, 10000, 1000, key="ss_t_end"
+                )
+                run_ss_btn = st.button(
+                    "\u25b6 Run steady-state sim", type="primary", key="run_ss"
+                )
             with css2:
                 if run_ss_btn:
                     from phoscrosstalk.steadystate import build_long_horizon_time_grid
+
                     t_ss_grid = build_long_horizon_time_grid(
-                        t_end=float(ss_t_end), early_end=t_max_data, n_early=100, n_late=200)
+                        t_end=float(ss_t_end),
+                        early_end=t_max_data,
+                        n_early=100,
+                        n_late=200,
+                    )
                     with st.spinner("Simulating long horizon…"):
-                        ss_r = _run_simulation(results_dir, t_max=float(t_ss_grid[-1]),
-                                               num_points=len(t_ss_grid), mechanism=mechanism)
+                        ss_r = _run_simulation(
+                            results_dir,
+                            t_max=float(t_ss_grid[-1]),
+                            num_points=len(t_ss_grid),
+                            mechanism=mechanism,
+                        )
                     if ss_r:
-                        _plot_ss_results(ss_r["t"], ss_r["P_sim"], ss_r["A_sim"],
-                                         ss_r["S_sim"], ss_r["Kdyn_sim"],
-                                         proteins, sites, kinases, snap, selected_protein, use_logx)
+                        _plot_ss_results(
+                            ss_r["t"],
+                            ss_r["P_sim"],
+                            ss_r["A_sim"],
+                            ss_r["S_sim"],
+                            ss_r["Kdyn_sim"],
+                            proteins,
+                            sites,
+                            kinases,
+                            snap,
+                            selected_protein,
+                            use_logx,
+                        )
     else:
         for key, df_ss in ss_data.items():
             if df_ss is None or df_ss.empty:
@@ -1015,32 +1725,51 @@ with tab_ss:
                 fig_ss_line = go.Figure()
                 for ri, rname in enumerate(row_names[:20]):
                     y = np.where(np.isfinite(arr[ri]), arr[ri], np.nan)
-                    fig_ss_line.add_trace(go.Scatter(x=t_ss_axis, y=y, mode="lines", name=str(rname)))
-                ylab = ("Activity fraction [0-1]" if key in ("S", "Kdyn") else "Protein abundance")
-                fig_ss_line.update_layout(height=400, template="plotly_white",
-                                          xaxis_title="Time (min)", yaxis_title=ylab,
-                                          title=f"Steady-state \u2014 {key}")
+                    fig_ss_line.add_trace(
+                        go.Scatter(x=t_ss_axis, y=y, mode="lines", name=str(rname))
+                    )
+                ylab = (
+                    "Activity fraction [0-1]"
+                    if key in ("S", "Kdyn")
+                    else "Protein abundance"
+                )
+                fig_ss_line.update_layout(
+                    height=400,
+                    template="plotly_white",
+                    xaxis_title="Time (min)",
+                    yaxis_title=ylab,
+                    title=f"Steady-state \u2014 {key}",
+                )
                 if use_logx:
                     fig_ss_line.update_xaxes(type="log")
                 st.plotly_chart(fig_ss_line, use_container_width=True)
 
             elif key == "sites":
                 finite_arr = np.where(np.isfinite(arr), arr, np.nan)
-                fig_ss_h = px.imshow(finite_arr,
-                                     x=[str(c) for c in df_ss.columns],
-                                     y=[str(r) for r in row_names],
-                                     color_continuous_scale="Plasma",
-                                     title="Relative phosphosite signal \u2014 steady-state",
-                                     labels={"color": "Relative phosphosite signal"}, aspect="auto")
+                fig_ss_h = px.imshow(
+                    finite_arr,
+                    x=[str(c) for c in df_ss.columns],
+                    y=[str(r) for r in row_names],
+                    color_continuous_scale="Plasma",
+                    title="Relative phosphosite signal \u2014 steady-state",
+                    labels={"color": "Relative phosphosite signal"},
+                    aspect="auto",
+                )
                 fig_ss_h.update_layout(height=500)
                 st.plotly_chart(fig_ss_h, use_container_width=True)
 
             n_nan = int(np.sum(~np.isfinite(arr)))
             if n_nan > 0:
-                st.caption(f"\u2139\ufe0f {n_nan}/{arr.size} values are NaN/Inf (shown as blank).")
+                st.caption(
+                    f"\u2139\ufe0f {n_nan}/{arr.size} values are NaN/Inf (shown as blank)."  # noqa: E501
+                )
 
-            st.download_button(f"Download steadystate_{key}.csv", df_ss.to_csv().encode(),
-                               file_name=f"steadystate_{key}.csv", key=f"dl_ss_{key}")
+            st.download_button(
+                f"Download steadystate_{key}.csv",
+                df_ss.to_csv().encode(),
+                file_name=f"steadystate_{key}.csv",
+                key=f"dl_ss_{key}",
+            )
 
         if "sites" in ss_data and ss_data["sites"] is not None:
             df_sv = ss_data["sites"]
@@ -1049,10 +1778,13 @@ with tab_ss:
                 delta = np.nanmean(np.abs(arr_sv[:, -1] - arr_sv[:, -10]))
                 if np.isfinite(delta):
                     if delta < 1e-4:
-                        st.success(f"System appears converged (\u0394 relative phosphosite signal: {delta:.2e})")
+                        st.success(
+                            f"System appears converged (\u0394 relative phosphosite signal: {delta:.2e})"  # noqa: E501
+                        )
                     else:
-                        st.warning(f"System may not be fully converged (\u0394 relative phosphosite signal: {delta:.2e})")
-
+                        st.warning(
+                            f"System may not be fully converged (\u0394 relative phosphosite signal: {delta:.2e})"  # noqa: E501
+                        )
 
 # ══════════════════════════════════════════════════════════════════════════
 # I · NETWORK
@@ -1069,8 +1801,12 @@ with tab_net:
             st.subheader("Interaction matrices (from preopt snapshot)")
             mat_opt = st.selectbox(
                 "Select matrix",
-                ["K_site_kin (kinase–substrate)", "Cg (global coupling)",
-                 "Cl (local coupling)", "L_alpha (kinase Laplacian)"],
+                [
+                    "K_site_kin (kinase–substrate)",
+                    "Cg (global coupling)",
+                    "Cl (local coupling)",
+                    "L_alpha (kinase Laplacian)",
+                ],
                 key="net_mat",
             )
             mat_map = {
@@ -1084,8 +1820,14 @@ with tab_net:
             if mat_arr is not None and mat_arr.size > 0:
                 xl_lbls = x_labels if len(x_labels) == mat_arr.shape[1] else None
                 yl_lbls = y_labels if len(y_labels) == mat_arr.shape[0] else None
-                fig_mat = px.imshow(mat_arr, x=xl_lbls, y=yl_lbls,
-                                    color_continuous_scale="Viridis", title=mat_opt, aspect="auto")
+                fig_mat = px.imshow(
+                    mat_arr,
+                    x=xl_lbls,
+                    y=yl_lbls,
+                    color_continuous_scale="Viridis",
+                    title=mat_opt,
+                    aspect="auto",
+                )
                 fig_mat.update_layout(height=500)
                 st.plotly_chart(fig_mat, use_container_width=True)
     else:
@@ -1110,23 +1852,35 @@ with tab_net:
         search_node = st.text_input("Filter by node name", "")
         df_net_f = df_net.copy()
         if search_node:
-            mask = (df_net_f[source_col].astype(str).str.contains(search_node, case=False, na=False) |
-                    df_net_f[target_col].astype(str).str.contains(search_node, case=False, na=False))
+            mask = df_net_f[source_col].astype(str).str.contains(
+                search_node, case=False, na=False
+            ) | df_net_f[target_col].astype(str).str.contains(
+                search_node, case=False, na=False
+            )
             df_net_f = df_net_f[mask]
 
         st.dataframe(df_net_f.head(500), use_container_width=True)
         if len(df_net_f) > 500:
             st.caption(f"Showing top 500 of {len(df_net_f):,} edges.")
-        st.download_button("Download filtered edges CSV", df_net_f.to_csv(index=False).encode(),
-                           file_name="network_edges_filtered.csv")
+        st.download_button(
+            "Download filtered edges CSV",
+            df_net_f.to_csv(index=False).encode(),
+            file_name="network_edges_filtered.csv",
+        )
 
         st.subheader("Node degree summary")
-        all_nodes = pd.concat([df_net[source_col].rename("node"), df_net[target_col].rename("node")])
+        all_nodes = pd.concat(
+            [df_net[source_col].rename("node"), df_net[target_col].rename("node")]
+        )
         degree_counts = all_nodes.value_counts().reset_index()
         degree_counts.columns = ["node", "degree"]
-        fig_deg = px.bar(degree_counts.head(30), x="node", y="degree",
-                         title="Top 30 nodes by degree",
-                         labels={"degree": "Degree", "node": "Node"})
+        fig_deg = px.bar(
+            degree_counts.head(30),
+            x="node",
+            y="degree",
+            title="Top 30 nodes by degree",
+            labels={"degree": "Degree", "node": "Node"},
+        )
         fig_deg.update_layout(height=350, template="plotly_white")
         st.plotly_chart(fig_deg, use_container_width=True)
 
@@ -1134,7 +1888,9 @@ with tab_net:
             st.subheader("Interactive network (Plotly/networkx)")
             _render_plotly_network(df_net, source_col, target_col)
         else:
-            st.info(f"Network has {len(df_net):,} edges — too large for Plotly rendering.")
+            st.info(
+                f"Network has {len(df_net):,} edges — too large for Plotly rendering."
+            )
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -1150,7 +1906,8 @@ def _render_plotly_network(df_net: pd.DataFrame, src_col: str, tgt_col: str) -> 
 
     G = _nx.DiGraph()
     weight_col = (
-        "Weight_Fitted" if "Weight_Fitted" in df_net.columns
+        "Weight_Fitted"
+        if "Weight_Fitted" in df_net.columns
         else (df_net.columns[2] if df_net.shape[1] > 2 else None)
     )
     for _, row in df_net.iterrows():
@@ -1160,8 +1917,10 @@ def _render_plotly_network(df_net: pd.DataFrame, src_col: str, tgt_col: str) -> 
     pos = _nx.spring_layout(G, seed=42, k=1.5)
     edge_x, edge_y = [], []
     for u, v in G.edges():
-        x0, y0 = pos[u]; x1, y1 = pos[v]
-        edge_x += [x0, x1, None]; edge_y += [y0, y1, None]
+        x0, y0 = pos[u]
+        x1, y1 = pos[v]
+        edge_x += [x0, x1, None]
+        edge_y += [y0, y1, None]
 
     node_x = [pos[n][0] for n in G.nodes()]
     node_y = [pos[n][1] for n in G.nodes()]
@@ -1169,20 +1928,41 @@ def _render_plotly_network(df_net: pd.DataFrame, src_col: str, tgt_col: str) -> 
     node_degree = [G.degree(n) for n in G.nodes()]
 
     fig_net = go.Figure()
-    fig_net.add_trace(go.Scatter(x=edge_x, y=edge_y, mode="lines",
-                                  line=dict(width=0.8, color="lightgrey"), hoverinfo="none",
-                                  showlegend=False))
-    fig_net.add_trace(go.Scatter(
-        x=node_x, y=node_y, mode="markers+text",
-        marker=dict(size=[max(6, d * 2) for d in node_degree], color=node_degree,
-                    colorscale="Viridis", showscale=True,
-                    colorbar=dict(title="Degree")),
-        text=node_labels, textposition="top center",
-        hovertext=[f"{n} (deg={d})" for n, d in zip(node_labels, node_degree)],
-        hoverinfo="text", name="Nodes",
-    ))
+    fig_net.add_trace(
+        go.Scatter(
+            x=edge_x,
+            y=edge_y,
+            mode="lines",
+            line=dict(width=0.8, color="lightgrey"),
+            hoverinfo="none",
+            showlegend=False,
+        )
+    )
+    fig_net.add_trace(
+        go.Scatter(
+            x=node_x,
+            y=node_y,
+            mode="markers+text",
+            marker=dict(
+                size=[max(6, d * 2) for d in node_degree],
+                color=node_degree,
+                colorscale="Viridis",
+                showscale=True,
+                colorbar=dict(title="Degree"),
+            ),
+            text=node_labels,
+            textposition="top center",
+            hovertext=[
+                f"{n} (deg={d})" for n, d in zip(node_labels, node_degree, strict=False)
+            ],
+            hoverinfo="text",
+            name="Nodes",
+        )
+    )
     fig_net.update_layout(
-        height=600, template="plotly_white", showlegend=False,
+        height=600,
+        template="plotly_white",
+        showlegend=False,
         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
         title="Network topology (spring layout)",
@@ -1190,8 +1970,19 @@ def _render_plotly_network(df_net: pd.DataFrame, src_col: str, tgt_col: str) -> 
     st.plotly_chart(fig_net, use_container_width=True)
 
 
-def _plot_ss_results(t, P_sim, A_sim, S_sim, Kdyn_sim,
-                     proteins, sites, kinases, snap, selected_protein, use_logx):
+def _plot_ss_results(
+    t,
+    P_sim,
+    A_sim,
+    S_sim,
+    Kdyn_sim,
+    proteins,
+    sites,
+    kinases,
+    snap,
+    selected_protein,
+    use_logx,
+):
     """Plot long-horizon simulation results."""
     if selected_protein and selected_protein in proteins:
         p_idx = proteins.index(selected_protein)
@@ -1204,37 +1995,74 @@ def _plot_ss_results(t, P_sim, A_sim, S_sim, Kdyn_sim,
         site_idxs = list(range(min(5, len(sites))))
         rel_kins = []
 
-    fig_ss = make_subplots(rows=2, cols=2, subplot_titles=(
-        "Relative phosphosite signal", "Protein abundance",
-        "S \u2013 activity fraction", "Kdyn \u2013 kinase activity fraction",
-    ))
+    fig_ss = make_subplots(
+        rows=2,
+        cols=2,
+        subplot_titles=(
+            "Relative phosphosite signal",
+            "Protein abundance",
+            "S \u2013 activity fraction",
+            "Kdyn \u2013 kinase activity fraction",
+        ),
+    )
     colors = px.colors.qualitative.Plotly
 
     for i, si in enumerate(site_idxs[:8]):
         sname = sites[si] if si < len(sites) else str(si)
         y = np.where(np.isfinite(P_sim[si]), P_sim[si], np.nan)
-        fig_ss.add_trace(go.Scatter(x=t, y=y, mode="lines", name=sname,
-                                    line=dict(color=colors[i % len(colors)])), row=1, col=1)
+        fig_ss.add_trace(
+            go.Scatter(
+                x=t,
+                y=y,
+                mode="lines",
+                name=sname,
+                line=dict(color=colors[i % len(colors)]),
+            ),
+            row=1,
+            col=1,
+        )
 
     y_a = np.where(np.isfinite(A_sim[p_idx]), A_sim[p_idx], np.nan)
-    fig_ss.add_trace(go.Scatter(x=t, y=y_a, mode="lines", name="A", line=dict(width=2, color="black")),
-                     row=1, col=2)
+    fig_ss.add_trace(
+        go.Scatter(
+            x=t, y=y_a, mode="lines", name="A", line=dict(width=2, color="black")
+        ),
+        row=1,
+        col=2,
+    )
     y_s = np.where(np.isfinite(S_sim[p_idx]), S_sim[p_idx], np.nan)
-    fig_ss.add_trace(go.Scatter(x=t, y=y_s, mode="lines", name="S", line=dict(width=2, color="purple")),
-                     row=2, col=1)
+    fig_ss.add_trace(
+        go.Scatter(
+            x=t, y=y_s, mode="lines", name="S", line=dict(width=2, color="purple")
+        ),
+        row=2,
+        col=1,
+    )
     for ri, ki in enumerate(rel_kins[:5]):
         kname = kinases[ki] if ki < len(kinases) else str(ki)
         y_k = np.where(np.isfinite(Kdyn_sim[ki]), Kdyn_sim[ki], np.nan)
-        fig_ss.add_trace(go.Scatter(x=t, y=y_k, mode="lines", name=f"Kdyn {kname}",
-                                    line=dict(color=colors[ri % len(colors)])), row=2, col=2)
+        fig_ss.add_trace(
+            go.Scatter(
+                x=t,
+                y=y_k,
+                mode="lines",
+                name=f"Kdyn {kname}",
+                line=dict(color=colors[ri % len(colors)]),
+            ),
+            row=2,
+            col=2,
+        )
 
     fig_ss.update_xaxes(title_text="Time (min)")
     fig_ss.update_yaxes(title_text="Relative phosphosite signal", row=1, col=1)
     fig_ss.update_yaxes(title_text="Protein abundance", row=1, col=2)
     fig_ss.update_yaxes(title_text="Activity fraction [0-1]", row=2, col=1)
     fig_ss.update_yaxes(title_text="Activity fraction [0-1]", row=2, col=2)
-    fig_ss.update_layout(height=700, template="plotly_white",
-                         title=f"Long-horizon relaxation \u2014 {selected_protein or (proteins[0] if proteins else '')}")
+    fig_ss.update_layout(
+        height=700,
+        template="plotly_white",
+        title=f"Long-horizon relaxation \u2014 {selected_protein or (proteins[0] if proteins else '')}",  # noqa: E501
+    )
     if use_logx:
         fig_ss.update_xaxes(type="log")
     st.plotly_chart(fig_ss, use_container_width=True)

@@ -175,7 +175,7 @@ def test_simulate_ode_returns_R_state():
     from phoscrosstalk.simulation import simulate_ode
 
     m = _make_tiny_model(K=2, M=3, N=4, T=6)
-    K, M, N = m["K"], m["M"], m["N"]
+    K, _M, _N = m["K"], m["M"], m["N"]
     t_rna = np.array([4.0, 8.0, 30.0, 60.0])
 
     result = simulate_ode(
@@ -707,5 +707,5 @@ def test_kdyn_labels_use_kinase_names(tmp_path):
     # Must NOT contain generic Kinase_N labels when kinases list is provided
     generic = [i for i in ids if i.startswith("Kinase_")]
     assert len(generic) == 0, (
-        f"Found generic Kinase_N labels in Kdyn_sim IDs when real names provided: {generic}"
+        f"Found generic Kinase_N labels in Kdyn_sim IDs when real names provided: {generic}"  # noqa: E501
     )

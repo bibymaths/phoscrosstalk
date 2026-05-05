@@ -14,7 +14,7 @@ Coverage:
   8. validate_problem_shapes passes on valid problem.
   9. make_residuals_fn returns correct residual block sizes.
  10. config.py optimisation section has solver/verbose/rtol/atol defaults.
-"""
+"""  # noqa: E501
 
 import numpy as np
 import pytest
@@ -83,7 +83,7 @@ def _make_residuals_fn(m, *, with_rna=False, lambda_net=1e-4):
     """Build a make_residuals_fn for the tiny model."""
     from phoscrosstalk.optimization import make_residuals_fn
 
-    K, M, N, T = m["K"], m["M"], m["N"], m["T"]
+    K, _M, N, T = m["K"], m["M"], m["N"], m["T"]
 
     kw = dict(
         t=m["t"],
@@ -220,7 +220,7 @@ def test_failed_solve_returns_finite_penalty():
 def test_rna_residual_block_uses_W_data_mrna():
     """
     The RNA residuals should differ when W_data_mrna varies (larger weights → larger residuals).
-    """
+    """  # noqa: E501
     import jax.numpy as jnp
 
     from phoscrosstalk.optimization import make_residuals_fn
@@ -272,7 +272,7 @@ def test_rna_residual_block_uses_W_data_mrna():
     assert np.isfinite(float(f4_high)), "f4_high is not finite"
     # High weight should give larger RNA loss
     assert float(f4_high) >= float(f4_low), (
-        f"Higher W_data_mrna should give equal or larger f4: f4_low={float(f4_low):.4f}, f4_high={float(f4_high):.4f}"
+        f"Higher W_data_mrna should give equal or larger f4: f4_low={float(f4_low):.4f}, f4_high={float(f4_high):.4f}"  # noqa: E501
     )
 
 
@@ -303,13 +303,13 @@ def test_rna_disabled_gives_f4_zero():
 
 
 def test_validate_problem_shapes_bad_P_data():
-    """validate_problem_shapes must raise ValueError when P_data shape != W_data shape."""
+    """validate_problem_shapes must raise ValueError when P_data shape != W_data shape."""  # noqa: E501
     import types
 
     from phoscrosstalk.optimization import validate_problem_shapes
 
     m = _make_tiny_model()
-    K, M, N, T = m["K"], m["M"], m["N"], m["T"]
+    _K, M, N, T = m["K"], m["M"], m["N"], m["T"]
 
     # Build a mock problem with mismatched shapes
     problem = types.SimpleNamespace(
@@ -347,7 +347,7 @@ def test_validate_problem_shapes_valid():
     from phoscrosstalk.optimization import validate_problem_shapes
 
     m = _make_tiny_model()
-    K, M, N, T = m["K"], m["M"], m["N"], m["T"]
+    _K, M, N, T = m["K"], m["M"], m["N"], m["T"]
 
     problem = types.SimpleNamespace(
         P_data=np.ones((N, T)),
@@ -382,7 +382,7 @@ def test_residuals_block_sizes():
     import jax.numpy as jnp
 
     m = _make_tiny_model(K=2, M=3, N=4, T=6)
-    K, M, N, T = m["K"], m["M"], m["N"], m["T"]
+    _K, _M, N, T = m["K"], m["M"], m["N"], m["T"]
     dim = m["dim"]
 
     # Use lambda_net=0.0 to disable Laplacian regularisation for clean block size check
@@ -403,7 +403,7 @@ def test_residuals_block_sizes_with_rna():
     import jax.numpy as jnp
 
     m = _make_tiny_model(K=2, M=3, N=4, T=6)
-    K, M, N, T = m["K"], m["M"], m["N"], m["T"]
+    K, _M, N, T = m["K"], m["M"], m["N"], m["T"]
     dim = m["dim"]
     T_rna = 4  # 4 RNA time points in _make_residuals_fn with_rna=True
 

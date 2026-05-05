@@ -41,7 +41,7 @@ DEFAULT_DOWNLOADABLES = [
     "gene_attribute_matrix.txt.gz",
     "gene_attribute_edges.txt.gz",
     "gene_set_library_crisp.gmt.gz",
-    "kinase_substrate_phospho-site_level_pmid_resource_database.txt",  # Specific to KEA/PSP
+    "kinase_substrate_phospho-site_level_pmid_resource_database.txt",  # Specific to KEA/PSP  # noqa: E501
     "kinase_networks.zip",  # Specific to KEA
 ]
 
@@ -94,7 +94,7 @@ class DataCurator:
 
             logger.info(f"Checking dataset: {dataset_name} ({path_suffix})")
 
-            # Note: Not all datasets have all files. We try typical ones + specific KEA ones
+            # Note: Not all datasets have all files. We try typical ones + specific KEA ones  # noqa: E501
             # For simplicity, we try to fetch specific files if they exist
             targets = DEFAULT_DOWNLOADABLES
             if path_suffix == "kea":
@@ -137,7 +137,7 @@ class DataCurator:
         Args:
             within_path: Path to PTMcode2 'within' file (gzipped).
             between_path: Path to PTMcode2 'between' file (gzipped).
-        """
+        """  # noqa: E501
         logger.header("[*] Building PTM SQLite Databases")
 
         out_intra = self.processed_dir / "ptm_intra.db"
@@ -215,7 +215,7 @@ class DataCurator:
                        """)
         conn_i.execute("CREATE INDEX idx_intra_protein ON intra_pairs(protein)")
         conn_i.executemany(
-            "INSERT INTO intra_pairs (protein, residue1, score1, residue2, score2) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO intra_pairs (protein, residue1, score1, residue2, score2) VALUES (?, ?, ?, ?, ?)",  # noqa: E501
             [(p, r1, s1, r2, s2) for (p, r1, s1, _, r2, s2) in W],
         )
         conn_i.commit()
@@ -242,7 +242,7 @@ class DataCurator:
             "CREATE INDEX idx_inter_proteins ON inter_pairs(protein1, protein2)"
         )
         conn_e.executemany(
-            "INSERT INTO inter_pairs (protein1, residue1, score1, protein2, residue2, score2) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO inter_pairs (protein1, residue1, score1, protein2, residue2, score2) VALUES (?, ?, ?, ?, ?, ?)",  # noqa: E501
             B,
         )
         conn_e.commit()
@@ -314,7 +314,7 @@ class DataCurator:
                     U.add_edge(u, v, layers={layer}, weights={layer: w})
 
         # Aggregation
-        for u, v, data in U.edges(data=True):
+        for _u, _v, data in U.edges(data=True):
             ws = list(data["weights"].values())
             data["weight_sum"] = float(sum(ws))
             data["weight_mean"] = float(sum(ws) / len(ws))
@@ -487,7 +487,7 @@ def main():
         curator.build_ptm_databases(args.ptmcode[0], args.ptmcode[1])
     elif args.all:
         # Check if user put them manually in raw?
-        # PTMcode data usually isn't in Harmonizome default downloads, so we warn if missing
+        # PTMcode data usually isn't in Harmonizome default downloads, so we warn if missing  # noqa: E501
         logger.warning(
             "Skipping PTMcode DB build (requires explicit paths via --ptmcode)."
         )

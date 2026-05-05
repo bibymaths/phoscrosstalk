@@ -397,7 +397,7 @@ def test_fit_timeseries_nonneg(tmp_path):
     from phoscrosstalk.analysis import save_fitted_simulation
 
     m = _make_tiny(K=2, M=3, N=4, T=5)
-    K, M, N, T = m["K"], m["M"], m["N"], m["T"]
+    K, M, N, _T = m["K"], m["M"], m["N"], m["T"]
 
     sites = [f"ProtA_S{i}" for i in range(N)]
     proteins = ["ProtA", "ProtB"]

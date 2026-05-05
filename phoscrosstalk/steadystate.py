@@ -14,7 +14,6 @@ Public interface:
 
 import json
 import os
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -64,7 +63,9 @@ def build_long_horizon_time_grid(
     if n_late < 2:
         raise ValueError(f"n_late must be >= 2, got {n_late}")
     if late_grid not in {"linear", "geomspace"}:
-        raise ValueError(f"late_grid must be 'linear' or 'geomspace', got {late_grid!r}")
+        raise ValueError(
+            f"late_grid must be 'linear' or 'geomspace', got {late_grid!r}"
+        )
 
     t_early = np.linspace(0.0, early_end, n_early, dtype=np.float64)
     late_start = np.nextafter(early_end, np.inf)
@@ -105,18 +106,28 @@ def _save_diagnostics_tsv(ss_dir: str, matrices: dict) -> None:
         n_nan = int(np.sum(np.isnan(arr)))
         n_inf = int(np.sum(np.isinf(arr)))
         finite_vals = arr[np.isfinite(arr)]
-        rows.append({
-            "state": name,
-            "shape": str(arr.shape),
-            "total_elements": total,
-            "finite_count": n_finite,
-            "nan_count": n_nan,
-            "inf_count": n_inf,
-            "min": float(finite_vals.min()) if finite_vals.size > 0 else float("nan"),
-            "mean": float(finite_vals.mean()) if finite_vals.size > 0 else float("nan"),
-            "max": float(finite_vals.max()) if finite_vals.size > 0 else float("nan"),
-        })
-    pd.DataFrame(rows).to_csv(os.path.join(ss_dir, "steadystate_diagnostics.tsv"), sep="\t", index=False)
+        rows.append(
+            {
+                "state": name,
+                "shape": str(arr.shape),
+                "total_elements": total,
+                "finite_count": n_finite,
+                "nan_count": n_nan,
+                "inf_count": n_inf,
+                "min": float(finite_vals.min())
+                if finite_vals.size > 0
+                else float("nan"),
+                "mean": float(finite_vals.mean())
+                if finite_vals.size > 0
+                else float("nan"),
+                "max": float(finite_vals.max())
+                if finite_vals.size > 0
+                else float("nan"),
+            }
+        )
+    pd.DataFrame(rows).to_csv(
+        os.path.join(ss_dir, "steadystate_diagnostics.tsv"), sep="\t", index=False
+    )
 
 
 def _save_convergence_tsv(ss_dir: str, matrices: dict) -> None:
@@ -124,42 +135,54 @@ def _save_convergence_tsv(ss_dir: str, matrices: dict) -> None:
     rows = []
     for name, X in matrices.items():
         if X.shape[1] < 2:
-            rows.append({
-                "state": name,
-                "mean_abs_delta": float("nan"),
-                "max_abs_delta": float("nan"),
-                "mean_rel_delta": float("nan"),
-                "max_rel_delta": float("nan"),
-            })
+            rows.append(
+                {
+                    "state": name,
+                    "mean_abs_delta": float("nan"),
+                    "max_abs_delta": float("nan"),
+                    "mean_rel_delta": float("nan"),
+                    "max_rel_delta": float("nan"),
+                }
+            )
             continue
         delta_abs = np.abs(X[:, -1] - X[:, -2])
         delta_rel = delta_abs / (np.abs(X[:, -2]) + _EPS)
         fa = delta_abs[np.isfinite(delta_abs)]
         fr = delta_rel[np.isfinite(delta_rel)]
-        rows.append({
-            "state": name,
-            "mean_abs_delta": float(fa.mean()) if fa.size > 0 else float("nan"),
-            "max_abs_delta": float(fa.max()) if fa.size > 0 else float("nan"),
-            "mean_rel_delta": float(fr.mean()) if fr.size > 0 else float("nan"),
-            "max_rel_delta": float(fr.max()) if fr.size > 0 else float("nan"),
-        })
-    pd.DataFrame(rows).to_csv(os.path.join(ss_dir, "steadystate_convergence.tsv"), sep="\t", index=False)
+        rows.append(
+            {
+                "state": name,
+                "mean_abs_delta": float(fa.mean()) if fa.size > 0 else float("nan"),
+                "max_abs_delta": float(fa.max()) if fa.size > 0 else float("nan"),
+                "mean_rel_delta": float(fr.mean()) if fr.size > 0 else float("nan"),
+                "max_rel_delta": float(fr.max()) if fr.size > 0 else float("nan"),
+            }
+        )
+    pd.DataFrame(rows).to_csv(
+        os.path.join(ss_dir, "steadystate_convergence.tsv"), sep="\t", index=False
+    )
 
 
-def _save_output_tsvs(ss_dir, P_ss, A_ss, S_ss, Kdyn_ss, t_long, sites, proteins, kinases):
+def _save_output_tsvs(
+    ss_dir, P_ss, A_ss, S_ss, Kdyn_ss, t_long, sites, proteins, kinases
+):
     """Save the four primary output TSVs (backward-compatible filenames).
 
     Note: steadystate_sites.tsv stores relative phosphosite signal, not occupancy.
     """
     cols = [f"t_{t:.1f}" for t in t_long]
     pd.DataFrame(P_ss, index=sites, columns=cols).to_csv(
-        os.path.join(ss_dir, "steadystate_sites.tsv"), sep="\t")
+        os.path.join(ss_dir, "steadystate_sites.tsv"), sep="\t"
+    )
     pd.DataFrame(A_ss, index=proteins, columns=cols).to_csv(
-        os.path.join(ss_dir, "steadystate_proteins.tsv"), sep="\t")
+        os.path.join(ss_dir, "steadystate_proteins.tsv"), sep="\t"
+    )
     pd.DataFrame(S_ss, index=proteins, columns=cols).to_csv(
-        os.path.join(ss_dir, "steadystate_S.tsv"), sep="\t")
+        os.path.join(ss_dir, "steadystate_S.tsv"), sep="\t"
+    )
     pd.DataFrame(Kdyn_ss, index=kinases, columns=cols).to_csv(
-        os.path.join(ss_dir, "steadystate_Kdyn.tsv"), sep="\t")
+        os.path.join(ss_dir, "steadystate_Kdyn.tsv"), sep="\t"
+    )
 
 
 def _save_failure_diagnostics(ss_dir: str, message: str) -> None:
@@ -170,9 +193,20 @@ def _save_failure_diagnostics(ss_dir: str, message: str) -> None:
 
 
 def _save_metadata_json(
-    ss_dir, t_end, early_end, n_early, n_late, late_grid,
-    rtol, atol, dt0, max_steps, mechanism,
-    has_k_act_fn, has_s_prod_fn, has_R_data0,
+    ss_dir,
+    t_end,
+    early_end,
+    n_early,
+    n_late,
+    late_grid,
+    rtol,
+    atol,
+    dt0,
+    max_steps,
+    mechanism,
+    has_k_act_fn,
+    has_s_prod_fn,
+    has_R_data0,
 ):
     meta = {
         "horizon": {
@@ -218,7 +252,7 @@ def run_steadystate_analysis(
     late_grid: str = "geomspace",
     rtol: float = 1e-6,
     atol: float = 1e-8,
-    dt0: Optional[float] = 0.1,
+    dt0: float | None = 0.1,
     max_steps: int = 131072,
     top_n: int = 10,
     skip_plots_on_nonfinite: bool = True,
@@ -275,8 +309,11 @@ def run_steadystate_analysis(
 
     # 1. Build long time grid
     t_long = build_long_horizon_time_grid(
-        t_end=t_end, early_end=early_end, n_early=n_early,
-        n_late=n_late, late_grid=late_grid,
+        t_end=t_end,
+        early_end=early_end,
+        n_early=n_early,
+        n_late=n_late,
+        late_grid=late_grid,
     )
     logger.info(
         f"   -> Time grid: {len(t_long)} points  "
@@ -368,12 +405,25 @@ def run_steadystate_analysis(
             raise RuntimeError(
                 "P_ss is all non-finite in long-horizon relaxation (strict=True)."
             )
-        _save_output_tsvs(ss_dir, P_ss, A_ss, S_ss, Kdyn_ss, t_long, sites, proteins, kinases)
+        _save_output_tsvs(
+            ss_dir, P_ss, A_ss, S_ss, Kdyn_ss, t_long, sites, proteins, kinases
+        )
         _save_convergence_tsv(ss_dir, matrices)
         _save_metadata_json(
-            ss_dir, t_end, early_end, n_early, n_late, late_grid,
-            rtol, atol, dt0, max_steps, getattr(problem, "mechanism", "unknown"),
-            k_act_fn is not None, s_prod_fn is not None, R_data0 is not None,
+            ss_dir,
+            t_end,
+            early_end,
+            n_early,
+            n_late,
+            late_grid,
+            rtol,
+            atol,
+            dt0,
+            max_steps,
+            getattr(problem, "mechanism", "unknown"),
+            k_act_fn is not None,
+            s_prod_fn is not None,
+            R_data0 is not None,
         )
         if skip_plots_on_nonfinite:
             logger.warning("[!] Skipping plots due to all-NaN P_ss output.")
@@ -385,36 +435,83 @@ def run_steadystate_analysis(
     finite_delta = delta_abs_p[np.isfinite(delta_abs_p)]
     if finite_delta.size > 0:
         logger.info(
-            f"   -> Convergence metric (mean |delta P| at last step): {finite_delta.mean():.6e}"
+            f"   -> Convergence metric (mean |delta P| at last step): {finite_delta.mean():.6e}"  # noqa: E501
         )
 
     # 6. Save output TSVs
-    _save_output_tsvs(ss_dir, P_ss, A_ss, S_ss, Kdyn_ss, t_long, sites, proteins, kinases)
+    _save_output_tsvs(
+        ss_dir, P_ss, A_ss, S_ss, Kdyn_ss, t_long, sites, proteins, kinases
+    )
 
     # 7. Plots
-    _plot_convergence_heatmap(ss_dir, P_ss, t_long, "Phosphosites", skip_plots_on_nonfinite)
+    _plot_convergence_heatmap(
+        ss_dir, P_ss, t_long, "Phosphosites", skip_plots_on_nonfinite
+    )
     _plot_convergence_heatmap(ss_dir, A_ss, t_long, "Proteins", skip_plots_on_nonfinite)
-    _plot_convergence_heatmap(ss_dir, S_ss, t_long, "Protein_Activity_S", skip_plots_on_nonfinite)
-    _plot_convergence_heatmap(ss_dir, Kdyn_ss, t_long, "Kinase_Activity_Kdyn", skip_plots_on_nonfinite)
+    _plot_convergence_heatmap(
+        ss_dir, S_ss, t_long, "Protein_Activity_S", skip_plots_on_nonfinite
+    )
+    _plot_convergence_heatmap(
+        ss_dir, Kdyn_ss, t_long, "Kinase_Activity_Kdyn", skip_plots_on_nonfinite
+    )
 
-    _plot_trajectories(ss_dir, P_ss, t_long, sites, "Top_Changing_Sites",
-                       ylabel="Relative phosphosite signal", top_n=top_n,
-                       skip_on_nonfinite=skip_plots_on_nonfinite)
-    _plot_trajectories(ss_dir, A_ss, t_long, proteins, "Protein_Abundance_A",
-                       ylabel="Protein abundance state", top_n=top_n,
-                       skip_on_nonfinite=skip_plots_on_nonfinite)
-    _plot_trajectories(ss_dir, S_ss, t_long, proteins, "S_Dynamics",
-                       ylabel="Fraction active", top_n=top_n,
-                       skip_on_nonfinite=skip_plots_on_nonfinite)
-    _plot_trajectories(ss_dir, Kdyn_ss, t_long, kinases, "Kdyn_Dynamics",
-                       ylabel="Fraction active", top_n=top_n,
-                       skip_on_nonfinite=skip_plots_on_nonfinite)
+    _plot_trajectories(
+        ss_dir,
+        P_ss,
+        t_long,
+        sites,
+        "Top_Changing_Sites",
+        ylabel="Relative phosphosite signal",
+        top_n=top_n,
+        skip_on_nonfinite=skip_plots_on_nonfinite,
+    )
+    _plot_trajectories(
+        ss_dir,
+        A_ss,
+        t_long,
+        proteins,
+        "Protein_Abundance_A",
+        ylabel="Protein abundance state",
+        top_n=top_n,
+        skip_on_nonfinite=skip_plots_on_nonfinite,
+    )
+    _plot_trajectories(
+        ss_dir,
+        S_ss,
+        t_long,
+        proteins,
+        "S_Dynamics",
+        ylabel="Fraction active",
+        top_n=top_n,
+        skip_on_nonfinite=skip_plots_on_nonfinite,
+    )
+    _plot_trajectories(
+        ss_dir,
+        Kdyn_ss,
+        t_long,
+        kinases,
+        "Kdyn_Dynamics",
+        ylabel="Fraction active",
+        top_n=top_n,
+        skip_on_nonfinite=skip_plots_on_nonfinite,
+    )
 
     # 8. Metadata JSON
     _save_metadata_json(
-        ss_dir, t_end, early_end, n_early, n_late, late_grid,
-        rtol, atol, dt0, max_steps, getattr(problem, "mechanism", "unknown"),
-        k_act_fn is not None, s_prod_fn is not None, R_data0 is not None,
+        ss_dir,
+        t_end,
+        early_end,
+        n_early,
+        n_late,
+        late_grid,
+        rtol,
+        atol,
+        dt0,
+        max_steps,
+        getattr(problem, "mechanism", "unknown"),
+        k_act_fn is not None,
+        s_prod_fn is not None,
+        R_data0 is not None,
     )
 
     logger.info("[*] Long-horizon relaxation analysis complete.")
@@ -441,7 +538,9 @@ def _plot_convergence_heatmap(
         return
 
     if not np.any(np.isfinite(data)):
-        logger.warning(f"   [plot] Skipping heatmap for {label}: all values are non-finite.")
+        logger.warning(
+            f"   [plot] Skipping heatmap for {label}: all values are non-finite."
+        )
         if skip_on_nonfinite:
             return
 
@@ -459,8 +558,15 @@ def _plot_convergence_heatmap(
         vmin, vmax = 0.0, 1.0
 
     fig, ax = plt.subplots(figsize=(10, 8), constrained_layout=True)
-    sns.heatmap(plot_data, cmap="viridis", xticklabels=False, yticklabels=False,
-                vmin=vmin, vmax=vmax, ax=ax)
+    sns.heatmap(
+        plot_data,
+        cmap="viridis",
+        xticklabels=False,
+        yticklabels=False,
+        vmin=vmin,
+        vmax=vmax,
+        ax=ax,
+    )
     ax.set_xlabel(f"Time (0 to {t[-1]:.0f} min)")
     ax.set_ylabel(f"{label} (sorted by final value)")
     ax.set_title(f"{label} – long-horizon relaxation")
@@ -491,14 +597,17 @@ def _plot_trajectories(
         skip_on_nonfinite: Skip when no finite dynamic range exists.
     """
     if data.size == 0:
-        logger.warning(f"   [plot] Skipping trajectories for {filename_suffix}: empty data.")
+        logger.warning(
+            f"   [plot] Skipping trajectories for {filename_suffix}: empty data."
+        )
         return
 
     # Check for any finite values before calling nanmax/nanmin to avoid
     # "All-NaN slice encountered" RuntimeWarning from NumPy.
     if not np.any(np.isfinite(data)):
         logger.warning(
-            f"   [plot] Skipping trajectories for {filename_suffix}: no finite values.")
+            f"   [plot] Skipping trajectories for {filename_suffix}: no finite values."
+        )
         if skip_on_nonfinite:
             return
         # Nothing to plot; return even if skip_on_nonfinite is False
@@ -512,7 +621,8 @@ def _plot_trajectories(
 
     if not np.any(np.isfinite(dynamic_range)):
         logger.warning(
-            f"   [plot] Skipping trajectories for {filename_suffix}: no finite dynamic range.")
+            f"   [plot] Skipping trajectories for {filename_suffix}: no finite dynamic range."  # noqa: E501
+        )
         if skip_on_nonfinite:
             return
 

@@ -9,13 +9,10 @@ import numpy as np
 import pytest
 
 from phoscrosstalk.steadystate import (
-    build_long_horizon_time_grid,
     _plot_convergence_heatmap,
     _plot_trajectories,
-    _save_convergence_tsv,
-    run_steadystate_analysis,
+    build_long_horizon_time_grid,
 )
-
 
 # ---------------------------------------------------------------------------
 # build_long_horizon_time_grid
@@ -56,7 +53,7 @@ def test_time_grid_linear():
 
 def test_time_grid_no_duplicate_transition():
     t = build_long_horizon_time_grid(500.0, 100.0, 100, 50)
-    # early_end=100.0 appears exactly once in the grid (nextafter creates a different float)
+    # early_end=100.0 appears exactly once in the grid (nextafter creates a different float)  # noqa: E501
     count = int(np.sum(t == 100.0))
     assert count == 1, f"early_end should appear exactly once, got {count}"
 
@@ -98,7 +95,9 @@ def test_plot_heatmap_skips_all_nan(tmp_path):
     # Should not raise; should not produce seaborn warnings
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        _plot_convergence_heatmap(str(tmp_path), data, t, "TestLabel", skip_on_nonfinite=True)
+        _plot_convergence_heatmap(
+            str(tmp_path), data, t, "TestLabel", skip_on_nonfinite=True
+        )
     # File should NOT be created when we skip
     assert not os.path.exists(tmp_path / "heatmap_convergence_TestLabel.png")
 
@@ -115,7 +114,9 @@ def test_plot_heatmap_finite_data(tmp_path):
     rng = np.random.default_rng(0)
     data = rng.random((8, 20))
     t = np.linspace(0, 200, 20)
-    _plot_convergence_heatmap(str(tmp_path), data, t, "FiniteData", skip_on_nonfinite=True)
+    _plot_convergence_heatmap(
+        str(tmp_path), data, t, "FiniteData", skip_on_nonfinite=True
+    )
     assert os.path.exists(tmp_path / "heatmap_convergence_FiniteData.png")
 
 
@@ -130,7 +131,9 @@ def test_plot_trajectories_skips_all_nan(tmp_path):
     names = [f"site_{i}" for i in range(5)]
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        _plot_trajectories(str(tmp_path), data, t, names, "AllNaN", skip_on_nonfinite=True)
+        _plot_trajectories(
+            str(tmp_path), data, t, names, "AllNaN", skip_on_nonfinite=True
+        )
     assert not os.path.exists(tmp_path / "trajectories_AllNaN.png")
 
 
@@ -139,7 +142,9 @@ def test_plot_trajectories_finite_data(tmp_path):
     data = rng.random((10, 30))
     t = np.linspace(0, 300, 30)
     names = [f"site_{i}" for i in range(10)]
-    _plot_trajectories(str(tmp_path), data, t, names, "Finite", top_n=5, skip_on_nonfinite=True)
+    _plot_trajectories(
+        str(tmp_path), data, t, names, "Finite", top_n=5, skip_on_nonfinite=True
+    )
     assert os.path.exists(tmp_path / "trajectories_Finite.png")
 
 
@@ -154,6 +159,7 @@ def test_run_steadystate_passes_closures(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     import numpy as np
+
     from phoscrosstalk.config import ModelDims
 
     # Minimal problem stub
@@ -199,6 +205,7 @@ def test_run_steadystate_passes_closures(tmp_path, monkeypatch):
         )
 
     import phoscrosstalk.steadystate as ss_mod
+
     monkeypatch.setattr(ss_mod, "simulate_ode", mock_simulate_ode)
 
     theta = np.zeros(10)
@@ -221,13 +228,18 @@ def test_run_steadystate_passes_closures(tmp_path, monkeypatch):
 
     assert captured.get("k_act_fn") is sentinel_k_act, "k_act_fn must be forwarded"
     assert captured.get("s_prod_fn") is sentinel_s_prod, "s_prod_fn must be forwarded"
-    assert np.array_equal(captured.get("R_data0"), sentinel_R_data0), "R_data0 must be forwarded"
-    assert captured.get("rna_relax") == sentinel_rna_relax, "rna_relax must be forwarded"
+    assert np.array_equal(captured.get("R_data0"), sentinel_R_data0), (
+        "R_data0 must be forwarded"
+    )
+    assert captured.get("rna_relax") == sentinel_rna_relax, (
+        "rna_relax must be forwarded"
+    )
 
 
 def test_run_steadystate_no_upper_clip_p(tmp_path, monkeypatch):
     """p initial condition must NOT be clipped to 1.0."""
     from types import SimpleNamespace
+
     from phoscrosstalk.config import ModelDims
 
     K, M, N = 2, 2, 3
@@ -257,12 +269,6 @@ def test_run_steadystate_no_upper_clip_p(tmp_path, monkeypatch):
         rna_relax=0.1,
     )
 
-    captured_x0 = {}
-
-    import phoscrosstalk.simulation as sim_mod
-
-    original_simulate = sim_mod.simulate_ode
-
     def mock_simulate_ode(*args, **kwargs):
         # Intercept at build_full_A0 level via x0 – we check via P_data[:, 0]
         # The real check is that p0 in simulate_ode is NOT clipped to 1.0
@@ -276,6 +282,7 @@ def test_run_steadystate_no_upper_clip_p(tmp_path, monkeypatch):
         )
 
     import phoscrosstalk.steadystate as ss_mod
+
     monkeypatch.setattr(ss_mod, "simulate_ode", mock_simulate_ode)
 
     theta = np.zeros(10)

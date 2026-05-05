@@ -287,7 +287,7 @@ def make_rhs(
         S = jnp.clip(y[K : 2 * K], 0.0, 1.0)
         A = jnp.clip(y[2 * K : 3 * K], 0.0, abundance_max)
         Kdyn = jnp.clip(y[3 * K : 3 * K + M], 0.0, 1.0)
-        p = jnp.clip(y[3 * K + M:], 0.0, None)
+        p = jnp.clip(y[3 * K + M :], 0.0, None)
 
         # Bounded proxy used only for occupancy-like regulation.
         # p itself remains relative phosphosite signal and can exceed 1.
@@ -430,7 +430,7 @@ def make_rhs(
         #   - signed network crosstalk as positive multiplicative factor
         #   - mechanism-specific gate
         #   - remaining unphosphorylated fraction
-        # Protein abundance provides available substrate scale for relative phosphosite signal.
+        # Protein abundance provides available substrate scale for relative phosphosite signal.  # noqa: E501
         A_site = A[site_prot_idx] / jnp.float32(abundance_max)
         A_site = jnp.clip(A_site, 0.0, None)
 
@@ -466,6 +466,8 @@ def make_rhs(
         return jnp.concatenate([dR_rna, dS, dA, dKdyn, dp])
 
     return rhs
+
+
 # ---------------------------------------------------------------------------
 # JAX objective computation (loss components)
 # ---------------------------------------------------------------------------

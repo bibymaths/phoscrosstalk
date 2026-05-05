@@ -30,7 +30,7 @@ State layout: y = [R_rna, S, A, Kdyn, p]  (dim = 3*K + M + N)
 
 import os
 import pathlib
-from typing import Callable, Sequence
+from collections.abc import Callable, Sequence
 
 import diffrax
 import jax
@@ -78,7 +78,7 @@ def bio_score_nb(theta, K, M, N):
 
     Returns:
         float: The calculated biological score (lower is better/more plausible).
-    """
+    """  # noqa: E501
     (k_deact, d_deg, _, _, _, kK_act, kK_deact, _, _, _, _, _) = decode_theta(
         theta, K, M, N
     )
@@ -118,7 +118,7 @@ def create_bounds(K, M, N):
 
     Returns:
         tuple: (xl, xu, dim)
-    """
+    """  # noqa: E501
     dim = 2 * K + 2 + 3 * M + N + 4
     xl, xu = np.zeros(dim), np.zeros(dim)
     idx = 0
@@ -322,7 +322,7 @@ def make_loss_fn(
     x0[2 * K : 3 * K] = np.clip(a0, 0.0, 5.0)
     # p initial condition
     p0 = np.nan_to_num(P_data[:, 0], nan=0.0, posinf=10.0, neginf=0.0)
-    x0[3 * K + M:] = np.clip(p0, 0.0, None)
+    x0[3 * K + M :] = np.clip(p0, 0.0, None)
 
     # JAX static arrays
     Cg_j = jnp.asarray(Cg, dtype=jnp.float32)
@@ -800,6 +800,7 @@ def make_residuals_fn(
 
     return residuals_fn
 
+
 def make_ls_solver(kind: str, rtol: float, atol: float):
     """
     Factory for Optimistix least-squares solvers used in run_single_optimisation.
@@ -829,6 +830,7 @@ def make_ls_solver(kind: str, rtol: float, atol: float):
         return optx.GaussNewton(rtol=rtol, atol=atol)
     raise ValueError(f"Unknown least-squares solver kind={kind!r}")
 
+
 def make_optx_adjoint(kind: str):
     """
     Factory for Optimistix adjoints used in run_single_optimisation.
@@ -852,6 +854,7 @@ def make_optx_adjoint(kind: str):
     if kind == "checkpoint":
         return optx.RecursiveCheckpointAdjoint()
     raise ValueError(f"Unknown Optimistix adjoint kind={kind!r}")
+
 
 def run_single_optimisation(
     residuals_fn,
@@ -928,6 +931,8 @@ def run_single_optimisation(
     total_loss = f1 + f2 + f3 + f4  # diagnostic sum; modality weights are in residuals
 
     return theta_opt, total_loss, f1, f2, f3, f4
+
+
 # ---------------------------------------------------------------------------
 # Problem shape validation
 # ---------------------------------------------------------------------------
@@ -946,7 +951,7 @@ def validate_problem_shapes(problem):
     problem : NetworkProblem
     """
     K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
-    T = problem.P_data.shape[1]
+    problem.P_data.shape[1]
 
     errors = []
 
@@ -962,7 +967,7 @@ def validate_problem_shapes(problem):
     if problem.A_scaled.size > 0:
         _chk(
             problem.A_scaled.shape == problem.W_data_prot.shape,
-            f"A_scaled.shape {problem.A_scaled.shape} != W_data_prot.shape {problem.W_data_prot.shape}",
+            f"A_scaled.shape {problem.A_scaled.shape} != W_data_prot.shape {problem.W_data_prot.shape}",  # noqa: E501
         )
     _chk(
         problem.K_site_kin.shape == (N, M),
@@ -1016,17 +1021,17 @@ def validate_problem_shapes(problem):
         if problem.W_data_mrna is not None:
             _chk(
                 obs_shape == problem.W_data_mrna.shape,
-                f"rna_obs_matched.shape {obs_shape} != W_data_mrna.shape {problem.W_data_mrna.shape}",
+                f"rna_obs_matched.shape {obs_shape} != W_data_mrna.shape {problem.W_data_mrna.shape}",  # noqa: E501
             )
         n_matched = obs_shape[0]
         _chk(
             len(problem.rna_model_prot_idx) == n_matched,
-            f"len(rna_model_prot_idx)={len(problem.rna_model_prot_idx)} != rna_obs_matched.shape[0]={n_matched}",
+            f"len(rna_model_prot_idx)={len(problem.rna_model_prot_idx)} != rna_obs_matched.shape[0]={n_matched}",  # noqa: E501
         )
         if len(problem.rna_model_prot_idx) > 0:
             _chk(
                 int(np.asarray(problem.rna_model_prot_idx).max()) < K,
-                f"max(rna_model_prot_idx)={np.asarray(problem.rna_model_prot_idx).max()} >= K={K}",
+                f"max(rna_model_prot_idx)={np.asarray(problem.rna_model_prot_idx).max()} >= K={K}",  # noqa: E501
             )
 
     # Finiteness checks on core arrays
@@ -1207,7 +1212,7 @@ class NetworkProblem:
         rna_fit_genes     : list | None       – matched gene/protein names
         loss_weight_rna   : float             – RNA loss weight
         R_data0           : np.ndarray | None – RNA initial condition (K, T_rna or K,)
-    """
+    """  # noqa: E501
 
     def __init__(
         self,

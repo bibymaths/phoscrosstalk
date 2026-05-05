@@ -26,7 +26,6 @@ Coverage:
 import numpy as np
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
@@ -337,7 +336,7 @@ def test_make_loss_fn_scan_kind_bounded_produces_finite_output():
     from phoscrosstalk.optimization import make_loss_fn
 
     m = _make_tiny_model_for_loss()
-    K2, M2, N2, T2 = m["K"], m["M"], m["N"], m["T"]
+    _, _, N2, T2 = m["K"], m["M"], m["N"], m["T"]
 
     loss_fn = make_loss_fn(
         t=m["t"],
