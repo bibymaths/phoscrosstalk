@@ -546,6 +546,8 @@ def make_residuals_fn(
     ode_adjoint_kind="forward",
     dt0=0.01,
     root_find_max_steps=10,
+    xl=None,
+    xu=None,
 ):
     """
     Build a JAX-differentiable residual-vector function for Optimistix least_squares.
@@ -688,6 +690,13 @@ def make_residuals_fn(
     if has_net_reg:
         sqrt_lnet = jnp.float32(np.sqrt(float(lambda_net)))
 
+    # Bounds for hard-clipping theta inside residuals_fn (prevents LM from escaping
+    # the biological parameter space and producing stiff/divergent ODEs).
+    has_bounds = xl is not None and xu is not None
+    if has_bounds:
+        xl_j = jnp.asarray(xl, dtype=jnp.float32)
+        xu_j = jnp.asarray(xu, dtype=jnp.float32)
+
     rhs_fn = make_rhs(
         K, M, N, mechanism, k_act_fn=k_act_fn, s_prod_fn=s_prod_fn, rna_relax=rna_relax
     )
@@ -721,6 +730,12 @@ def make_residuals_fn(
         """
         theta_j = jnp.asarray(theta, dtype=jnp.float32)
 
+        # Clip theta to parameter bounds.  Optimistix LM is unconstrained by
+        # default; without this guard the solver can drift to biologically
+        # implausible values (e.g. alpha > 1000) that cause stiff/divergent ODEs.
+        if has_bounds:
+            theta_j = jnp.clip(theta_j, xl_j, xu_j)
+
         ode_args = (
             theta_j,
             Cg_j,
@@ -751,7 +766,11 @@ def make_residuals_fn(
         )
 
         xs = sol.ys  # (T_unified, 3K+M+N)
-        solve_ok = jnp.all(jnp.isfinite(xs))
+        # A successful solve requires both finite states AND that the solver
+        # did not stop early (e.g. hit max_steps with throw=False).
+        solve_ok = jnp.all(jnp.isfinite(xs)) & (
+            sol.result == diffrax.RESULTS.successful
+        )
 
         # Sample at protein time indices (new layout: [R_rna, S, A, Kdyn, p])
         xs_prot = xs[prot_idx_solver, :]
@@ -1233,8 +1252,17 @@ class NetworkProblem:
         ode_solver_kind="tsit5",
         ode_dt0=0.01,
         ode_root_find_max_steps=10,
-        ode_adjoint_kind="adjoint",
+        ode_adjoint_kind="forward",
+        rtol=1e-6,
+        atol=1e-9,
+        max_steps=16384,
         **kwargs,  # absorb legacy keyword args (elementwise_runner, etc.)
+    ):
+        # Note: ode_adjoint_kind was previously defaulted to the non-existent value
+        # "adjoint".  The corrected default is "forward", which is the right choice
+        # for LM + jac_mode="fwd" (Optimistix forward-mode AD through Diffrax).
+        # If you were relying on a different adjoint, set ode_adjoint_kind explicitly
+        # in your config under [solver] ode_adjoint.
     ):
         self.t = t
         self.P_data = P_data
@@ -1272,6 +1300,9 @@ class NetworkProblem:
         self.ode_dt0 = ode_dt0
         self.ode_root_find_max_steps = ode_root_find_max_steps
         self.ode_adjoint_kind = ode_adjoint_kind
+        self.rtol = rtol
+        self.atol = atol
+        self.max_steps = max_steps
 
     def simulate(self, x):
         """
@@ -1304,12 +1335,16 @@ class NetworkProblem:
             self.mechanism,
             k_act_fn=self.k_act_fn,
             s_prod_fn=self.s_prod_fn,
+            t_rna=self.t_rna,
             R_data0=self.R_data0,
             rna_relax=self.rna_relax,
             ode_adjoint_kind=self.ode_adjoint_kind,
             root_find_max_steps=self.ode_root_find_max_steps,
             ode_solver_kind=self.ode_solver_kind,
-            dt0=self.ode_dt0
+            dt0=self.ode_dt0,
+            rtol=self.rtol,
+            atol=self.atol,
+            max_steps=self.max_steps,
         )
         return P_sim
 
@@ -1349,6 +1384,13 @@ class NetworkProblem:
             t_rna=self.t_rna,
             R_data0=self.R_data0,
             rna_relax=self.rna_relax,
+            ode_solver_kind=self.ode_solver_kind,
+            dt0=self.ode_dt0,
+            root_find_max_steps=self.ode_root_find_max_steps,
+            ode_adjoint_kind=self.ode_adjoint_kind,
+            rtol=self.rtol,
+            atol=self.atol,
+            max_steps=self.max_steps,
         )
 
 
