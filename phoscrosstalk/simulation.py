@@ -3,8 +3,7 @@ simulation.py
 Diffrax-based ODE solver wrapper for the phospho-network model.
 
 Public interface:
-    simulate_ode(...)        – primary function
-    simulate_p_scipy         – backward-compatible alias for simulate_ode
+    simulate(...)        – primary function
     build_full_A0(...)       – helper to build the full protein abundance matrix
 
 State layout (new):
@@ -35,7 +34,7 @@ from phoscrosstalk.solver_config import (
 )
 
 
-def simulate_ode(
+def simulate(
     t_arr,
     P_data0,
     A_data0,
@@ -306,11 +305,6 @@ def _nan_result(N_sites, K, M, T, full_output, return_full=False, t_rna_arr=None
             np.full((M, T), np.nan),
         )
     return np.full((N_sites, T), np.nan), np.full((K, T), np.nan)
-
-
-# Backward-compatible alias used throughout analysis, app, sensitivity, etc.
-simulate_p_scipy = simulate_ode
-
 
 def build_full_A0(K, T, A_scaled, prot_idx_for_A):
     """

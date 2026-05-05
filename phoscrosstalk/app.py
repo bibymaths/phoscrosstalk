@@ -52,7 +52,7 @@ from phoscrosstalk.dashboard import (
     validate_run_directory,
 )
 from phoscrosstalk.knockouts import run_live_knockout
-from phoscrosstalk.simulation import simulate_p_scipy
+from phoscrosstalk.simulation import simulate
 
 # ──────────────────────────────────────────────────────────────────────────
 # Page config
@@ -152,7 +152,7 @@ def _run_simulation(results_dir: str, t_max: float, num_points: int, mechanism: 
             if aname in prot_map and k < A_scaled.shape[0] and A_scaled.shape[1] > 0:
                 A0[prot_map[aname], 0] = A_scaled[k, 0]
 
-    P_sim, A_sim, S_sim, Kdyn_sim = simulate_p_scipy(
+    P_sim, A_sim, S_sim, Kdyn_sim = simulate(
         t_fine,
         snap["P_scaled"],
         A0,

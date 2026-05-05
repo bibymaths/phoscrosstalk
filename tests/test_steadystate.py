@@ -149,13 +149,13 @@ def test_plot_trajectories_finite_data(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# run_steadystate_analysis – passes fitted closures to simulate_ode
+# run_steadystate_analysis – passes fitted closures to simulate
 # ---------------------------------------------------------------------------
 
 
 def test_run_steadystate_passes_closures(tmp_path, monkeypatch):
     """run_steadystate_analysis must forward k_act_fn, s_prod_fn, R_data0,
-    rna_relax from problem to simulate_ode."""
+    rna_relax from problem to simulate."""
     from types import SimpleNamespace
 
     import numpy as np
@@ -194,7 +194,7 @@ def test_run_steadystate_passes_closures(tmp_path, monkeypatch):
 
     captured = {}
 
-    def mock_simulate_ode(*args, **kwargs):
+    def mock_simulate(*args, **kwargs):
         captured.update(kwargs)
         T = len(args[0])
         return (
@@ -206,7 +206,7 @@ def test_run_steadystate_passes_closures(tmp_path, monkeypatch):
 
     import phoscrosstalk.steadystate as ss_mod
 
-    monkeypatch.setattr(ss_mod, "simulate_ode", mock_simulate_ode)
+    monkeypatch.setattr(ss_mod, "simulate", mock_simulate)
 
     theta = np.zeros(10)
     sites = [f"s{i}" for i in range(N)]
@@ -269,10 +269,10 @@ def test_run_steadystate_no_upper_clip_p(tmp_path, monkeypatch):
         rna_relax=0.1,
     )
 
-    def mock_simulate_ode(*args, **kwargs):
+    def mock_simulate(*args, **kwargs):
         # Intercept at build_full_A0 level via x0 – we check via P_data[:, 0]
-        # The real check is that p0 in simulate_ode is NOT clipped to 1.0
-        # We call the real simulate_ode but capture the x0 that was built
+        # The real check is that p0 in simulate is NOT clipped to 1.0
+        # We call the real simulate but capture the x0 that was built
         T = len(args[0])
         return (
             np.zeros((N, T)),
@@ -283,16 +283,16 @@ def test_run_steadystate_no_upper_clip_p(tmp_path, monkeypatch):
 
     import phoscrosstalk.steadystate as ss_mod
 
-    monkeypatch.setattr(ss_mod, "simulate_ode", mock_simulate_ode)
+    monkeypatch.setattr(ss_mod, "simulate", mock_simulate)
 
     theta = np.zeros(10)
     sites = [f"s{i}" for i in range(N)]
     proteins = [f"p{i}" for i in range(K)]
     kinases = [f"k{i}" for i in range(M)]
 
-    # The key assertion: simulate_ode.py clips p0 to [0, None] (not [0, 1]).
+    # The key assertion: simulate.py clips p0 to [0, None] (not [0, 1]).
     # We verify by checking that P_data[:, 0] values > 1 are passed through.
-    # simulate_ode itself (not steadystate) handles the clipping, which is [0, None].
+    # simulate itself (not steadystate) handles the clipping, which is [0, None].
     # So we just verify run_steadystate_analysis runs without error on high-p data.
     ss_mod.run_steadystate_analysis(
         outdir=str(tmp_path),

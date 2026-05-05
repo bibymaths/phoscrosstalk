@@ -67,7 +67,7 @@ Distribution artifacts are written to `dist/`.
 |--------------------|-------------------------------------------------------------|
 | `main.py`          | CLI entry point and pipeline orchestration                  |
 | `config.py`        | `ModelDims`, `load_config()`, `DEFAULT_TIMEPOINTS`         |
-| `simulation.py`    | `simulate_ode()`: Diffrax ODE solver wrapper                |
+| `simulation.py`    | `simulate()`: Diffrax ODE solver wrapper                |
 | `jax_mechanisms.py`| JAX RHS kernels for dist/seq/rand mechanisms                |
 | `core_mechanisms.py`| `decode_theta()`, `clip_scalar()`                          |
 | `optimization.py`  | `NetworkProblem`, scalar loss, `create_bounds()`            |

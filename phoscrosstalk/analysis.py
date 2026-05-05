@@ -14,7 +14,7 @@ from phoscrosstalk.config import DEFAULT_TIMEPOINTS, ModelDims
 from phoscrosstalk.mechanisms import decode_theta
 from phoscrosstalk.logger import get_logger
 from phoscrosstalk.optimization import bio_score, build_full_A0
-from phoscrosstalk.simulation import simulate_p_scipy
+from phoscrosstalk.simulation import simulate
 
 logger = get_logger(__name__)
 
@@ -321,7 +321,7 @@ def save_fitted_simulation(
     # Re-simulate
     A0_full = build_full_A0(K, len(t), A_scaled, prot_idx_for_A)
 
-    P_sim, A_sim, S_sim, Kdyn_sim = simulate_p_scipy(
+    P_sim, A_sim, S_sim, Kdyn_sim = simulate(
         t,
         P_scaled,
         A0_full,
@@ -1279,7 +1279,7 @@ def save_mrna_outputs(outdir, gene_ids, t_rna, rna_data_obs, rna_simulated):
     if rna_simulated is None:
         raise ValueError(
             "save_mrna_outputs: rna_simulated must not be None.  "
-            "Pass the simulated R(t) values from your model (e.g. from simulate_ode "
+            "Pass the simulated R(t) values from your model (e.g. from simulate "
             "with return_full=True)."
         )
 

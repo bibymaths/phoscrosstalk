@@ -1065,7 +1065,7 @@ fragile.
 
 - The "build initial state from data" block (`x0` construction) is duplicated
   between `make_residuals_fn` (lines 600–615) and `make_loss_fn` (lines
-  320–341) in `optimization.py`, and again in `simulation.py:simulate_ode`
+  320–341) in `optimization.py`, and again in `simulation.py:simulate`
   (lines 148–175). Any change to the initial condition logic must be applied
   in three places.
 - `has_mrna` check logic is duplicated between `make_loss_fn` and

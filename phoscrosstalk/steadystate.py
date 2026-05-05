@@ -22,7 +22,7 @@ from matplotlib import pyplot as plt
 
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.logger import get_logger
-from phoscrosstalk.simulation import build_full_A0, simulate_ode
+from phoscrosstalk.simulation import build_full_A0, simulate
 
 logger = get_logger(__name__)
 
@@ -348,7 +348,7 @@ def run_steadystate_analysis(
 
     # 3. JAX/Diffrax simulation over the long horizon
     try:
-        result = simulate_ode(
+        result = simulate(
             t_long,
             problem.P_data,
             A0_initial,

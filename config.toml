@@ -254,8 +254,8 @@ include_tfs_as_proteins = false
 #   These are not ODE tolerances.
 # =============================================================================
 [optimisation]
-n_starts      = 5
-max_steps     = 300
+n_starts      = 20
+max_steps     = 500
 
 solver        = "lm"         # options: "lm" | "hybrid"
 ls_solver     = "lm"         # options: "lm" | "gauss_newton" | "dogleg" | "indirect_lm"

@@ -47,7 +47,7 @@ from phoscrosstalk.mechanisms import (
     make_rhs, decode_theta,
 )
 from phoscrosstalk.logger import get_logger
-from phoscrosstalk.simulation import build_full_A0, simulate_ode
+from phoscrosstalk.simulation import build_full_A0, simulate
 from phoscrosstalk.solver_config import (
     make_diffrax_adjoint,
     make_diffrax_solver,
@@ -1374,7 +1374,7 @@ class NetworkProblem:
         K, T = ModelDims.K, self.P_data.shape[1]
         A0 = build_full_A0(K, T, self.A_scaled, self.prot_idx_for_A)
 
-        P_sim, _A_sim = simulate_ode(
+        P_sim, _A_sim = simulate(
             self.t,
             self.P_data,
             A0,
@@ -1419,7 +1419,7 @@ class NetworkProblem:
         K, T = ModelDims.K, self.P_data.shape[1]
         A0 = build_full_A0(K, T, self.A_scaled, self.prot_idx_for_A)
 
-        return simulate_ode(
+        return simulate(
             self.t,
             self.P_data,
             A0,

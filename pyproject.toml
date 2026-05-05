@@ -54,6 +54,7 @@ hybrid = [
 
 [project.scripts]
 phoscrosstalk = "phoscrosstalk.main:cli"
+phoscrosstalk-app = "phoscrosstalk.app_cli:cli"
 
 [project.urls]
 homepage = "https://github.com/bibymaths/phoscrosstalk"
