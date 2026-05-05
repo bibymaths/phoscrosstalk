@@ -1081,14 +1081,15 @@ def _prefilter_phospho_csv(
     # Phosphosite rows: keep if their label is in allowed_sites.
     keep_psite = has_site_mask & internal_label.isin(allowed_sites)
 
-    # Protein/abundance rows: keep if protein is an allowed kinase or a TF.
-    is_protein_row = ~has_site_mask
-    keep_kinase = is_protein_row & proteins_col.isin(allowed_kinases)
+    # Keep ALL rows (phosphosite or protein-level) for allowed kinases and TFs.
+    # Kinases/TFs appear as phosphosite rows in the data, so restricting to
+    # ~has_site_mask would silently drop them.
+    keep_kinase = proteins_col.isin(allowed_kinases)
 
     tf_proteins: set = set()
     if include_tfs_as_proteins:
         tf_proteins = tf_sources | tf_targets
-    keep_tf = is_protein_row & proteins_col.isin(tf_proteins)
+    keep_tf = proteins_col.isin(tf_proteins)
 
     keep_mask = keep_psite | keep_kinase | keep_tf
     df_filtered = df[keep_mask].copy()
