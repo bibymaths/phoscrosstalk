@@ -15,7 +15,7 @@ from phoscrosstalk.config import ModelDims
 from phoscrosstalk.logger import get_logger
 from phoscrosstalk.simulation import build_full_A0, simulate_p_scipy
 
-logger = get_logger()
+logger = get_logger(__name__)
 
 
 def run_live_knockout(

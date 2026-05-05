@@ -47,7 +47,7 @@ from phoscrosstalk.optimization import (
     run_single_optimisation,
 )
 
-logger = get_logger()
+logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------

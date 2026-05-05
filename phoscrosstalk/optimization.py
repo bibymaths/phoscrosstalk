@@ -57,7 +57,7 @@ from phoscrosstalk.solver_config import (
     make_stepsize_controller,
 )
 
-logger = get_logger()
+logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Module-level constants
