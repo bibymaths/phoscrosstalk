@@ -479,6 +479,7 @@ def main():
         lhs_samples=getattr(
             getattr(cfg, "hybrid", SimpleNamespace()), "lhs_n_samples", 512
         ),
+        lhs_top_p=getattr(getattr(cfg, "hybrid", SimpleNamespace()), "lhs_top_p", 16),
         skip_lhs=getattr(getattr(cfg, "hybrid", SimpleNamespace()), "skip_lhs", False),
         qdax_centroids=getattr(
             getattr(cfg, "qdax", SimpleNamespace()), "n_centroids", 1024
@@ -1147,7 +1148,7 @@ def main():
             xl=xl,
             xu=xu,
             lhs_n_samples=getattr(args, "lhs_samples", 512),
-            lhs_top_p=16,
+            lhs_top_p=getattr(args, "lhs_top_p", 16),
             skip_lhs=getattr(args, "skip_lhs", False),
             es_algo=getattr(args, "es_algo", "sep_cma_es"),
             es_popsize=getattr(args, "es_popsize", 64),
@@ -1240,6 +1241,8 @@ def main():
         s_prod_fn=s_prod_fn,
         R_data0=R_data0,
         kinases=kinases,
+        simulation_cfg=getattr(cfg, "simulation", None),
+        data_interpolation_cfg=getattr(cfg, "data_interpolation", None),
     )
 
     # mRNA outputs (only when RNA data was provided and RNA matched model proteins)
