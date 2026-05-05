@@ -149,3 +149,31 @@ tune            = false
 run_steadystate = true
 run_knockouts   = true
 run_sensitivity = true
+
+# ---------------------------------------------------------------------------
+# [steadystate]  – long-horizon relaxation analysis options
+# The network is simulated under terminal/derived input far beyond the observed
+# time window to study convergence of the relative phosphosite signal and other
+# bounded states.  These parameters are only used when analysis.run_steadystate = true.
+#
+# Validation:
+#   t_end > early_end > 0
+#   n_early >= 2, n_late >= 2
+#   late_grid in {"linear", "geomspace"}
+#   rtol > 0, atol > 0
+#   dt0 = null (auto) or > 0
+#   max_steps > 0, top_n > 0
+# ---------------------------------------------------------------------------
+[steadystate]
+t_end                 = 2000.0    # final simulation time (minutes)
+early_end             = 100.0     # end of fine early time grid (minutes)
+n_early               = 100       # number of time points in [0, early_end]
+n_late                = 80        # number of time points in (early_end, t_end]
+late_grid             = "geomspace"  # "geomspace" | "linear"
+rtol                  = 1e-6
+atol                  = 1e-8
+dt0                   = 0.1       # initial ODE step size (null = auto)
+max_steps             = 131072
+top_n                 = 10        # top-N trajectories shown in line plots
+skip_plots_on_nonfinite = true    # skip seaborn plots when output is all-NaN
+strict                = false     # raise RuntimeError on non-finite steady-state
