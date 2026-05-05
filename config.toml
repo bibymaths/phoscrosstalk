@@ -254,8 +254,8 @@ include_tfs_as_proteins = false
 #   These are not ODE tolerances.
 # =============================================================================
 [optimisation]
-n_starts      = 20
-max_steps     = 1000
+n_starts      = 8
+max_steps     = 300
 
 solver        = "lm"         # options: "lm" | "hybrid"
 ls_solver     = "lm"         # options: "lm" | "gauss_newton" | "dogleg" | "indirect_lm"
@@ -269,8 +269,8 @@ loss_type     = "mse"
 lambda_net    = 0.0
 reg_lambda    = 0.0001
 
-rtol          = 1e-8
-atol          = 1e-8
+rtol          = 1e-6
+atol          = 1e-6
 
 
 # =============================================================================
@@ -376,8 +376,8 @@ atol          = 1e-8
 ode_solver          = "tsit5"    # best default for likely stiff biochemical ODEs
 ode_adjoint         = "forward"     # required because [optimisation] jac_mode = "fwd"
 
-rtol                = 1e-5
-atol                = 1e-8
+rtol                = 1e-4
+atol                = 1e-7
 max_steps           = 32768
 dt0                 = 0.01
 root_find_max_steps = 10
@@ -793,7 +793,7 @@ rna_relax = 0.02
 tune            = false
 run_steadystate = true
 run_knockouts   = true
-run_sensitivity = true
+run_sensitivity = false
 
 
 # =============================================================================
