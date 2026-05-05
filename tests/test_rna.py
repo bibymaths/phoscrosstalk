@@ -223,7 +223,7 @@ def test_rhs_state_dimension_with_R():
     """RHS must return shape 3*K + M + N when R_rna is included."""
     import jax.numpy as jnp
 
-    from phoscrosstalk.jax_mechanisms import compute_prev_site_idx, make_rhs
+    from phoscrosstalk.mechanisms import compute_prev_site_idx, make_rhs
 
     K, M, N = 2, 3, 4
     rhs = make_rhs(K, M, N, "dist")

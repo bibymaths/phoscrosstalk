@@ -27,7 +27,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from phoscrosstalk.config import ModelDims
-from phoscrosstalk.jax_mechanisms import compute_prev_site_idx, make_rhs
+from phoscrosstalk.mechanisms import compute_prev_site_idx, make_rhs
 from phoscrosstalk.solver_config import (
     make_diffrax_adjoint,
     make_diffrax_solver,

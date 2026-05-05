@@ -523,23 +523,23 @@ class TestCLIRegression:
 
 
 class TestJaxMechanisms:
-    def test_decode_theta_jax_shapes(self):
+    def test_decode_theta_shapes(self):
         import jax.numpy as jnp
 
-        from phoscrosstalk.jax_mechanisms import decode_theta_jax
+        from phoscrosstalk.mechanisms import decode_theta
 
         K, M, N = 3, 5, 7
         # New dim: 2*K + 2 + 3*M + N + 4  (k_act and s_prod removed)
         dim = 2 * K + 2 + 3 * M + N + 4
         theta = jnp.zeros(dim)
-        decoded = decode_theta_jax(theta, K, M, N)
+        decoded = decode_theta(theta, K, M, N)
         assert len(decoded) == 12
         k_deact, d_deg = decoded[:2]
         assert k_deact.shape == (K,)
         assert d_deg.shape == (K,)
 
     def test_compute_prev_site_idx(self):
-        from phoscrosstalk.jax_mechanisms import compute_prev_site_idx
+        from phoscrosstalk.mechanisms import compute_prev_site_idx
 
         # Sites: [0, 0, 1, 0, 1]  → prev: [-1, 0, -1, 1, 2]
         spi = np.array([0, 0, 1, 0, 1], dtype=np.int32)
@@ -550,7 +550,7 @@ class TestJaxMechanisms:
     def test_make_rhs_output_shape(self):
         import jax.numpy as jnp
 
-        from phoscrosstalk.jax_mechanisms import compute_prev_site_idx, make_rhs
+        from phoscrosstalk.mechanisms import compute_prev_site_idx, make_rhs
 
         K, M, N = 2, 3, 4
         rhs = make_rhs(K, M, N, "dist")

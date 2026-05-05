@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-jax_mechanisms.py
+mechanisms.py
 
 JAX-compatible ODE right-hand side (RHS) functions for the phospho-network model.
 
@@ -17,7 +17,7 @@ All three phosphorylation mechanisms are supported:
 
 Public helpers
 --------------
-decode_theta_jax(theta, K, M, N)
+decode_theta(theta, K, M, N)
     JAX version of core_mechanisms.decode_theta. Returns the same tuple of
     decoded biological parameters.
 
@@ -46,7 +46,7 @@ import numpy as np
 # ---------------------------------------------------------------------------
 
 
-def decode_theta_jax(theta, K: int, M: int, N: int):
+def decode_theta(theta, K: int, M: int, N: int):
     """
     Decode the flat log-scale parameter vector into biological rate constants.
 
@@ -268,7 +268,7 @@ def make_rhs(
             gamma_A_S,
             gamma_A_p,
             gamma_K_net,
-        ) = decode_theta_jax(theta, K, M, N)
+        ) = decode_theta(theta, K, M, N)
 
         # ------------------------------------------------------------------
         # Derived external rates
@@ -516,7 +516,7 @@ def compute_objectives_jax(
     (f1, f2, f3) : tuple of JAX scalars
     """
     # --- Decode for regularisation ---
-    _, _, _, _, alpha, _, _, _, _, _, _, _ = decode_theta_jax(theta, K, M, N)
+    _, _, _, _, alpha, _, _, _, _, _, _, _ = decode_theta(theta, K, M, N)
 
     # 1. Phosphosite loss: weighted MSLE
     diff_p = P_data - P_sim

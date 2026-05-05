@@ -33,8 +33,8 @@ except ImportError:  # pragma: no cover
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from phoscrosstalk.config import ModelDims
-from phoscrosstalk.jax_mechanisms import decode_theta_jax
-from phoscrosstalk.dashboard_io import (
+from phoscrosstalk.mechanisms import decode_theta
+from phoscrosstalk.dashboard import (
     build_dashboard_cache,
     extract_time_axis,
     get_time_vals,

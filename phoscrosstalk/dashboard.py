@@ -1,5 +1,5 @@
 """
-dashboard_io.py
+dashboard.py
 Helper module for the PhosCrosstalk Streamlit dashboard.
 
 Provides:
