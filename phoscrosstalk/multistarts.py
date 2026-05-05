@@ -8,14 +8,22 @@ Strategy
    fixed random seeds for reproducibility.
 2. Run ``run_single_optimisation`` (Optimistix LevenbergMarquardt) from each
    starting point, optionally in parallel via ``ProcessPoolExecutor``.
-   Falls back to serial execution automatically when the residuals closure is
-   not picklable (e.g. JAX closures on some platforms).
+   Falls back to serial execution automatically when ``residual_kwargs`` is
+   not picklable (e.g. contains non-picklable callables or objects).
 3. Select the best solution by minimum **total loss** (the scalar objective
    that was minimised).
 4. Compute the Discrete Fréchet Distance for each solution as a diagnostic
    metric only (logged but not used for selection).  Optionally parallelised.
 5. Aggregate all solutions into a result object compatible with the
    caller in main.py.
+
+Parallel worker contract
+------------------------
+Workers receive only picklable data (``residual_kwargs``), never a pre-built
+JAX closure.  The worker rebuilds ``k_act_fn`` / ``s_prod_fn`` and then
+calls ``make_residuals_fn`` locally, *after* applying per-worker CPU/XLA
+environment settings.  This avoids pickling JAX closures while still
+enabling process-level parallelism.
 
 Backward-compatible return interface
 -------------------------------------
@@ -32,6 +40,7 @@ Old pymoo-specific flags (--gen, --pop-size, --algorithm) are mapped:
   --algorithm  → ignored with a warning (non-fatal)
 """
 
+import multiprocessing as mp
 import pickle
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
@@ -39,10 +48,12 @@ import numpy as np
 
 from phoscrosstalk.fretchet import frechet_distance
 from phoscrosstalk.logger import get_logger
-from phoscrosstalk.optimization import (
-    make_residuals_fn,
-    run_single_optimisation,
-)
+
+# NOTE: make_residuals_fn and run_single_optimisation are imported lazily
+# (inside functions) to avoid triggering JAX initialisation at module import
+# time.  This is critical for spawn-based worker processes: the worker imports
+# multistarts.py before apply_cpu_env() is called, so any top-level JAX import
+# here would initialise XLA with the wrong thread count.
 
 logger = get_logger(__name__)
 
@@ -66,13 +77,14 @@ def _run_single_start_worker(task):
     Worker function for parallel multi-start execution.
 
     Must be defined at module level so it is picklable by ProcessPoolExecutor.
-    Applies per-worker CPU thread caps before any JAX usage.
+    Applies per-worker CPU thread caps before any JAX usage, then rebuilds
+    the residuals closure from picklable ``residual_kwargs``.
 
     Parameters
     ----------
     task : tuple
-        (i, theta0, residuals_fn, max_steps, opt_rtol, opt_atol, opt_verbose,
-         optx_adjoint, ls_solver, jac_mode, threads_per_run)
+        (i, theta0, residual_kwargs, max_steps, opt_rtol, opt_atol,
+         opt_verbose, optx_adjoint, ls_solver, jac_mode, threads_per_run)
 
     Returns
     -------
@@ -82,7 +94,7 @@ def _run_single_start_worker(task):
     (
         i,
         theta0,
-        residuals_fn,
+        residual_kwargs,
         max_steps,
         opt_rtol,
         opt_atol,
@@ -93,16 +105,37 @@ def _run_single_start_worker(task):
         threads_per_run,
     ) = task
 
-    # Cap BLAS/OMP threads per worker before any computation.
+    # Cap BLAS/OMP/XLA threads per worker BEFORE any JAX import.
     # The import is deferred intentionally: in spawn-based subprocesses the
-    # env vars must be set *before* any JAX/XLA initialisation happens in
-    # this process; importing runtime_env here (which is pure stdlib) is safe
-    # and ensures apply_cpu_env() is called before any downstream JAX import.
+    # env vars must be set *before* any JAX/XLA initialisation; importing
+    # runtime_env here (which is pure stdlib) is safe.
     from phoscrosstalk import runtime_env  # noqa: PLC0415
 
     runtime_env.apply_cpu_env(threads_per_run, overwrite=True)
 
+    # JAX-heavy imports come AFTER apply_cpu_env so that XLA picks up the
+    # correct intra-op thread count on the first import in this process.
+    from phoscrosstalk.derived_rates import make_k_act_fn, make_s_prod_fn  # noqa: PLC0415
+    from phoscrosstalk.optimization import (  # noqa: PLC0415
+        make_residuals_fn,
+        run_single_optimisation,
+    )
+
     try:
+        # Build a clean kwargs dict for make_residuals_fn, reconstructing
+        # k_act_fn and s_prod_fn from their picklable rebuild kwargs if present.
+        mkwargs = dict(residual_kwargs)
+
+        if "_k_act_rebuild_kwargs" in mkwargs:
+            k_act_rebuild = mkwargs.pop("_k_act_rebuild_kwargs")
+            mkwargs["k_act_fn"] = make_k_act_fn(**k_act_rebuild)
+
+        if "_s_prod_rebuild_kwargs" in mkwargs:
+            s_prod_rebuild = mkwargs.pop("_s_prod_rebuild_kwargs")
+            mkwargs["s_prod_fn"] = make_s_prod_fn(**s_prod_rebuild)
+
+        residuals_fn = make_residuals_fn(**mkwargs)
+
         theta_opt, total_loss, f1, f2, f3, f4 = run_single_optimisation(
             residuals_fn,
             theta0,
@@ -116,7 +149,7 @@ def _run_single_start_worker(task):
         )
         return (i, True, theta_opt, total_loss, f1, f2, f3, f4, None)
     except Exception as exc:
-        return (i, False, None, None, None, None, None, None, str(exc))
+        return (i, False, None, None, None, None, None, None, repr(exc))
 
 
 def _frechet_worker(task):
@@ -152,6 +185,144 @@ def _can_pickle(obj) -> bool:
         return True
     except Exception:
         return False
+
+
+def _find_non_picklable_items(mapping: dict) -> list:
+    """
+    Return a list of keys in *mapping* whose values cannot be pickled.
+
+    Useful for diagnosing which fields in ``residual_kwargs`` prevent parallel
+    execution.
+
+    Parameters
+    ----------
+    mapping : dict
+        A flat dictionary of keyword arguments (e.g. ``residual_kwargs``).
+
+    Returns
+    -------
+    list[str]
+        Keys whose values raise an exception when passed to ``pickle.dumps``.
+    """
+    bad_keys = []
+    for key, value in mapping.items():
+        try:
+            pickle.dumps(value)
+        except Exception:
+            bad_keys.append(key)
+    return bad_keys
+
+
+def _build_residual_kwargs(problem, args, w_phospho, w_abundance, w_reg, w_mrna) -> dict:
+    """
+    Collect all inputs needed by ``make_residuals_fn`` into a picklable dict.
+
+    The returned dict contains only plain numpy arrays, scalars, and strings –
+    no JAX arrays, no JAX closures.  ``k_act_fn`` and ``s_prod_fn`` are
+    replaced by the raw data needed to rebuild them inside a worker process
+    (stored under the private keys ``_k_act_rebuild_kwargs`` and
+    ``_s_prod_rebuild_kwargs``).  If the rebuild kwargs are not available on
+    ``problem``, the callable is stored directly under ``k_act_fn`` /
+    ``s_prod_fn`` and may cause the pickle check to fail, triggering serial
+    fallback.
+
+    Parameters
+    ----------
+    problem : NetworkProblem
+    args    : argparse.Namespace / SimpleNamespace
+    w_phospho, w_abundance, w_reg, w_mrna : float
+
+    Returns
+    -------
+    dict
+        Keyword arguments suitable for ``make_residuals_fn(**residual_kwargs)``
+        after removing the ``_k_act_rebuild_kwargs`` / ``_s_prod_rebuild_kwargs``
+        special keys and replacing them with the built callables.
+    """
+    kwargs: dict = {
+        "t": problem.t,
+        "P_data": problem.P_data,
+        "A_scaled": problem.A_scaled,
+        "prot_idx_for_A": problem.prot_idx_for_A,
+        "W_data": problem.W_data,
+        "W_data_prot": problem.W_data_prot,
+        "Cg": problem.Cg,
+        "Cl": problem.Cl,
+        "site_prot_idx": problem.site_prot_idx,
+        "K_site_kin": problem.K_site_kin,
+        "R": problem.R,
+        "L_alpha": problem.L_alpha,
+        "kin_to_prot_idx": problem.kin_to_prot_idx,
+        "receptor_mask_prot": problem.receptor_mask_prot,
+        "receptor_mask_kin": problem.receptor_mask_kin,
+        "mechanism": problem.mechanism,
+        "lambda_net": problem.lambda_net,
+        "reg_lambda": problem.reg_lambda,
+        "w_phospho": w_phospho,
+        "w_abundance": w_abundance,
+        "w_reg": w_reg,
+        "w_mrna": w_mrna,
+        "rtol": getattr(args, "rtol", 1e-6),
+        "atol": getattr(args, "atol", 1e-9),
+        "max_steps": getattr(args, "solver_max_steps", 16384),
+        "t_mrna": getattr(problem, "t_rna", None),
+        "rna_data_scaled": getattr(problem, "rna_obs_matched", None),
+        "rna_model_prot_idx": getattr(problem, "rna_model_prot_idx", None),
+        "rna_obs_idx": getattr(problem, "rna_obs_idx", None),
+        "rna_fit_genes": getattr(problem, "rna_fit_genes", None),
+        "R_data0": getattr(problem, "R_data0", None),
+        "W_data_mrna": getattr(problem, "W_data_mrna", None),
+        "rna_relax": getattr(problem, "rna_relax", 0.1),
+        "ode_solver_kind": getattr(args, "ode_solver", "tsit5"),
+        "ode_adjoint_kind": getattr(args, "ode_adjoint", "forward"),
+        "dt0": getattr(args, "ode_dt0", 0.01),
+        "root_find_max_steps": getattr(args, "ode_root_find_max_steps", 10),
+        "xl": problem.xl,
+        "xu": problem.xu,
+    }
+
+    # k_act_fn: prefer picklable rebuild kwargs stored on problem; fall back
+    # to the callable (which will fail the pickle check → serial fallback).
+    k_act_rebuild = getattr(problem, "_k_act_rebuild_kwargs", None)
+    if k_act_rebuild is not None:
+        kwargs["_k_act_rebuild_kwargs"] = k_act_rebuild
+        # k_act_fn will be built inside the worker from these raw kwargs
+    else:
+        kwargs["k_act_fn"] = getattr(problem, "k_act_fn", None)
+
+    # s_prod_fn: same pattern
+    s_prod_rebuild = getattr(problem, "_s_prod_rebuild_kwargs", None)
+    if s_prod_rebuild is not None:
+        kwargs["_s_prod_rebuild_kwargs"] = s_prod_rebuild
+        # s_prod_fn will be built inside the worker from these raw kwargs
+    else:
+        kwargs["s_prod_fn"] = getattr(problem, "s_prod_fn", None)
+
+    return kwargs
+
+
+def _residuals_fn_from_kwargs(residual_kwargs: dict):
+    """
+    Build ``residuals_fn`` locally from ``residual_kwargs``.
+
+    Handles the ``_k_act_rebuild_kwargs`` / ``_s_prod_rebuild_kwargs`` special
+    keys by rebuilding the JAX closures before calling ``make_residuals_fn``.
+    Used for the serial execution path.
+    """
+    from phoscrosstalk.derived_rates import make_k_act_fn, make_s_prod_fn  # noqa: PLC0415
+    from phoscrosstalk.optimization import make_residuals_fn  # noqa: PLC0415
+
+    mkwargs = dict(residual_kwargs)
+
+    if "_k_act_rebuild_kwargs" in mkwargs:
+        k_act_rebuild = mkwargs.pop("_k_act_rebuild_kwargs")
+        mkwargs["k_act_fn"] = make_k_act_fn(**k_act_rebuild)
+
+    if "_s_prod_rebuild_kwargs" in mkwargs:
+        s_prod_rebuild = mkwargs.pop("_s_prod_rebuild_kwargs")
+        mkwargs["s_prod_fn"] = make_s_prod_fn(**s_prod_rebuild)
+
+    return make_residuals_fn(**mkwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -229,52 +400,8 @@ def run_multi_start_optimization(problem, args, P_scaled):
     xl = problem.xl
     xu = problem.xu
 
-    # Build the residual-vector function for LevenbergMarquardt + optx.least_squares.
-    # This is the primary fitting path following the canonical Diffrax+Optimistix approach.  # noqa: E501
-    # We use make_residuals_fn (not make_loss_fn) so the optimizer sees a residual vector.  # noqa: E501
-    residuals_fn = make_residuals_fn(
-        t=problem.t,
-        P_data=problem.P_data,
-        A_scaled=problem.A_scaled,
-        prot_idx_for_A=problem.prot_idx_for_A,
-        W_data=problem.W_data,
-        W_data_prot=problem.W_data_prot,
-        Cg=problem.Cg,
-        Cl=problem.Cl,
-        site_prot_idx=problem.site_prot_idx,
-        K_site_kin=problem.K_site_kin,
-        R=problem.R,
-        L_alpha=problem.L_alpha,
-        kin_to_prot_idx=problem.kin_to_prot_idx,
-        receptor_mask_prot=problem.receptor_mask_prot,
-        receptor_mask_kin=problem.receptor_mask_kin,
-        mechanism=problem.mechanism,
-        lambda_net=problem.lambda_net,
-        reg_lambda=problem.reg_lambda,
-        w_phospho=w_phospho,
-        w_abundance=w_abundance,
-        w_reg=w_reg,
-        w_mrna=w_mrna,
-        rtol=getattr(args, "rtol", 1e-6),
-        atol=getattr(args, "atol", 1e-9),
-        max_steps=getattr(args, "solver_max_steps", 16384),
-        k_act_fn=getattr(problem, "k_act_fn", None),
-        s_prod_fn=getattr(problem, "s_prod_fn", None),
-        t_mrna=getattr(problem, "t_rna", None),
-        rna_data_scaled=getattr(problem, "rna_obs_matched", None),
-        rna_model_prot_idx=getattr(problem, "rna_model_prot_idx", None),
-        rna_obs_idx=getattr(problem, "rna_obs_idx", None),
-        rna_fit_genes=getattr(problem, "rna_fit_genes", None),
-        R_data0=getattr(problem, "R_data0", None),
-        W_data_mrna=getattr(problem, "W_data_mrna", None),
-        rna_relax=getattr(problem, "rna_relax", 0.1),
-        ode_solver_kind=getattr(args, "ode_solver", "tsit5"),
-        ode_adjoint_kind=getattr(args, "ode_adjoint", "forward"),
-        dt0=getattr(args, "ode_dt0", 0.01),
-        root_find_max_steps=getattr(args, "ode_root_find_max_steps", 10),
-        xl=problem.xl,
-        xu=problem.xu,
-    )
+    # Build picklable residual kwargs dict (one dict shared by serial and parallel paths).
+    residual_kwargs = _build_residual_kwargs(problem, args, w_phospho, w_abundance, w_reg, w_mrna)  # noqa: E501
 
     starts = _generate_starts(n_starts, xl, xu)
 
@@ -334,27 +461,33 @@ def run_multi_start_optimization(problem, args, P_scaled):
     # ------------------------------------------------------------------
     use_parallel = cpu_plan.n_parallel_runs > 1
 
-    if use_parallel and not _can_pickle(residuals_fn):
+    if use_parallel and not _can_pickle(residual_kwargs):
+        bad_keys = _find_non_picklable_items(residual_kwargs)
         logger.warning(
-            "[runtime] residuals_fn is not picklable (likely a JAX closure); "
-            "falling back to serial execution.  Each run will use "
-            f"{cpu_plan.threads_per_run} threads as configured by XLA."
+            "[runtime] residual_kwargs is not picklable; falling back to serial execution.\n"
+            "    This usually means problem contains non-picklable callables or objects.\n"
+            f"    Non-picklable residual kwargs: {', '.join(bad_keys) if bad_keys else '(unknown)'}"  # noqa: E501
         )
         use_parallel = False
+
+    if use_parallel:
+        logger.info(
+            "[runtime] Multiprocessing strategy: workers rebuild residuals_fn from residual_kwargs."  # noqa: E501
+        )
 
     all_X, all_F, all_total = [], [], []
 
     if use_parallel:
         logger.info(
-            f"[runtime] Running {n_starts} starts across "
-            f"{cpu_plan.n_parallel_runs} parallel workers "
-            f"({cpu_plan.threads_per_run} threads/worker)."
+            f"Running {n_starts} starts across "
+            f"{cpu_plan.n_parallel_runs} workers with "
+            f"{cpu_plan.threads_per_run} threads/worker."
         )
         tasks = [
             (
                 i,
                 theta0,
-                residuals_fn,
+                residual_kwargs,
                 max_steps,
                 opt_rtol,
                 opt_atol,
@@ -369,7 +502,10 @@ def run_multi_start_optimization(problem, args, P_scaled):
 
         results_map = {}
         try:
-            with ProcessPoolExecutor(max_workers=cpu_plan.n_parallel_runs) as pool:
+            ctx = mp.get_context("spawn")
+            with ProcessPoolExecutor(
+                max_workers=cpu_plan.n_parallel_runs, mp_context=ctx
+            ) as pool:
                 future_to_i = {
                     pool.submit(_run_single_start_worker, task): task[0]
                     for task in tasks
@@ -392,13 +528,17 @@ def run_multi_start_optimization(problem, args, P_scaled):
                             None,
                             None,
                             None,
-                            str(exc),
+                            repr(exc),
                         )
         except Exception as exc:
             logger.warning(
                 f"[runtime] ProcessPoolExecutor failed ({exc}); "
                 "falling back to serial execution."
             )
+            # Rebuild residuals_fn for serial fallback path
+            residuals_fn = _residuals_fn_from_kwargs(residual_kwargs)
+            from phoscrosstalk.optimization import run_single_optimisation  # noqa: PLC0415
+
             # Fall back: run any missing starts serially
             for i, theta0 in enumerate(starts):
                 if i in results_map:
@@ -438,7 +578,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
                         None,
                         None,
                         None,
-                        str(inner_exc),
+                        repr(inner_exc),
                     )
 
         # Collect results in original start order
@@ -456,7 +596,10 @@ def run_multi_start_optimization(problem, args, P_scaled):
                 logger.warning(f"    -> Run {i + 1} failed: {err}")
 
     else:
-        # Serial execution
+        # Serial execution: build residuals_fn in parent process
+        residuals_fn = _residuals_fn_from_kwargs(residual_kwargs)
+        from phoscrosstalk.optimization import run_single_optimisation  # noqa: PLC0415
+
         for i, theta0 in enumerate(starts):
             logger.info(f"--- Run {i + 1}/{len(starts)} ---")
             try:
@@ -482,7 +625,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
 
     if not all_X:
         raise RuntimeError(
-            "All optimisation runs failed to produce a solution. "
+            f"All {n_starts} optimisation runs failed to produce a solution. "
             "Check your data, bounds, and model dimensions."
         )
 
@@ -531,7 +674,10 @@ def run_multi_start_optimization(problem, args, P_scaled):
             (i, X_combined[i], problem, true_coords) for i in range(len(X_combined))
         ]
         try:
-            with ProcessPoolExecutor(max_workers=cpu_plan.n_parallel_runs) as pool:
+            ctx = mp.get_context("spawn")
+            with ProcessPoolExecutor(
+                max_workers=cpu_plan.n_parallel_runs, mp_context=ctx
+            ) as pool:
                 for score_i, score_val in pool.map(_frechet_worker, frechet_tasks):
                     frechet_scores[score_i] = score_val
         except Exception as exc:
