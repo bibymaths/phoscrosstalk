@@ -327,3 +327,117 @@ def build_full_A0(K, T, A_scaled, prot_idx_for_A):
         for k, p_idx in enumerate(prot_idx_for_A):
             A0_full[p_idx, :] = A_scaled[k, :]
     return A0_full
+
+
+def simulate_dense(
+    t_dense,
+    P_data0,
+    A_data0,
+    theta,
+    Cg,
+    Cl,
+    site_prot_idx,
+    K_site_kin,
+    R,
+    L_alpha,
+    kin_to_prot_idx,
+    receptor_mask_prot,
+    receptor_mask_kin,
+    mechanism,
+    rtol=1e-6,
+    atol=1e-9,
+    max_steps=16384,
+    dt0=0.01,
+    ode_solver_kind="tsit5",
+    root_find_max_steps=10,
+    k_act_fn=None,
+    s_prod_fn=None,
+    t_rna=None,
+    R_data0=None,
+    rna_relax=0.1,
+    ode_adjoint_kind="recursive",
+):
+    """Run the ODE over a dense time grid for smooth post-fit visualisation.
+
+    This is a convenience wrapper around :func:`simulate` that uses
+    :func:`simulate`'s ``return_full=True`` mode so callers get all states in
+    a single dict.  The function is intentionally **not** called during
+    optimisation — it is used after fitting to produce dense smooth trajectories
+    suitable for dashboards and exports.
+
+    The optimisation loss is anchored to the original sparse observed time
+    points and is not affected by this function.
+
+    Args:
+        t_dense (np.ndarray): Dense time grid, e.g. ``np.linspace(0, t_max, 200)``.
+        P_data0 (np.ndarray): Initial phosphosite data (N_sites x T_init) for t=0 IC.
+            Only the first column is used.
+        A_data0 (np.ndarray): Initial protein abundance data (K x T_init) for t=0 IC.
+            Only the first column is used.
+        theta (np.ndarray): Fitted parameter vector.
+        Cg, Cl (np.ndarray): Global and local coupling matrices.
+        site_prot_idx (np.ndarray): Site-to-protein mapping.
+        K_site_kin (np.ndarray): Kinase-site interaction matrix.
+        R (np.ndarray): Receptor/kinase input matrix.
+        L_alpha (np.ndarray): Kinase network Laplacian.
+        kin_to_prot_idx (np.ndarray): Kinase-to-protein mapping.
+        receptor_mask_prot, receptor_mask_kin (np.ndarray): Input masks.
+        mechanism (str): Kinetic mechanism ('dist', 'seq', 'rand').
+        rtol, atol (float): Solver tolerances.
+        max_steps (int): Maximum solver steps.
+        dt0 (float): Initial step size.
+        ode_solver_kind (str): ODE solver type.
+        root_find_max_steps (int): Max steps for root-finding (implicit solvers).
+        k_act_fn (callable | None): JAX closure for derived k_act(t).
+        s_prod_fn (callable | None): JAX closure for derived s_prod(t).
+        t_rna (np.ndarray | None): RNA-specific time points.
+        R_data0 (np.ndarray | None): RNA initial condition matrix.
+        rna_relax (float): RNA relaxation constant.
+        ode_adjoint_kind (str): Adjoint method for ODE differentiation.
+
+    Returns:
+        dict with keys:
+            ``t``         – dense time array used for the solve (= ``t_dense``)
+            ``P_sim``     – (N_sites, T_dense) phosphosite states
+            ``A_sim``     – (K, T_dense) protein abundance states
+            ``S_sim``     – (K, T_dense) protein activity states
+            ``Kdyn_sim``  – (M, T_dense) kinase activity states
+            ``R_sim``     – (K, T_dense) mRNA states (at ``t_dense``)
+            ``solver_times`` – unified solver time grid
+            ``success``   – True if solve completed without NaN states
+        Returns ``success=False`` with NaN-filled arrays if the solve fails.
+    """
+    result = simulate(
+        t_arr=t_dense,
+        P_data0=P_data0,
+        A_data0=A_data0,
+        theta=theta,
+        Cg=Cg,
+        Cl=Cl,
+        site_prot_idx=site_prot_idx,
+        K_site_kin=K_site_kin,
+        R=R,
+        L_alpha=L_alpha,
+        kin_to_prot_idx=kin_to_prot_idx,
+        receptor_mask_prot=receptor_mask_prot,
+        receptor_mask_kin=receptor_mask_kin,
+        mechanism=mechanism,
+        return_full=True,
+        rtol=rtol,
+        atol=atol,
+        max_steps=max_steps,
+        dt0=dt0,
+        ode_solver_kind=ode_solver_kind,
+        root_find_max_steps=root_find_max_steps,
+        k_act_fn=k_act_fn,
+        s_prod_fn=s_prod_fn,
+        t_rna=t_rna,
+        R_data0=R_data0,
+        rna_relax=rna_relax,
+        ode_adjoint_kind=ode_adjoint_kind,
+    )
+    # Determine success: all P, A states finite
+    P = result.get("P_sim", np.array([]))
+    success = bool(P.size > 0 and np.all(np.isfinite(P)))
+    result["success"] = success
+    return result
