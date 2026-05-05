@@ -75,12 +75,12 @@ def test_build_tf_prot_weights_no_warn_when_nonzero(caplog):
 
 
 # ---------------------------------------------------------------------------
-# C2 – total_loss uses f1+f2+f3 only (excludes f4)
+# C2 – total_loss uses f1+f2+f3+f4 (includes f4)
 # ---------------------------------------------------------------------------
 
 
-def test_total_loss_excludes_f4():
-    """C2: run_single_optimisation must use f1+f2+f3 (not +f4) for total_loss."""
+def test_total_loss_includes_f4():
+    """C2: run_single_optimisation must use f1+f2+f3+f4 for total_loss."""
     import inspect
     import re
 
@@ -96,12 +96,14 @@ def test_total_loss_excludes_f4():
             assignment_lines.append(code_part)
 
     assert assignment_lines, "total_loss must be assigned in run_single_optimisation"
-    for code in assignment_lines:
-        # f4 must not appear as a variable in the RHS (addition)
-        assert not re.search(r"\+\s*f4\b", code) and not re.search(r"\bf4\s*\+", code), (
-            f"total_loss must NOT add f4; got code: {code!r}. "
-            "Use f1 + f2 + f3 only for best-run selection."
-        )
+    found_f4 = any(
+        re.search(r"\+\s*f4\b", code) or re.search(r"\bf4\s*\+", code)
+        for code in assignment_lines
+    )
+    assert found_f4, (
+        f"total_loss must include f4; got assignment(s): {assignment_lines!r}. "
+        "Use f1 + f2 + f3 + f4 for best-run selection."
+    )
 
 
 # ---------------------------------------------------------------------------

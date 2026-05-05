@@ -19,7 +19,7 @@ from phoscrosstalk.simulation import simulate_p_scipy
 logger = get_logger(__name__)
 
 
-def save_run_results(outdir, F, X, f1, f2, f3, J, F_best):
+def save_run_results(outdir, F, X, f1, f2, f3, J, F_best, f4=None):
     """
     Save multi-start optimization results, including loss component statistics and
     total loss scores, to disk.
@@ -34,6 +34,9 @@ def save_run_results(outdir, F, X, f1, f2, f3, J, F_best):
         f3 (np.ndarray): Regularization component for each solution.
         J (np.ndarray): Total loss per solution, used for model selection.
         F_best (np.ndarray): The loss components for the best solution.
+        f4 (np.ndarray | None): mRNA / R_rna state loss component for each solution.
+            Unused directly (f4 is already embedded in column 3 of *F* when present)
+            but accepted for a consistent call-site signature.
 
     Returns:
         None: Files are written to `outdir`.  Output filenames are preserved for
@@ -78,13 +81,14 @@ def save_run_results(outdir, F, X, f1, f2, f3, J, F_best):
 save_pareto_results = save_run_results
 
 
-def plot_run_diagnostics(outdir, F, F_best, f1, f2, f3, X):
+def plot_run_diagnostics(outdir, F, F_best, f1, f2, f3, X, f4=None):
     """
     Plot diagnostic visualizations for the multi-start optimization results.
 
     Generates a scatter plot of loss component space (f1 vs f2 colored by f3)
     with the selected best solution highlighted, and a heatmap of parameter
-    correlations across all runs.
+    correlations across all runs.  When *f4* is provided (RNA loss enabled),
+    an additional panel showing f1 vs f4 is saved alongside.
 
     Args:
         outdir (str): Path to the output directory.
@@ -94,9 +98,12 @@ def plot_run_diagnostics(outdir, F, F_best, f1, f2, f3, X):
         f2 (np.ndarray): Protein abundance error component for each solution.
         f3 (np.ndarray): Regularization component for each solution.
         X (np.ndarray): Parameter values for all solutions.
+        f4 (np.ndarray | None): mRNA / R_rna state loss component for each solution.
+            When *None* (or all-zero), the RNA panel is skipped.
 
     Returns:
-        None: Saves 'pareto_f1_f2.png' and 'pareto_param_corr.png' to `outdir`.
+        None: Saves 'pareto_f1_f2.png', 'pareto_param_corr.png', and
+              (when f4 is non-trivial) 'pareto_f1_f4.png' to `outdir`.
               Output filenames are preserved for backward compatibility.
     """
     # F1 vs F2
@@ -109,6 +116,27 @@ def plot_run_diagnostics(outdir, F, F_best, f1, f2, f3, X):
     plt.title("Optimization Results: f1 vs f2")
     plt.savefig(os.path.join(outdir, "pareto_f1_f2.png"), dpi=300)
     plt.close()
+
+    # f1 vs f4 panel (only when RNA data were used, i.e. f4 is non-trivially non-zero)
+    f4_arr = np.asarray(f4) if f4 is not None else None
+    if f4_arr is not None and np.any(f4_arr > 0):
+        plt.figure(figsize=(7, 6))
+        sc4 = plt.scatter(f1, f4_arr, c=f3, cmap="viridis", alpha=0.7)
+        plt.colorbar(sc4, label="f3 (regularisation)")
+        if len(F_best) > 3:
+            plt.scatter(
+                F_best[0],
+                F_best[3],
+                s=120,
+                facecolors="none",
+                edgecolors="red",
+                linewidths=2,
+            )
+        plt.xlabel("f1 (phosphosite loss)")
+        plt.ylabel("f4 (mRNA loss)")
+        plt.title("Optimization Results: f1 vs f4 (RNA)")
+        plt.savefig(os.path.join(outdir, "pareto_f1_f4.png"), dpi=300)
+        plt.close()
 
     # Param Correlation
     fig, ax = plt.subplots(figsize=(10, 8))

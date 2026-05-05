@@ -29,7 +29,7 @@ Backward-compatible return interface
 -------------------------------------
 Returns (merged_res, best_idx, total_losses) where:
   merged_res.X  : (n_solutions, n_params)
-  merged_res.F  : (n_solutions, 3)       – [f1, f2, f3] loss components
+  merged_res.F  : (n_solutions, 4)       – [f1, f2, f3, f4] loss components
   merged_res.J  : (n_solutions,)         – total loss per run (used for selection)
   best_idx      : int                    – index of lowest-total-loss solution
   total_losses  : np.ndarray             – total loss for each solution
