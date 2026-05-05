@@ -266,38 +266,82 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
     # --- Helper to Save & Plot FC ---
     def process_and_save(res_dict, cols, name):
         df = pd.DataFrame(res_dict).T
+
+        if df.empty:
+            logger.warning(f"[!] No knockout results available for {name}.")
+            return
+
         df.columns = cols
 
-        # Filter: Keep rows where at least one value deviates significantly from 1.0
-        # e.g., < 0.9 or > 1.1
+        # Keep rows where at least one value deviates meaningfully from 1.0.
         mask = ((df < 0.95) | (df > 1.05)).any(axis=1)
         df = df.loc[mask]
 
-        if not df.empty:
-            df.to_csv(os.path.join(ko_dir, f"knockout_fc_{name}.tsv"), sep="\t")
-            # Plot
-            try:
-                # For FC, center is 1.0.
-                # We determine vmax to handle high fold changes gracefully.
-                vals = df.values.flatten()
-                vmax = np.percentile(vals, 98)
-                if vmax < 1.5:
-                    vmax = 1.5  # Minimum contrast
+        if df.empty:
+            logger.info(f"[*] No significant knockout effects for {name}; skipping plot.")
+            return
 
-                g = sns.clustermap(
-                    df,
-                    cmap="vlag",
-                    center=1.0,  # Center white at 1.0 (No Change)
-                    vmin=0.0,  # Floor at 0.0
-                    vmax=vmax,
-                    figsize=(10, 10),
-                    cbar_kws={"label": "Fold Change (KO/WT)"},
-                )
-                g.fig.suptitle(f"Fold Change {name} upon Knockout")
-                plt.savefig(os.path.join(ko_dir, f"clustermap_{name}_fc.png"), dpi=300)
-                plt.close()
-            except (ValueError, np.linalg.LinAlgError, RuntimeError) as e:
-                logger.warning(f"Clustermap {name} failed: {e}")
+        out_tsv = os.path.join(ko_dir, f"knockout_fc_{name}.tsv")
+        df.to_csv(out_tsv, sep="\t")
+
+        # Keep only finite numeric values for plotting.
+        df_plot = df.replace([np.inf, -np.inf], np.nan)
+        df_plot = df_plot.dropna(axis=0, how="all")
+        df_plot = df_plot.dropna(axis=1, how="all")
+
+        if df_plot.empty:
+            logger.warning(f"[!] No finite knockout values for {name}; skipping plot.")
+            return
+
+        # Drop rows/columns with no variation. These break or trivialize clustering.
+        if df_plot.shape[0] > 1:
+            row_var = df_plot.var(axis=1, skipna=True)
+            df_plot = df_plot.loc[row_var > 0]
+
+        if df_plot.shape[1] > 1:
+            col_var = df_plot.var(axis=0, skipna=True)
+            df_plot = df_plot.loc[:, col_var > 0]
+
+        if df_plot.empty:
+            logger.info(
+                f"[*] Knockout matrix for {name} has no variable rows/columns; "
+                "saved TSV but skipped plot."
+            )
+            return
+
+        vals = df_plot.to_numpy(dtype=float).ravel()
+        vals = vals[np.isfinite(vals)]
+
+        if vals.size == 0:
+            logger.warning(f"[!] No finite values for {name}; skipping plot.")
+            return
+
+        vmax = float(np.percentile(vals, 98))
+        if not np.isfinite(vmax) or vmax < 1.5:
+            vmax = 1.5
+
+        try:
+            # clustermap requires at least 2 rows/cols for clustering.
+            row_cluster = df_plot.shape[0] >= 2
+            col_cluster = df_plot.shape[1] >= 2
+
+            g = sns.clustermap(
+                df_plot,
+                cmap="vlag",
+                center=1.0,
+                vmin=0.0,
+                vmax=vmax,
+                figsize=(10, 10),
+                row_cluster=row_cluster,
+                col_cluster=col_cluster,
+                cbar_kws={"label": "Fold Change (KO/WT)"},
+            )
+            g.fig.suptitle(f"Fold Change {name} upon Knockout")
+            plt.savefig(os.path.join(ko_dir, f"clustermap_{name}_fc.png"), dpi=300)
+            plt.close(g.fig)
+
+        except (ValueError, np.linalg.LinAlgError, RuntimeError) as e:
+            logger.warning(f"Clustermap {name} failed: {e}")
 
     process_and_save(res_S, proteins, "S_sim")
     process_and_save(res_Kdyn, kinases, "Kdyn_sim")
@@ -331,21 +375,56 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
 
     # 6. Plotting Main Clustermap
     logger.info("   -> Generating Clustermap...")
+
+    df_plot = df_filtered.replace([np.inf, -np.inf], np.nan)
+    df_plot = df_plot.dropna(axis=0, how="all")
+    df_plot = df_plot.dropna(axis=1, how="all")
+
+    if df_plot.empty:
+        logger.warning("[!] No finite phosphosite knockout values to plot.")
+        return
+
+    if df_plot.shape[0] > 1:
+        row_var = df_plot.var(axis=1, skipna=True)
+        df_plot = df_plot.loc[row_var > 0]
+
+    if df_plot.shape[1] > 1:
+        col_var = df_plot.var(axis=0, skipna=True)
+        df_plot = df_plot.loc[:, col_var > 0]
+
+    if df_plot.empty:
+        logger.warning(
+            "[!] Phosphosite knockout matrix has no variable rows/columns; "
+            "saved TSV but skipped clustermap."
+        )
+        return
+
     try:
-        vals = df_filtered.values.flatten()
-        vmax = np.percentile(vals, 98)
-        if vmax < 2.0:
+        vals = df_plot.to_numpy(dtype=float).ravel()
+        vals = vals[np.isfinite(vals)]
+
+        if vals.size == 0:
+            logger.warning("[!] No finite phosphosite knockout values to plot.")
+            return
+
+        vmax = float(np.percentile(vals, 98))
+        if not np.isfinite(vmax) or vmax < 2.0:
             vmax = 2.0
 
+        row_cluster = df_plot.shape[0] >= 2
+        col_cluster = df_plot.shape[1] >= 2
+
         g = sns.clustermap(
-            df_filtered,
+            df_plot,
             cmap="vlag",
-            center=1.0,  # White at 1.0
+            center=1.0,
             vmin=0.0,
             vmax=vmax,
             figsize=(14, 14),
             xticklabels=False,
             yticklabels=True,
+            row_cluster=row_cluster,
+            col_cluster=col_cluster,
             dendrogram_ratio=(0.1, 0.2),
             cbar_pos=(0.02, 0.8, 0.03, 0.18),
             cbar_kws={"label": "Fold Change (KO/WT)"},
@@ -353,6 +432,7 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
         g.ax_heatmap.set_xlabel("Downstream Phosphosites")
         g.ax_heatmap.set_ylabel("Perturbation (KO)")
         plt.savefig(os.path.join(ko_dir, "knockout_clustermap_fc.png"), dpi=300)
-        plt.close()
+        plt.close(g.fig)
+
     except (ValueError, np.linalg.LinAlgError, RuntimeError) as e:
         logger.critical(f"[!] Clustermap generation failed: {e}")
