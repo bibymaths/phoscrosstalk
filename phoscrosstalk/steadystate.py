@@ -124,9 +124,13 @@ def _save_convergence_tsv(ss_dir: str, matrices: dict) -> None:
     rows = []
     for name, X in matrices.items():
         if X.shape[1] < 2:
-            rows.append({"state": name, "mean_abs_delta": float("nan"),
-                         "max_abs_delta": float("nan"), "mean_rel_delta": float("nan"),
-                         "max_rel_delta": float("nan")})
+            rows.append({
+                "state": name,
+                "mean_abs_delta": float("nan"),
+                "max_abs_delta": float("nan"),
+                "mean_rel_delta": float("nan"),
+                "max_rel_delta": float("nan"),
+            })
             continue
         delta_abs = np.abs(X[:, -1] - X[:, -2])
         delta_rel = delta_abs / (np.abs(X[:, -2]) + _EPS)
@@ -171,11 +175,25 @@ def _save_metadata_json(
     has_k_act_fn, has_s_prod_fn, has_R_data0,
 ):
     meta = {
-        "horizon": {"t_end": t_end, "early_end": early_end,
-                    "n_early": n_early, "n_late": n_late, "late_grid": late_grid},
-        "solver": {"rtol": rtol, "atol": atol, "dt0": dt0, "max_steps": max_steps},
-        "model": {"mechanism": mechanism, "k_act_fn_provided": has_k_act_fn,
-                  "s_prod_fn_provided": has_s_prod_fn, "R_data0_provided": has_R_data0},
+        "horizon": {
+            "t_end": t_end,
+            "early_end": early_end,
+            "n_early": n_early,
+            "n_late": n_late,
+            "late_grid": late_grid,
+        },
+        "solver": {
+            "rtol": rtol,
+            "atol": atol,
+            "dt0": dt0,
+            "max_steps": max_steps,
+        },
+        "model": {
+            "mechanism": mechanism,
+            "k_act_fn_provided": has_k_act_fn,
+            "s_prod_fn_provided": has_s_prod_fn,
+            "R_data0_provided": has_R_data0,
+        },
         "note": (
             "Long-horizon relaxation analysis.  Derived-rate closures "
             "(k_act_fn, s_prod_fn) extrapolate beyond observed data using "
