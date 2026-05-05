@@ -11,7 +11,7 @@ import seaborn as sns
 from matplotlib import pyplot as plt
 
 from phoscrosstalk.config import DEFAULT_TIMEPOINTS, ModelDims
-from phoscrosstalk.core_mechanisms import decode_theta
+from phoscrosstalk.jax_mechanisms import decode_theta_jax
 from phoscrosstalk.logger import get_logger
 from phoscrosstalk.optimization import bio_score, build_full_A0
 from phoscrosstalk.simulation import simulate_p_scipy
