@@ -8,6 +8,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
     permissions:
       contents: read
 
@@ -21,14 +22,18 @@ jobs:
           git fetch origin main
           git branch -r --contains "$GITHUB_SHA" | grep -q "origin/main"
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
       - name: Install package with dev extras
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+        run: uv sync --locked --extra dev
 
       - name: Run tests with coverage
-        run: pytest
+        run: uv run pytest
