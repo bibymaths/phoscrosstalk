@@ -677,13 +677,6 @@ def make_residuals_fn(
     t0_val = float(all_times[0])
     t1_val = float(all_times[-1])
 
-    # Penalty residual sizes for failed solves
-    n_phospho_res = P_data.size
-    n_abund_res = A_scaled.size if has_abundance else 0
-    n_rna_res = rna_data_scaled.size if has_mrna and rna_data_scaled is not None else 0
-    n_reg_res = n_var + (M if has_net_reg else 0)
-    total_res_size = n_phospho_res + n_abund_res + n_rna_res + n_reg_res
-
     PENALTY = jnp.float32(_FAILED_SOLVE_PENALTY)
 
     def residuals_fn(theta, _args):

@@ -516,6 +516,7 @@ def plot_fitted_simulation(outdir):
             n_panels,
             figsize=(9 * n_panels, 7),
             gridspec_kw={"wspace": 0.12},
+            constrained_layout=True
         )
         axes = list(axes)
 
@@ -660,7 +661,6 @@ def plot_fitted_simulation(outdir):
         axS.grid(alpha=0.25)
 
         fig.suptitle(f"{prot}", fontsize=14, fontweight="bold", y=1.01)
-        plt.tight_layout()
         plt.savefig(
             os.path.join(outdir, f"fit_{prot}.png"), dpi=300, bbox_inches="tight"
         )

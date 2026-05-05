@@ -10,7 +10,7 @@
 data              = "data_subset/subnetwork_EPHA2_LYN/filtered_input1_subset.csv"
 ptm_intra         = "data_curated/processed/ptm_intra.db"
 ptm_inter         = "data_curated/processed/ptm_inter.db"
-output_dir        = "test_results_rand"
+output_dir        = "test_results_dist"
 crosstalk_tsv     = ""
 rna_data          = "data_subset/subnetwork_EPHA2_LYN/filtered_input3_subset.csv"
 tf_net            = "data_subset/subnetwork_EPHA2_LYN/tf_mrna_subset.csv"
@@ -22,7 +22,7 @@ unified_graph_pkl = "data_curated/processed/unified_kinase_graph.gpickle"
 # [model]  – ODE model settings
 # ---------------------------------------------------------------------------
 [model]
-mechanism               = "rand"      # dist | seq | rand
+mechanism               = "dist"      # dist | seq | rand
 scale_mode              = "none"     # none | minmax | zscore
 length_scale            = 25.0
 weight_scheme           = "uniform"  # uniform | inverse_variance | time_weighted

@@ -4,6 +4,9 @@ main.py
 Entry point for the Global Phospho-Network Model orchestration.
 """
 
+import os
+os.environ["JAX_PLATFORMS"] = "cpu"
+
 import argparse
 import os
 from types import SimpleNamespace
@@ -21,8 +24,6 @@ from phoscrosstalk.logo import print_logo
 from phoscrosstalk.multistarts import run_multi_start_optimization
 from phoscrosstalk.optimization import (
     NetworkProblem as NetworkOptimizationProblem,
-)
-from phoscrosstalk.optimization import (
     create_bounds,
     make_loss_fn,
     make_residuals_fn,
