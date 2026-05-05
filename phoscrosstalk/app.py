@@ -179,7 +179,7 @@ st.sidebar.title("\U0001F9EC PhosCrosstalk Explorer")
 
 results_dir = st.sidebar.text_input(
     "Results directory path",
-    value="test_results_dist",
+    value="test_results_dist",  # example; change to your run directory
     help="Path to a completed PhosCrosstalk run directory.",
 ).strip()
 
@@ -855,9 +855,16 @@ with tab_ko:
                         "WT_signal": wt_f,
                         "KO_signal": ko_f,
                         "FC_KO_over_WT": fc,
-                    }).sort_values("FC_KO_over_WT", key=abs, ascending=False)
+                    })
 
                     st.subheader("Ranked fold-change (final time point)")
+                    sort_abs = st.checkbox("Sort by |FC| (largest absolute change first)",
+                                           value=True, key="ko_sort_abs")
+                    if sort_abs:
+                        df_fc = df_fc.sort_values("FC_KO_over_WT", key=abs, ascending=False)
+                    else:
+                        df_fc = df_fc.sort_values("FC_KO_over_WT", ascending=False)
+
                     fig_fc_bar = px.bar(
                         df_fc.head(30), x="Site", y="FC_KO_over_WT",
                         color="FC_KO_over_WT", color_continuous_scale="RdBu_r",
@@ -1090,9 +1097,15 @@ with tab_net:
 
         st.markdown(f"Loaded **{len(df_net):,}** edges.")
 
+        if df_net.shape[1] < 2:
+            st.error(
+                "Network edge file must have at least 2 columns (Source, Target). "
+                f"Found {df_net.shape[1]} column(s)."
+            )
+            st.stop()
+
         source_col = "Source" if "Source" in df_net.columns else df_net.columns[0]
-        target_col = ("Target" if "Target" in df_net.columns
-                      else (df_net.columns[1] if df_net.shape[1] > 1 else df_net.columns[0]))
+        target_col = "Target" if "Target" in df_net.columns else df_net.columns[1]
 
         search_node = st.text_input("Filter by node name", "")
         df_net_f = df_net.copy()
