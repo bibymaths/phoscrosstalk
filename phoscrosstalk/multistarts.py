@@ -517,7 +517,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
         use_frechet_parallel = False
 
     if use_frechet_parallel and not _can_pickle(problem):
-        logger.debug(
+        logger.info(
             "[runtime] problem is not picklable; using serial Fréchet computation."
         )
         use_frechet_parallel = False
