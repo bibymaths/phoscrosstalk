@@ -229,17 +229,17 @@ def test_rhs_state_dimension_with_R():
     rhs = make_rhs(K, M, N, "dist")
 
     dim = 2 * K + 2 + 3 * M + N + 4  # theta dim
-    theta_j = jnp.zeros(dim, dtype=jnp.float32)
+    theta_j = jnp.zeros(dim, dtype=jnp.float64)
     spi = np.array([0, 0, 1, 1], dtype=np.int32)
     prev = compute_prev_site_idx(spi, N)
-    Cg = jnp.eye(N, dtype=jnp.float32)
-    Cl = jnp.eye(N, dtype=jnp.float32)
-    K_sk = jnp.ones((N, M), dtype=jnp.float32) / M
-    R_mat = jnp.ones((M, N), dtype=jnp.float32) / N
-    La = jnp.zeros((M, M), dtype=jnp.float32)
+    Cg = jnp.eye(N, dtype=jnp.float64)
+    Cl = jnp.eye(N, dtype=jnp.float64)
+    K_sk = jnp.ones((N, M), dtype=jnp.float64) / M
+    R_mat = jnp.ones((M, N), dtype=jnp.float64) / N
+    La = jnp.zeros((M, M), dtype=jnp.float64)
     k2p = jnp.array([0, 1, -1], dtype=jnp.int32)
-    rmp = jnp.zeros(K, dtype=jnp.float32)
-    rmk = jnp.zeros(M, dtype=jnp.float32)
+    rmp = jnp.zeros(K, dtype=jnp.float64)
+    rmk = jnp.zeros(M, dtype=jnp.float64)
 
     args = (
         theta_j,
@@ -256,7 +256,7 @@ def test_rhs_state_dimension_with_R():
     )
 
     expected_state_dim = 3 * K + M + N
-    y = jnp.zeros(expected_state_dim, dtype=jnp.float32)
+    y = jnp.zeros(expected_state_dim, dtype=jnp.float64)
     dy = rhs(0.0, y, args)
     assert dy.shape == (expected_state_dim,), (
         f"RHS output shape {dy.shape}, expected ({expected_state_dim},)"
@@ -328,10 +328,10 @@ def test_network_problem_loss_includes_rna():
     m = _make_tiny_model(K=2, M=3, N=4, T=6)
     K, M, N = m["K"], m["M"], m["N"]
     xl, xu, _ = create_bounds(K, M, N)
-    theta0 = jnp.asarray(0.5 * (xl + xu), dtype=jnp.float32)
+    theta0 = jnp.asarray(0.5 * (xl + xu), dtype=jnp.float64)
 
     t_rna = np.array([4.0, 8.0, 30.0, 60.0])
-    rna_obs = np.ones((1, len(t_rna)), dtype=np.float32)  # 1 matched gene
+    rna_obs = np.ones((1, len(t_rna)), dtype=np.float64)  # 1 matched gene
     rna_prot_idx = np.array([0], dtype=int)  # maps to protein 0
 
     loss_no_rna = make_loss_fn(

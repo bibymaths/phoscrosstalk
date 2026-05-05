@@ -35,7 +35,7 @@ def _set_dims(K=2, M=2, N=3):
 
 def _theta_zero(K=2, M=2, N=3):
     dim = 2 * K + 2 + 3 * M + N + 4
-    return np.zeros(dim, dtype=np.float32)
+    return np.zeros(dim, dtype=np.float64)
 
 
 def _minimal_problem(K=2, M=2, N=3):
@@ -611,7 +611,7 @@ class TestOptimizationUsesSparseObservedTimes:
             reg_lambda=0.0001,
         )
 
-        theta = jnp.zeros(2 * K + 2 + 3 * M + N + 4, dtype=jnp.float32)
+        theta = jnp.zeros(2 * K + 2 + 3 * M + N + 4, dtype=jnp.float64)
         try:
             res_fn(theta, None)
         except Exception:

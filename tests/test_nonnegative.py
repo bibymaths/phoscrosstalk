@@ -106,7 +106,7 @@ def test_decoded_rate_params_positive():
 
     for _ in range(10):
         theta = rng.uniform(-5.0, 5.0, dim)
-        theta_j = jnp.asarray(theta, dtype=jnp.float32)
+        theta_j = jnp.asarray(theta, dtype=jnp.float64)
         (k_deact, d_deg, beta_g, beta_l, alpha, kK_act, kK_deact, k_off, _, _, _, _) = (
             decode_theta(theta_j, K, M, N)
         )
@@ -149,10 +149,10 @@ def test_gamma_params_can_be_negative():
     theta_neg[-4:] = -10.0  # raw_gamma → tanh(-10) ≈ -1 → decoded gamma < 0
 
     (_, _, _, _, _, _, _, _, gsp_pos, gas_pos, gap_pos, gkn_pos) = decode_theta(
-        jnp.asarray(theta_pos, dtype=jnp.float32), K, M, N
+        jnp.asarray(theta_pos, dtype=jnp.float64), K, M, N
     )
     (_, _, _, _, _, _, _, _, gsp_neg, gas_neg, gap_neg, gkn_neg) = decode_theta(
-        jnp.asarray(theta_neg, dtype=jnp.float32), K, M, N
+        jnp.asarray(theta_neg, dtype=jnp.float64), K, M, N
     )
 
     # Positive raw_gamma → positive decoded gamma
@@ -180,10 +180,10 @@ def test_rhs_finite_for_nonneg_states():
     rng = np.random.default_rng(7)
 
     rhs = make_rhs(K, M, N, "dist")
-    theta = jnp.asarray(rng.uniform(-2.0, 0.0, dim), dtype=jnp.float32)
+    theta = jnp.asarray(rng.uniform(-2.0, 0.0, dim), dtype=jnp.float64)
 
     # Valid non-negative state: R_rna ≥ 0, S ∈ [0,1], A ≥ 0, Kdyn ∈ [0,1], p ≥ 0 (nonnegative relative phosphosite signal)
-    y = jnp.zeros(3 * K + M + N, dtype=jnp.float32)
+    y = jnp.zeros(3 * K + M + N, dtype=jnp.float64)
     y = y.at[:K].set(1.0)  # R_rna = 1
     y = y.at[K : 2 * K].set(0.5)  # S = 0.5
     y = y.at[2 * K : 3 * K].set(1.0)  # A = 1
@@ -191,14 +191,14 @@ def test_rhs_finite_for_nonneg_states():
     y = y.at[3 * K + M :].set(0.2)  # p = 0.2
 
     spi = jnp.array([0, 0, 1, 1], dtype=jnp.int32)
-    K_sk = jnp.ones((N, M), dtype=jnp.float32) / M
-    R_mat = jnp.ones((M, N), dtype=jnp.float32) / N
-    La = jnp.zeros((M, M), dtype=jnp.float32)
-    Cg = jnp.eye(N, dtype=jnp.float32) * 0.1
-    Cl = jnp.eye(N, dtype=jnp.float32) * 0.05
+    K_sk = jnp.ones((N, M), dtype=jnp.float64) / M
+    R_mat = jnp.ones((M, N), dtype=jnp.float64) / N
+    La = jnp.zeros((M, M), dtype=jnp.float64)
+    Cg = jnp.eye(N, dtype=jnp.float64) * 0.1
+    Cl = jnp.eye(N, dtype=jnp.float64) * 0.05
     k2p = jnp.array([0, 1, -1], dtype=jnp.int32)
-    rmp = jnp.zeros(K, dtype=jnp.float32)
-    rmk = jnp.zeros(M, dtype=jnp.float32)
+    rmp = jnp.zeros(K, dtype=jnp.float64)
+    rmk = jnp.zeros(M, dtype=jnp.float64)
     prev_spi = jnp.asarray(
         compute_prev_site_idx(np.array([0, 0, 1, 1]), N), dtype=jnp.int32
     )
@@ -226,20 +226,20 @@ def test_rhs_boundary_guard_lower_bound():
     dim = 2 * K + 2 + 3 * M + N + 4
 
     rhs = make_rhs(K, M, N, "dist")
-    theta = jnp.asarray(rng.uniform(-2.0, 0.0, dim), dtype=jnp.float32)
+    theta = jnp.asarray(rng.uniform(-2.0, 0.0, dim), dtype=jnp.float64)
 
     # Set all states to exactly 0 (lower boundary)
-    y = jnp.zeros(3 * K + M + N, dtype=jnp.float32)
+    y = jnp.zeros(3 * K + M + N, dtype=jnp.float64)
 
     spi = jnp.array([0, 0, 1], dtype=jnp.int32)
-    K_sk = jnp.ones((N, M), dtype=jnp.float32) / M
-    R_mat = jnp.ones((M, N), dtype=jnp.float32) / N
-    La = jnp.zeros((M, M), dtype=jnp.float32)
-    Cg = jnp.eye(N, dtype=jnp.float32) * 0.1
-    Cl = jnp.eye(N, dtype=jnp.float32) * 0.05
+    K_sk = jnp.ones((N, M), dtype=jnp.float64) / M
+    R_mat = jnp.ones((M, N), dtype=jnp.float64) / N
+    La = jnp.zeros((M, M), dtype=jnp.float64)
+    Cg = jnp.eye(N, dtype=jnp.float64) * 0.1
+    Cl = jnp.eye(N, dtype=jnp.float64) * 0.05
     k2p = jnp.array([0, 1], dtype=jnp.int32)
-    rmp = jnp.zeros(K, dtype=jnp.float32)
-    rmk = jnp.zeros(M, dtype=jnp.float32)
+    rmp = jnp.zeros(K, dtype=jnp.float64)
+    rmk = jnp.zeros(M, dtype=jnp.float64)
     prev_spi = jnp.asarray(
         compute_prev_site_idx(np.array([0, 0, 1]), N), dtype=jnp.int32
     )
@@ -328,7 +328,7 @@ def test_residuals_no_negative_model_outputs():
     m = _make_tiny(K=2, M=3, N=4, T=5)
     K, M, N = m["K"], m["M"], m["N"]
     xl, xu, _ = create_bounds(K, M, N)
-    theta_mid = jnp.asarray(0.5 * (xl + xu), dtype=jnp.float32)
+    theta_mid = jnp.asarray(0.5 * (xl + xu), dtype=jnp.float64)
 
     residuals_fn = make_residuals_fn(
         t=m["t"],

@@ -316,7 +316,7 @@ class TestOptimistixOptimisation:
         theta0 = xl + rng.random(len(xl)) * (xu - xl)
         # Compute initial total loss from residuals
         r0, (f1_0, f2_0, f3_0, f4_0) = residuals_fn(
-            jnp.asarray(theta0, dtype=jnp.float32), None
+            jnp.asarray(theta0, dtype=jnp.float64), None
         )
         loss0 = float(f1_0) + float(f2_0) + float(f3_0) + float(f4_0)
 
@@ -378,7 +378,7 @@ class TestOptimistixOptimisation:
         )
 
         theta0 = 0.5 * (xl + xu)
-        r, (f1, f2, f3, f4) = residuals_fn(jnp.asarray(theta0, dtype=jnp.float32), None)
+        r, (f1, f2, f3, f4) = residuals_fn(jnp.asarray(theta0, dtype=jnp.float64), None)
         assert np.all(np.isfinite(np.asarray(r))), (
             "residual vector contains non-finite values"
         )
