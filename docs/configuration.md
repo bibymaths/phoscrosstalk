@@ -74,7 +74,7 @@ s_prod_fn = "softplus"
 
 | Key         | Default | Description                                    |
 |-------------|---------|------------------------------------------------|
-| `phospho`   | `1.0`   | Weight on phosphosite occupancy loss           |
+| `phospho`   | `1.0`   | Weight on phosphosite relative-signal loss     |
 | `abundance` | `1.0`   | Weight on protein abundance loss               |
 | `mrna`      | `1.0`   | Weight on mRNA (R(t)) loss                     |
 | `reg`       | `1.0`   | Weight on regularization loss                  |

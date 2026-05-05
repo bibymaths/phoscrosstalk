@@ -87,7 +87,7 @@ contains all input matrices, labels, and configuration for reproducibility:
 
 ## Interpreting outputs
 
-- **`p(t)` in `fit_timeseries.tsv`** = phosphosite occupancy fit. Compare `sim_t*` vs `data_t*` columns.
+- **`p(t)` in `fit_timeseries.tsv`** = relative phosphosite signal fit. Compare `sim_t*` vs `data_t*` columns.
 - **`A(t)` in `fit_timeseries.tsv`** = protein abundance fit.
 - **`R(t)` in `mrna_fit_timeseries.tsv`** = mRNA level fit (only when RNA ODE state is active).
 - **`S(t)` in `internal_states.tsv`** = protein activation state (not directly observed; derived from model).

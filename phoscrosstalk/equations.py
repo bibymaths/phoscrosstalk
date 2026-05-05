@@ -192,7 +192,7 @@ def _generate_latex_source(
     elif mechanism == "seq":
         mech_desc = r"Sequential (Ordered phosphorylation $p_1 \to p_2$)"
     elif mechanism == "rand":
-        mech_desc = "Random/Cooperative (Mean occupancy feedback)"
+        mech_desc = "Random/Crowding-Aware (Mean bounded proxy q feedback)"
 
     lines.append(f"\\textbf{{Mechanism:}} {mech_desc} \\\\")
     if mode == "numeric":
@@ -209,22 +209,26 @@ def _generate_latex_source(
     lines.append(r"\item $S \in \mathbb{R}^K$: protein signalling/activation fraction")
     lines.append(r"\item $A \in \mathbb{R}^K$: protein abundance")
     lines.append(r"\item $K_{dyn} \in \mathbb{R}^M$: kinase activity fraction")
-    lines.append(r"\item $p \in \mathbb{R}^N$: phosphosite occupancy fraction")
+    lines.append(r"\item $p \in \mathbb{R}^N$: relative phosphosite signal, nonneg.")
     lines.append(r"\end{itemize}")
 
     # --- GLOBAL ---
     lines.append(r"\section{Global Definitions}")
     lines.append(r"\begin{itemize}")
     lines.append(r"\item Input Stimulus: $u(t) = \frac{1}{1 + e^{-t/0.1}}$")
+    lines.append(
+        r"\item $q_i = p_i / (1 + p_i) \in [0,1)$: bounded regulatory proxy "
+        r"used for occupancy-like regulation, crosstalk summaries, and mechanism gates."
+    )
 
     bg = get_p("beta_g", 0, r"\beta_g")
     bl = get_p("beta_l", 0, r"\beta_l")
     lines.append(
         r"\item Crosstalk coupling: $\mathcal{C}_i = \tanh("
         + bg
-        + r"(C_g \mathbf{p})_i + "
+        + r"(C_g \mathbf{q})_i + "
         + bl
-        + r"(C_l \mathbf{p})_i)$"
+        + r"(C_l \mathbf{q})_i)$, where $\mathbf{q}$ is the bounded proxy vector."
     )
     lines.append(
         r"\item $k_{act}(t)$ and $s_{prod}(t)$ are derived from TF/kinase signals "
@@ -327,7 +331,15 @@ def _generate_latex_source(
 
         u_str = " + ".join(u_terms) if u_terms else "0"
 
-        eq_K = rf"\frac{{dK}}{{dt}} = {kka} \tanh({u_str}) (1 - K) - {kkd} K"
+        # Kinase activation uses a nonnegative saturating drive:
+        #   K_drive = basal + (1 - basal) * sigmoid(U)
+        # where U is the latent field (substrate feedback + network + protein context).
+        # This prevents kinase states from being pinned at zero and avoids signed tanh.
+        eq_K = (
+            rf"\frac{{dK}}{{dt}} = {kka} "
+            rf"\Bigl[\delta + (1-\delta)\,\sigma({u_str})\Bigr] (1 - K) - {kkd} K"
+            r"\quad (\delta=0.05,\ \sigma=\text{sigmoid})"
+        )
         lines.append(rf"\textbf{{{clean_kin}}} & ${eq_K}$ \\ \hline")
     lines.append(r"\end{longtable}")
 
@@ -336,11 +348,15 @@ def _generate_latex_source(
 
     if mechanism == "seq":
         lines.append(
-            r"\textcolor{blue}{\textbf{Sequential Model:}} Rate depends on predecessor $p_{i-1}$. \\"  # noqa: E501
+            r"\textcolor{blue}{\textbf{Sequential Model:}} "
+            r"Gate uses bounded predecessor proxy $q_{i-1} = p_{i-1}/(1+p_{i-1})$; "
+            r"a small leak $\epsilon$ avoids structural blocking. \\"
         )
     elif mechanism == "rand":
         lines.append(
-            r"\textcolor{blue}{\textbf{Cooperative Model:}} Rate depends on mean protein occupancy $\bar{p}$. \\"  # noqa: E501
+            r"\textcolor{blue}{\textbf{Random/Crowding-Aware Model:}} "
+            r"Gate uses mean bounded proxy $\bar{q}$ per protein "
+            r"($q_i = p_i/(1+p_i)$), not raw $p$ as occupancy. \\"
         )
 
     prev_prot_idx = -1
@@ -372,23 +388,35 @@ def _generate_latex_source(
         if mechanism == "seq":
             if prot_idx == prev_prot_idx:
                 mech_term = (
-                    rf"\cdot \underbrace{{p_{{{prev_site_tex}}}}}_{{\text{{gate}}}}"
+                    rf"\cdot \underbrace{{q_{{{prev_site_tex}}}}}_{{\text{{gate}}}}"
+                    r"\quad (q = p/(1{+}p))"
                 )
         elif mechanism == "rand":
             prot_name = _clean_tex(proteins[prot_idx])
-            mech_term = rf"\cdot (1 + \langle p \rangle_{{{prot_name}}})"
+            mech_term = (
+                rf"\cdot \frac{{1}}{{1 + \bar{{q}}_{{{prot_name}}}}}"
+                r"\quad (\bar{q} = \text{mean bounded proxy})"
+            )
 
-        v_raw = (
-            rf"{c_term}\,\left[{k_on_str}\right]\,{mech_term}\,(1 - p_{{{clean_site}}})"
-        )
+        # Production: saturating drive from kinase signal, crosstalk factor, gate,
+        # and protein abundance factor (1 + A_site).
+        # The abundance factor (1 + A_site) replaces the old occupancy-based saturation
+        # term (1 - p_i): in the relative-signal model p is nonnegative and unbounded,
+        # so (1 - p) is not a valid saturation gate.  Instead, protein abundance scales
+        # the available substrate pool for phosphorylation.
+        # p is NOT bounded; the old (1-p) production factor is not part of the active RHS.
+        v_raw = rf"{c_term}\,\left[{k_on_str}\right]\,{mech_term}\,(1 + A_\text{{site}})"
 
         # Print each equation as a real display equation (breqn can break lines here)
+        # dp/dt = v_on - v_off
+        #   v_on = v_raw / (1 + v_raw)   [saturating production, p can exceed 1]
+        #   v_off = k_off * p             [first-order loss of relative signal]
         lines.append(rf"\subsection*{{{clean_site}}}")
         lines.append(r"\begin{dmath*}")
         lines.append(
             rf"\frac{{dp_{{{clean_site}}}}}{{dt}} = "
-            rf"\frac{{{v_raw}}}{{1 + \left|{v_raw}\right|}} - "
-            rf"\frac{{{koff}\,p_{{{clean_site}}}}}{{1 + {koff}\,p_{{{clean_site}}}}}"
+            rf"\frac{{{v_raw}}}{{1 + {v_raw}}} - "
+            rf"{koff}\,p_{{{clean_site}}}"
         )
         lines.append(r"\end{dmath*}")
 

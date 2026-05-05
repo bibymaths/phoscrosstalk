@@ -182,7 +182,7 @@ def test_rhs_finite_for_nonneg_states():
     rhs = make_rhs(K, M, N, "dist")
     theta = jnp.asarray(rng.uniform(-2.0, 0.0, dim), dtype=jnp.float32)
 
-    # Valid non-negative state: R_rna ≥ 0, S ∈ [0,1], A ≥ 0, Kdyn ∈ [0,1], p ∈ [0,1]
+    # Valid non-negative state: R_rna ≥ 0, S ∈ [0,1], A ≥ 0, Kdyn ∈ [0,1], p ≥ 0 (nonnegative relative phosphosite signal)
     y = jnp.zeros(3 * K + M + N, dtype=jnp.float32)
     y = y.at[:K].set(1.0)  # R_rna = 1
     y = y.at[K : 2 * K].set(0.5)  # S = 0.5
@@ -354,7 +354,7 @@ def test_residuals_no_negative_model_outputs():
     r, (f1, f2, f3, f4) = residuals_fn(theta_mid, None)
     r_np = np.asarray(r)
 
-    # Phosphosite residuals: P_sim ∈ [0,1], P_data ∈ [0.1, 0.9] → diff ∈ [-0.9, 0.9]
+    # Phosphosite residuals: P_sim ≥ 0 (nonneg relative signal), P_data ∈ [0.1, 0.9] → diff ∈ (-∞, 0.9]
     # The residuals must be finite (no NaN/Inf from negative model outputs)
     assert np.all(np.isfinite(r_np)), "Residual vector contains non-finite values"
     assert np.isfinite(float(f1)), f"f1 is not finite: {f1}"
