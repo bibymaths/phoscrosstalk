@@ -164,6 +164,8 @@ def run_multi_start_optimization(problem, args, P_scaled):
         ode_adjoint_kind=getattr(args, "ode_adjoint", "forward"),
         dt0=getattr(args, "ode_dt0", 0.01),
         root_find_max_steps=getattr(args, "ode_root_find_max_steps", 10),
+        xl=problem.xl,
+        xu=problem.xu,
     )
 
     starts = _generate_starts(n_starts, xl, xu)
@@ -236,10 +238,16 @@ def run_multi_start_optimization(problem, args, P_scaled):
     # Compute Fréchet Distance as a diagnostic metric (not used for selection)
     logger.info("[*] Computing Fréchet Distances (diagnostic only)...")
     frechet_scores = np.full(len(X_combined), np.inf)
-    true_coords = np.ascontiguousarray(P_scaled, dtype=np.float64)
+    # Transpose to (T, N_sites) so each row is a time-point vector (standard curve orientation)
+    true_coords = np.ascontiguousarray(P_scaled.T, dtype=np.float64)
     for i in range(len(X_combined)):
         P_pred = problem.simulate(X_combined[i])
-        pred_coords = np.ascontiguousarray(P_pred, dtype=np.float64)
+        if not np.all(np.isfinite(P_pred)):
+            logger.warning(
+                f"    Fréchet idx {i}: P_pred contains non-finite values; skipping."
+            )
+            continue
+        pred_coords = np.ascontiguousarray(P_pred.T, dtype=np.float64)
         try:
             frechet_scores[i] = frechet_distance(true_coords, pred_coords)
         except Exception as e:

@@ -231,7 +231,7 @@ def simulate_ode(
     # sol.ys shape: (T_unified, 3*K + M + N)
     xs_all = np.asarray(sol.ys, dtype=np.float64)
 
-    if not np.all(np.isfinite(xs_all)):
+    if not np.all(np.isfinite(xs_all)) or sol.result != diffrax.RESULTS.successful:
         return nan_result
 
     # Sample at protein/phosphosite time indices
