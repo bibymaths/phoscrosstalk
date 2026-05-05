@@ -70,7 +70,7 @@ class HybridFitResult:
     total_loss : float
         Sum of all weighted loss components at ``theta_opt``.
     f1 : float
-        Phosphosite occupancy loss.
+        Phosphosite relative-signal loss.
     f2 : float
         Protein abundance loss.
     f3 : float

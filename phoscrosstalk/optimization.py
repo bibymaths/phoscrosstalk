@@ -12,7 +12,7 @@ Primary fitting path (canonical Diffrax + Optimistix approach):
   - Residual vector (not scalar) as the optimization objective.
 
 Loss components (diagnostics, computed from residuals):
-  f1 : phosphosite occupancy loss   – mean(W_data  * (P_sim - P_data)^2)
+  f1 : phosphosite relative-signal loss – mean(W_data  * (P_sim - P_data)^2)
   f2 : protein abundance loss       – mean(W_prot  * (A_sim - A_data)^2)
   f3 : regularisation               – L2 + Laplacian network term
   f4 : mRNA / R_rna state loss      – mean(W_mrna  * (R_sim - R_obs)^2)
@@ -1071,8 +1071,8 @@ def validate_biological_inputs(
     Checks
     ------
     * All observed data matrices contain only finite values.
-    * Observed phosphosite occupancy (P_data) is non-negative;
-      negative values are invalid for occupancy-scale data.
+    * Observed relative phosphosite signal (P_data) is non-negative;
+      negative values are invalid for this model.
     * Observed protein abundance (A_scaled) values are non-negative
       (fold-change data must be ≥ 0).
     * Observed mRNA data (rna_data_scaled) values are non-negative;
@@ -1084,7 +1084,7 @@ def validate_biological_inputs(
 
     Parameters
     ----------
-    P_data          : np.ndarray | None – (N, T) phosphosite occupancy data.
+    P_data          : np.ndarray | None – (N, T) relative phosphosite signal data.
     A_scaled        : np.ndarray | None – (K_obs, T) protein abundance data.
     rna_data_scaled : np.ndarray | None – (n_genes, T_rna) mRNA fold-change.
     W_data          : np.ndarray | None – per-element phosphosite weights.
@@ -1114,14 +1114,14 @@ def validate_biological_inputs(
             n_neg = int((finite < 0.0).sum())
             raise ValueError(
                 f"{name} contains {n_neg} negative value(s). "
-                "Negative fold-change/occupancy values are invalid for this model. "
+                "Negative fold-change values are invalid for this model. "
                 "Transform or correct the data before fitting."
             )
 
     # --- Observed data arrays ---
     if P_data is not None:
         _chk_finite("P_data", P_data)
-        _chk_nonneg("P_data (phosphosite occupancy)", P_data)
+        _chk_nonneg("P_data (relative phosphosite signal)", P_data)
     if A_scaled is not None and np.asarray(A_scaled).size > 0:
         _chk_finite("A_scaled", A_scaled)
         _chk_nonneg("A_scaled (protein abundance)", A_scaled)

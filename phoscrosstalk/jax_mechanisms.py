@@ -183,7 +183,7 @@ def make_rhs(
         S     : shape (K,)   protein signalling state, bounded [0, 1]
         A     : shape (K,)   protein abundance state
         Kdyn  : shape (M,)   kinase activity state, bounded [0, 1]
-        p     : shape (N,)   phosphosite occupancy state, bounded [0, 1]
+        p     : shape (N,)   relative phosphosite signal, nonnegative
 
     Args tuple:
         (
@@ -364,7 +364,7 @@ def make_rhs(
         # ------------------------------------------------------------------
         # 3. Kinase dynamics Kdyn
         # ------------------------------------------------------------------
-        # Substrate feedback from phosphosite occupancy to kinase activity.
+        # Substrate feedback from bounded phosphosite proxy q to kinase activity.
         u_sub = (R @ q) / R_row_scale
 
         # Stabilizing network diffusion / consensus term.
@@ -405,8 +405,8 @@ def make_rhs(
 
         elif mechanism == "seq":
             # Sequential mechanism: downstream site depends on predecessor site.
-            # A small leak avoids exact structural blocking when predecessor
-            # occupancy is near zero.
+            # A small leak avoids exact structural blocking when the predecessor
+            # bounded proxy q is near zero.
             safe_prev = jnp.where(prev_site_idx >= 0, prev_site_idx, 0)
             prev_occ = q[safe_prev]
             gate = jnp.where(
@@ -417,8 +417,8 @@ def make_rhs(
 
         else:
             # Random / crowding-aware mechanism.
-            # As protein-level occupancy rises, available unmodified substrate
-            # decreases, so phosphorylation gate decreases smoothly.
+            # As the protein-level bounded proxy (mq) rises, the gate
+            # decreases smoothly, modelling crowding of available substrate.
             occupied_frac = mq[site_prot_idx]
             gate = 1.0 / (1.0 + occupied_frac)
 

@@ -29,7 +29,7 @@ def save_run_results(outdir, F, X, f1, f2, f3, J, F_best):
         F (np.ndarray): Array of loss components for all solutions
             (shape: n_solutions x 3 or n_solutions x 4 when RNA loss is included).
         X (np.ndarray): Array of parameter values for all solutions.
-        f1 (np.ndarray): Phosphosite error component for each solution.
+        f1 (np.ndarray): Phosphosite relative-signal loss component for each solution.
         f2 (np.ndarray): Protein abundance error component for each solution.
         f3 (np.ndarray): Regularization component for each solution.
         J (np.ndarray): Total loss per solution, used for model selection.
@@ -90,7 +90,7 @@ def plot_run_diagnostics(outdir, F, F_best, f1, f2, f3, X):
         outdir (str): Path to the output directory.
         F (np.ndarray): Loss components for all solutions.
         F_best (np.ndarray): Loss components of the selected best solution.
-        f1 (np.ndarray): Phosphosite error component for each solution.
+        f1 (np.ndarray): Phosphosite relative-signal loss component for each solution.
         f2 (np.ndarray): Protein abundance error component for each solution.
         f3 (np.ndarray): Regularization component for each solution.
         X (np.ndarray): Parameter values for all solutions.
