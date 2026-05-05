@@ -718,9 +718,6 @@ def main():
         prot_idx_for_A = np.array([], dtype=int)
         A_bases, A_amps = np.array([]), np.array([])
 
-    # H3: Validate biological inputs (non-negative finite data) before fitting.
-    from phoscrosstalk.optimization import validate_biological_inputs  # noqa: PLC0415
-
     # 5. Weights
     W_data, W_data_prot, W_data_mrna = build_weight_matrices(
         t=t,
