@@ -273,12 +273,10 @@ _VALID_LS_SOLVERS = {
     "gauss_newton",
 }
 
-_VALID_OPTX_ADJOINTS = {
-    "implicit",
-    "checkpoint"
-}
+_VALID_OPTX_ADJOINTS = {"implicit", "checkpoint"}
 
 _VALID_JAC_MODES = {"fwd", "bwd"}
+
 
 def _opt(val: str) -> str | None:
     """Return *val* stripped, or ``None`` if it is empty/absent."""

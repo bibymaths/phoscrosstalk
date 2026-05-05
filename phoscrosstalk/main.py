@@ -68,7 +68,11 @@ def _read_runtime_config():
         return _defaults
 
 
-from phoscrosstalk.runtime_env import log_env_summary, plan_cpu_runtime, setup_cpu_env  # noqa: E402
+from phoscrosstalk.runtime_env import (  # noqa: E402
+    log_env_summary,
+    plan_cpu_runtime,
+    setup_cpu_env,
+)
 
 _runtime_cfg = _read_runtime_config()
 _cpu_plan = plan_cpu_runtime(
@@ -449,13 +453,11 @@ def main():
         ls_solver=getattr(cfg.optimisation, "ls_solver", "lm"),
         optx_adjoint=getattr(cfg.optimisation, "optx_adjoint", "implicit"),
         jac_mode=getattr(cfg.optimisation, "jac_mode", "fwd"),
-
         # Diffrax ODE solver controls
         ode_solver=getattr(cfg.solver, "ode_solver", "tsit5"),
         ode_adjoint=getattr(cfg.solver, "ode_adjoint", "forward"),
         ode_dt0=getattr(cfg.solver, "dt0", 0.01),
         ode_root_find_max_steps=getattr(cfg.solver, "root_find_max_steps", 10),
-
         # solver backend + hybrid settings
         solver=getattr(cfg.optimisation, "solver", "lm"),
         es_algo=getattr(
@@ -505,11 +507,19 @@ def main():
         run_sensitivity=getattr(cfg.analysis, "run_sensitivity", False),
         # CPU parallelism (read by run_multi_start_optimization)
         cpu_threads=getattr(getattr(cfg, "runtime", None), "cpu_threads", "auto"),
-        parallel_starts=getattr(getattr(cfg, "runtime", None), "parallel_starts", "auto"),
-        threads_per_start=getattr(getattr(cfg, "runtime", None), "threads_per_start", "auto"),
-        use_physical_cores=getattr(getattr(cfg, "runtime", None), "use_physical_cores", True),
+        parallel_starts=getattr(
+            getattr(cfg, "runtime", None), "parallel_starts", "auto"
+        ),
+        threads_per_start=getattr(
+            getattr(cfg, "runtime", None), "threads_per_start", "auto"
+        ),
+        use_physical_cores=getattr(
+            getattr(cfg, "runtime", None), "use_physical_cores", True
+        ),
         reserve_cores=getattr(getattr(cfg, "runtime", None), "reserve_cores", 0),
-        parallel_frechet=getattr(getattr(cfg, "runtime", None), "parallel_frechet", "auto"),
+        parallel_frechet=getattr(
+            getattr(cfg, "runtime", None), "parallel_frechet", "auto"
+        ),
     )
 
     interp_mode = cfg.time.interpolation

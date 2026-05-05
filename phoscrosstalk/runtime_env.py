@@ -26,7 +26,6 @@ import os
 import sys
 from types import SimpleNamespace
 
-
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -281,7 +280,11 @@ def plan_cpu_runtime(
 
     # Usable cores for parallelism decisions
     # When SLURM is active its CPU count is already a hard limit; use it as-is.
-    if use_physical_cores and topo.physical_cores is not None and topo.slurm_cpus is None:
+    if (
+        use_physical_cores
+        and topo.physical_cores is not None
+        and topo.slurm_cpus is None
+    ):
         usable = min(budget, topo.physical_cores)
     else:
         usable = budget
@@ -463,7 +466,7 @@ def log_env_summary(logger=None, plan=None) -> None:
             f"  affinity CPUs            = {topo.affinity_cpus if topo.affinity_cpus is not None else 'n/a'}",
             f"  usable CPUs (budget)     = {plan.total_available_cpus}",
             f"  CPU source               = {topo.source}",
-            f"  n_starts                 = (see optimisation config)",
+            "  n_starts                 = (see optimisation config)",
             f"  parallel starts          = {plan.n_parallel_runs}",
             f"  threads per start        = {plan.threads_per_run}",
             f"  XLA intra-op threads     = {plan.xla_threads}",

@@ -690,8 +690,7 @@ def _compile_pdf(tex_path: str, outdir: str) -> None:
             logger.success(f"    -> Generated {pdf_name}")
         else:
             logger.warning(
-                f"    -> pdflatex failed for {base}. "
-                f"See compile log: {compile_log}"
+                f"    -> pdflatex failed for {base}. See compile log: {compile_log}"
             )
 
     except (OSError, subprocess.SubprocessError, FileNotFoundError):
