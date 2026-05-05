@@ -122,13 +122,13 @@
 #   - unified_graph_pkl is only used if lambda_net > 0.
 # =============================================================================
 [paths]
-data              = "data_subset/subnetwork_EGFR_MET_ERBB2/filtered_input1_subset.csv"
+data              = "data_timeseries/input1.csv"
 ptm_intra         = "data_curated/processed/ptm_intra.db"
 ptm_inter         = "data_curated/processed/ptm_inter.db"
 output_dir        = "thesis_dist"
 
 crosstalk_tsv     = ""
-rna_data          = "data_subset/subnetwork_EGFR_MET_ERBB2/filtered_input3_subset.csv"
+rna_data          = "data_timeseries/input3.csv"
 tf_net            = "data_subset/subnetwork_EGFR_MET_ERBB2/tf_mrna_subset.csv"
 kinase_tsv        = "data_subset/subnetwork_EGFR_MET_ERBB2/kinase_sites_subset.tsv"
 kea_ks_table      = ""

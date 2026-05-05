@@ -105,6 +105,15 @@ def _run_single_start_worker(task):
         threads_per_run,
     ) = task
 
+    # Restore ModelDims in this spawned process before any JAX/model code runs.
+    from phoscrosstalk.config import ModelDims  # noqa: PLC0415
+
+    _K = residual_kwargs.get("_model_K")
+    _M = residual_kwargs.get("_model_M")
+    _N = residual_kwargs.get("_model_N")
+    if _K is not None and _M is not None and _N is not None:
+        ModelDims.set_dims(_K, _M, _N)
+
     # Cap BLAS/OMP/XLA threads per worker BEFORE any JAX import.
     # The import is deferred intentionally: in spawn-based subprocesses the
     # env vars must be set *before* any JAX/XLA initialisation; importing
@@ -115,7 +124,10 @@ def _run_single_start_worker(task):
 
     # JAX-heavy imports come AFTER apply_cpu_env so that XLA picks up the
     # correct intra-op thread count on the first import in this process.
-    from phoscrosstalk.derived_rates import make_k_act_fn, make_s_prod_fn  # noqa: PLC0415
+    from phoscrosstalk.derived_rates import (  # noqa: PLC0415
+        make_k_act_fn,
+        make_s_prod_fn,
+    )
     from phoscrosstalk.optimization import (  # noqa: PLC0415
         make_residuals_fn,
         run_single_optimisation,
@@ -125,6 +137,11 @@ def _run_single_start_worker(task):
         # Build a clean kwargs dict for make_residuals_fn, reconstructing
         # k_act_fn and s_prod_fn from their picklable rebuild kwargs if present.
         mkwargs = dict(residual_kwargs)
+
+        # Strip worker-private keys before forwarding to make_residuals_fn.
+        mkwargs.pop("_model_K", None)
+        mkwargs.pop("_model_M", None)
+        mkwargs.pop("_model_N", None)
 
         if "_k_act_rebuild_kwargs" in mkwargs:
             k_act_rebuild = mkwargs.pop("_k_act_rebuild_kwargs")
@@ -149,7 +166,17 @@ def _run_single_start_worker(task):
         )
         return (i, True, theta_opt, total_loss, f1, f2, f3, f4, None)
     except Exception as exc:
-        return (i, False, None, None, None, None, None, None, f"{type(exc).__name__}: {exc}")
+        return (
+            i,
+            False,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            f"{type(exc).__name__}: {exc}",
+        )
 
 
 def _frechet_worker(task):
@@ -213,7 +240,9 @@ def _find_non_picklable_items(mapping: dict) -> list:
     return bad_keys
 
 
-def _build_residual_kwargs(problem, args, w_phospho, w_abundance, w_reg, w_mrna) -> dict:
+def _build_residual_kwargs(
+    problem, args, w_phospho, w_abundance, w_reg, w_mrna
+) -> dict:
     """
     Collect all inputs needed by ``make_residuals_fn`` into a picklable dict.
 
@@ -281,6 +310,13 @@ def _build_residual_kwargs(problem, args, w_phospho, w_abundance, w_reg, w_mrna)
         "xu": problem.xu,
     }
 
+    # Pass ModelDims explicitly so spawned workers don't need to call set_dims().
+    from phoscrosstalk.config import ModelDims  # noqa: PLC0415
+
+    kwargs["_model_K"] = ModelDims.K
+    kwargs["_model_M"] = ModelDims.M
+    kwargs["_model_N"] = ModelDims.N
+
     # k_act_fn: prefer picklable rebuild kwargs stored on problem; fall back
     # to the callable (which will fail the pickle check → serial fallback).
     k_act_rebuild = getattr(problem, "_k_act_rebuild_kwargs", None)
@@ -298,6 +334,14 @@ def _build_residual_kwargs(problem, args, w_phospho, w_abundance, w_reg, w_mrna)
     else:
         kwargs["s_prod_fn"] = getattr(problem, "s_prod_fn", None)
 
+    # Pass ModelDims so spawned workers can call set_dims() before JAX runs.
+    # Spawned processes start with a blank interpreter; ModelDims is not set.
+    from phoscrosstalk.config import ModelDims as _MD  # noqa: PLC0415
+
+    kwargs["_model_K"] = int(_MD.K)
+    kwargs["_model_M"] = int(_MD.M)
+    kwargs["_model_N"] = int(_MD.N)
+
     return kwargs
 
 
@@ -309,7 +353,10 @@ def _residuals_fn_from_kwargs(residual_kwargs: dict):
     keys by rebuilding the JAX closures before calling ``make_residuals_fn``.
     Used for the serial execution path.
     """
-    from phoscrosstalk.derived_rates import make_k_act_fn, make_s_prod_fn  # noqa: PLC0415
+    from phoscrosstalk.derived_rates import (  # noqa: PLC0415
+        make_k_act_fn,
+        make_s_prod_fn,
+    )
     from phoscrosstalk.optimization import make_residuals_fn  # noqa: PLC0415
 
     mkwargs = dict(residual_kwargs)
@@ -401,7 +448,9 @@ def run_multi_start_optimization(problem, args, P_scaled):
     xu = problem.xu
 
     # Build picklable residual kwargs dict (one dict shared by serial and parallel paths).
-    residual_kwargs = _build_residual_kwargs(problem, args, w_phospho, w_abundance, w_reg, w_mrna)  # noqa: E501
+    residual_kwargs = _build_residual_kwargs(
+        problem, args, w_phospho, w_abundance, w_reg, w_mrna
+    )  # noqa: E501
 
     starts = _generate_starts(n_starts, xl, xu)
 
@@ -538,7 +587,9 @@ def run_multi_start_optimization(problem, args, P_scaled):
             )
             # Rebuild residuals_fn for serial fallback path
             residuals_fn = _residuals_fn_from_kwargs(residual_kwargs)
-            from phoscrosstalk.optimization import run_single_optimisation  # noqa: PLC0415
+            from phoscrosstalk.optimization import (
+                run_single_optimisation,  # noqa: PLC0415
+            )
 
             # Fall back: run any missing starts serially
             for i, theta0 in enumerate(starts):
@@ -719,6 +770,12 @@ def _generate_starts(n_starts, xl, xu):
     -------
     list of np.ndarray, each of shape (dim,)
     """
+    if xl is None or xu is None:
+        raise ValueError(
+            f"_generate_starts received xl={xl}, xu={xu}. "
+            "Bounds must be finite numpy arrays — check that create_bounds() "
+            "returned valid values and ModelDims were set before calling it."
+        )
     dim = len(xl)
     starts = []
     for i in range(n_starts):
