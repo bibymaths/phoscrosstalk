@@ -806,39 +806,95 @@ run_sensitivity = false
 # cpu_threads
 # -----------
 #   "auto"  (default)
-#       Auto-detect from environment variables in priority order:
+#       Auto-detect the total CPU budget in priority order:
 #         1. SLURM_CPUS_PER_TASK  – set automatically by srun/sbatch
-#         2. OMP_NUM_THREADS      – set by the user or scheduler
-#         3. os.cpu_count()       – all logical CPUs visible to the process
+#         2. os.sched_getaffinity – Linux affinity mask (cgroups/container aware)
+#         3. psutil.cpu_count     – physical cores (if psutil installed)
+#         4. os.cpu_count()       – all logical CPUs visible to the process
 #
 #   <positive integer>
-#       Explicit override.  Use when you want to pin the thread count
-#       regardless of SLURM or OMP settings.  Example: cpu_threads = 8
+#       Explicit override.  Example: cpu_threads = 8
 #
-# Affected environment variables (set via os.environ.setdefault, so any
-# value already present in the environment is never overwritten):
+# parallel_starts
+# ---------------
+#   "auto"  (default)
+#       Derived from cpu_threads and threads_per_start.
+#       When n_starts == 1 this is always 1 (all threads to the single run).
+#
+#   <positive integer>
+#       Pin the number of concurrent optimisation starts.
+#
+# threads_per_start
+# -----------------
+#   "auto"  (default)
+#       Derived from cpu_threads and parallel_starts.
+#
+#   <positive integer>
+#       Pin the per-start thread count.
+#
+# use_physical_cores
+# ------------------
+#   true  (default)
+#       When SLURM_CPUS_PER_TASK is not set, use detected physical cores
+#       (not logical/HT CPUs) as the parallelism budget.  Reduces
+#       oversubscription on hyperthreaded CPUs.
+#
+#   false
+#       Use all logical CPUs (original behaviour).
+#
+# reserve_cores
+# -------------
+#   0  (default)
+#       Reserve this many CPUs for the OS / parent process.
+#
+# parallel_frechet
+# ----------------
+#   "auto"  (default)
+#       Parallelise Fréchet diagnostics only when solutions > 2 and
+#       parallel_starts > 1.
+#
+#   true / false
+#       Always / never parallelise.
+#
+# Affected environment variables (set via os.environ.setdefault for
+# setup_cpu_env, so externally set values are preserved):
 #
 #   JAX_PLATFORMS            → "cpu"
 #   XLA_FLAGS                → --xla_cpu_multi_thread_eigen=true
-#                               intra_op_parallelism_threads=<cpu_threads>
-#   OMP_NUM_THREADS          → <cpu_threads>
-#   OPENBLAS_NUM_THREADS     → <cpu_threads>
-#   MKL_NUM_THREADS          → <cpu_threads>
-#   VECLIB_MAXIMUM_THREADS   → <cpu_threads>
-#   NUMBA_NUM_THREADS        → <cpu_threads>
+#                               intra_op_parallelism_threads=<threads_per_start>
+#   OMP_NUM_THREADS          → <threads_per_start>
+#   OPENBLAS_NUM_THREADS     → <threads_per_start>
+#   MKL_NUM_THREADS          → <threads_per_start>
+#   VECLIB_MAXIMUM_THREADS   → <threads_per_start>
+#   NUMBA_NUM_THREADS        → <threads_per_start>
+#   NUMEXPR_NUM_THREADS      → <threads_per_start>
 #
 # SLURM example
 # -------------
 #   srun --cpus-per-task=16 --ntasks=1 phoscrosstalk --config config.toml
 #
-#   With cpu_threads = "auto" the code reads SLURM_CPUS_PER_TASK=16 and
-#   configures 16 threads for JAX + all BLAS/OpenMP libraries.
+#   With cpu_threads = "auto" and n_starts = 8 the planner reads
+#   SLURM_CPUS_PER_TASK=16 and may decide:
+#       parallel_starts  = 4
+#       threads_per_start = 4
+#   so each of the 4 workers uses 4 threads (total = 16).
 #
-#   If you want to use only physical cores (8 on an 8c/16t node), set:
-#       cpu_threads = 8
+# Workstation example (32 physical / 64 logical CPUs, n_starts = 20)
+# -------------------------------------------------------------------
+#   With all settings "auto" the planner detects 32 physical cores and
+#   with default_threads_per_run=4 may decide:
+#       parallel_starts  = 8
+#       threads_per_start = 4
+#   so 8 starts run in parallel, each using 4 threads (total = 32).
+#
 # =============================================================================
 [runtime]
 cpu_threads = "auto"
+parallel_starts = "auto"
+threads_per_start = "auto"
+use_physical_cores = true
+reserve_cores = 0
+parallel_frechet = "auto"
 
 
 # =============================================================================
