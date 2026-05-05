@@ -73,7 +73,7 @@ Three kinase mechanisms are implemented in `jax_mechanisms.py`:
 |-----------|----------|------------------------------------------------------------|
 | Distributive | `dist`| Independent site phosphorylation; gate = 1                |
 | Sequential   | `seq` | Downstream site gating uses bounded predecessor proxy `q_prev = p_prev/(1+p_prev)`, with a small leak |
-| Random/Crowding-Aware | `rand` | Gate uses mean bounded protein-level proxy `q̄`; not raw `p` as occupancy |
+| Random/Crowding-Aware | `rand` | Gate uses mean bounded protein-level proxy `q_mean = mean(p/(1+p))`; not raw `p` as occupancy |
 
 ## Scalar loss
 
