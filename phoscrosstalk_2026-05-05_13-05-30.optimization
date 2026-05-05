@@ -1,0 +1,11 @@
+2026-05-05 13:05:33 - PhosCrosstalk - WARNING - [!] 1 TF source(s) in '/tmp/pytest-of-runner/pytest-0/test_load_tf_network_warns_on_0/tf_warn.csv' not found in mRNA data. This is allowed if TF activity is inferred from protein/kinase data: UNKNOWN_GENE
+2026-05-05 13:05:49 - PhosCrosstalk - INFO - Using Diffrax adjoint: ForwardMode()
+2026-05-05 13:05:49 - PhosCrosstalk - INFO - Using Diffrax solver: Tsit5()
+2026-05-05 13:05:58 - PhosCrosstalk - INFO - Using Diffrax adjoint: ForwardMode()
+2026-05-05 13:05:58 - PhosCrosstalk - INFO - Using Diffrax solver: Tsit5()
+2026-05-05 13:06:05 - PhosCrosstalk - INFO - Using Diffrax adjoint: ForwardMode()
+2026-05-05 13:06:05 - PhosCrosstalk - INFO - Using Diffrax solver: Tsit5()
+2026-05-05 13:06:12 - PhosCrosstalk - INFO - Using Diffrax adjoint: ForwardMode()
+2026-05-05 13:06:12 - PhosCrosstalk - INFO - Using Diffrax solver: Tsit5()
+2026-05-05 13:06:15 - PhosCrosstalk - INFO - [*] mRNA scale diagnostics – observed: min=0.541, mean=1.282, max=1.926 | fitted R(t): min=0.225, mean=0.987, max=1.961
+2026-05-05 13:06:15 - PhosCrosstalk - INFO - [*] mRNA outputs written to /tmp/pytest-of-runner/pytest-0/test_mrna_fit_timeseries_nonne0: mrna_fit_timeseries.tsv, mrna_diagnostics.tsv

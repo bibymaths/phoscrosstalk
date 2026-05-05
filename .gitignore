@@ -230,4 +230,4 @@ logs*/
 *.npz
 *.png
 *.svg
-*.txt
+*.txt*.optimization
