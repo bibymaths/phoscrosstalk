@@ -93,7 +93,11 @@ def _run_single_start_worker(task):
         threads_per_run,
     ) = task
 
-    # Cap BLAS/OMP threads per worker before any computation
+    # Cap BLAS/OMP threads per worker before any computation.
+    # The import is deferred intentionally: in spawn-based subprocesses the
+    # env vars must be set *before* any JAX/XLA initialisation happens in
+    # this process; importing runtime_env here (which is pure stdlib) is safe
+    # and ensures apply_cpu_env() is called before any downstream JAX import.
     from phoscrosstalk import runtime_env  # noqa: PLC0415
 
     runtime_env.apply_cpu_env(threads_per_run, overwrite=True)
