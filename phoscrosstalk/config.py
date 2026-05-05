@@ -159,6 +159,12 @@ _DEFAULTS = {
         "run_knockouts": False,
         "run_sensitivity": False,
     },
+    "runtime": {
+        # Number of CPU threads for JAX/XLA and BLAS libraries.
+        # "auto" → detect from SLURM_CPUS_PER_TASK, OMP_NUM_THREADS, or os.cpu_count().
+        # Any positive integer overrides auto-detection.
+        "cpu_threads": "auto",
+    },
     "steadystate": {
         "t_end": 2000.0,
         "early_end": 100.0,
