@@ -204,6 +204,10 @@ _DEFAULTS = {
         "top_n": 10,
         "skip_plots_on_nonfinite": True,
         "strict": False,
+        # Diffrax steady-state event termination (new; backward-compatible defaults)
+        "use_event": True,
+        "event_rtol": None,  # null → use solver rtol
+        "event_atol": None,  # null → use solver atol
     },
 }
 
@@ -656,6 +660,20 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
         if not isinstance(ss_top_n, int) or ss_top_n < 1:
             errors.append(
                 f"  [steadystate] top_n = {ss_top_n!r} must be a positive integer."
+            )
+        ss_event_rtol = getattr(ss_cfg, "event_rtol", None)
+        ss_event_atol = getattr(ss_cfg, "event_atol", None)
+        if ss_event_rtol is not None and (
+            not isinstance(ss_event_rtol, (int, float)) or ss_event_rtol <= 0
+        ):
+            errors.append(
+                f"  [steadystate] event_rtol = {ss_event_rtol!r} must be null or a positive number."
+            )
+        if ss_event_atol is not None and (
+            not isinstance(ss_event_atol, (int, float)) or ss_event_atol <= 0
+        ):
+            errors.append(
+                f"  [steadystate] event_atol = {ss_event_atol!r} must be null or a positive number."
             )
 
     # -------------------------------------------------------------------

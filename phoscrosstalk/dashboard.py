@@ -37,6 +37,7 @@ _REQUIRED = {
 # Optional but expected
 _OPTIONAL_FILES = [
     "fit_timeseries.tsv",
+    "fit_timeseries_dense.tsv",
     "internal_states.tsv",
     "derived_rates.npz",
     "derived_rates_long.tsv",
@@ -313,6 +314,23 @@ def load_fit_timeseries(results_dir: str) -> pd.DataFrame | None:
         return None
 
 
+def load_dense_timeseries(results_dir: str) -> pd.DataFrame | None:
+    """
+    Load fit_timeseries_dense.tsv – long-format dense simulation output.
+
+    Columns: entity_type, entity, site, protein, time, value, series_type,
+             source, interpolation_method
+    Returns None if missing (dense output is optional).
+    """
+    path = os.path.join(results_dir, "fit_timeseries_dense.tsv")
+    if not os.path.exists(path):
+        return None
+    try:
+        return pd.read_csv(path, sep="\t")
+    except Exception:
+        return None
+
+
 def load_internal_states(results_dir: str) -> pd.DataFrame | None:
     """
     Load internal_states.tsv.
@@ -429,11 +447,11 @@ def load_sensitivity_outputs(results_dir: str) -> dict[str, Any] | None:
 
 def load_steadystate_outputs(results_dir: str) -> dict[str, Any] | None:
     """
-    Load steady-state TSV files from steadystate/ subdirectory.
+    Load steady-state TSV files and metadata from steadystate/ subdirectory.
 
     Returns dict with possible keys:
       'Kdyn' (DataFrame), 'S' (DataFrame), 'proteins' (DataFrame),
-      'sites' (DataFrame)
+      'sites' (DataFrame), 'metadata' (dict from steadystate_metadata.json)
     Returns None if the directory does not exist.
     """
     ss_dir = os.path.join(results_dir, "steadystate")
@@ -454,6 +472,16 @@ def load_steadystate_outputs(results_dir: str) -> dict[str, Any] | None:
             continue
         try:
             result[key] = pd.read_csv(p, sep="\t", index_col=0)
+        except Exception:
+            pass
+
+    # Load metadata JSON if present
+    meta_path = os.path.join(ss_dir, "steadystate_metadata.json")
+    if os.path.exists(meta_path):
+        try:
+            import json as _json
+            with open(meta_path, encoding="utf-8") as fh:
+                result["metadata"] = _json.load(fh)
         except Exception:
             pass
 

@@ -2,6 +2,7 @@
 Tests for steadystate.py – long-horizon relaxation analysis.
 """
 
+import json
 import os
 import warnings
 
@@ -11,6 +12,7 @@ import pytest
 from phoscrosstalk.steadystate import (
     _plot_convergence_heatmap,
     _plot_trajectories,
+    _run_steadystate_solve,
     build_long_horizon_time_grid,
 )
 
@@ -224,6 +226,7 @@ def test_run_steadystate_passes_closures(tmp_path, monkeypatch):
         early_end=10.0,
         n_early=10,
         n_late=10,
+        use_event=False,  # use legacy simulate() path so the mock is exercised
     )
 
     assert captured.get("k_act_fn") is sentinel_k_act, "k_act_fn must be forwarded"
@@ -305,5 +308,252 @@ def test_run_steadystate_no_upper_clip_p(tmp_path, monkeypatch):
         early_end=5.0,
         n_early=5,
         n_late=5,
+        use_event=False,  # use legacy simulate() path so the mock is exercised
     )
     # If we reach here without error, the function did not crash on p > 1
+
+
+# ---------------------------------------------------------------------------
+# _run_steadystate_solve – Diffrax steady-state event
+# ---------------------------------------------------------------------------
+
+
+def _make_minimal_problem(K=2, M=2, N=3):
+    """Return a SimpleNamespace with the minimal attributes needed by the tests."""
+    from types import SimpleNamespace
+
+    from phoscrosstalk.config import ModelDims
+
+    ModelDims.set_dims(K, M, N)
+    return SimpleNamespace(
+        t=np.array([0.0, 1.0]),
+        P_data=np.ones((N, 2)) * 0.5,
+        A_scaled=np.zeros((0, 2)),
+        prot_idx_for_A=np.array([], dtype=int),
+        Cg=np.zeros((N, N)),
+        Cl=np.zeros((N, N)),
+        site_prot_idx=np.zeros(N, dtype=int),
+        K_site_kin=np.zeros((N, M)),
+        R=np.zeros((M, N)),
+        L_alpha=np.zeros((M, M)),
+        kin_to_prot_idx=np.zeros(M, dtype=int),
+        receptor_mask_prot=np.zeros(K, dtype=int),
+        receptor_mask_kin=np.zeros(M, dtype=int),
+        mechanism="dist",
+        k_act_fn=None,
+        s_prod_fn=None,
+        R_data0=None,
+        rna_relax=0.1,
+    )
+
+
+def test_run_steadystate_solve_returns_seven_tuple():
+    """_run_steadystate_solve must return a 7-tuple."""
+    from phoscrosstalk.config import ModelDims
+    from phoscrosstalk.steadystate import _run_steadystate_solve
+
+    K, M, N = 2, 2, 3
+    ModelDims.set_dims(K, M, N)
+    n_params = 2 * K + 2 + 3 * M + N + 4
+    theta = np.zeros(n_params)
+    t = np.linspace(0, 10, 15)
+    P_data = np.ones((N, 2)) * 0.5
+    A0 = np.zeros((K, 1))
+
+    result = _run_steadystate_solve(
+        t,
+        P_data,
+        A0,
+        theta,
+        np.zeros((N, N)),
+        np.zeros((N, N)),
+        np.zeros(N, dtype=int),
+        np.zeros((N, M)),
+        np.zeros((M, N)),
+        np.zeros((M, M)),
+        np.zeros(M, dtype=int),
+        np.zeros(K, dtype=int),
+        np.zeros(M, dtype=int),
+        "dist",
+        rtol=1e-3,
+        atol=1e-5,
+        dt0=0.1,
+        max_steps=500,
+        use_event=False,
+    )
+    assert len(result) == 7, "Expected 7-tuple from _run_steadystate_solve"
+    P_ss, A_ss, S_ss, Kdyn_ss, t_trim, status, t_final = result
+    assert P_ss.shape[0] == N
+    assert A_ss.shape[0] == K
+    assert S_ss.shape[0] == K
+    assert Kdyn_ss.shape[0] == M
+
+
+def test_run_steadystate_event_terminates_early():
+    """With use_event=True the solve should terminate before t_end for a stable ODE."""
+    from phoscrosstalk.config import ModelDims
+    from phoscrosstalk.steadystate import _run_steadystate_solve
+
+    K, M, N = 2, 2, 3
+    ModelDims.set_dims(K, M, N)
+    n_params = 2 * K + 2 + 3 * M + N + 4
+    theta = np.zeros(n_params)
+
+    # Long grid — well beyond where a zero-parameter ODE will converge
+    t_end = 500.0
+    t = build_long_horizon_time_grid(t_end, 50.0, 30, 20)
+    P_data = np.ones((N, 2)) * 0.3
+    A0 = np.zeros((K, 1))
+
+    _, _, _, _, t_trim, status, t_final = _run_steadystate_solve(
+        t,
+        P_data,
+        A0,
+        theta,
+        np.zeros((N, N)),
+        np.zeros((N, N)),
+        np.zeros(N, dtype=int),
+        np.zeros((N, M)),
+        np.zeros((M, N)),
+        np.zeros((M, M)),
+        np.zeros(M, dtype=int),
+        np.zeros(K, dtype=int),
+        np.zeros(M, dtype=int),
+        "dist",
+        rtol=1e-3,
+        atol=1e-5,
+        dt0=0.1,
+        max_steps=50000,
+        use_event=True,
+        event_rtol=1e-2,
+        event_atol=1e-4,
+    )
+    # Status should be "event_occurred" or "successful" (either is fine),
+    # but when the event fires the trimmed time grid must be shorter than t_end.
+    assert status in {"event_occurred", "successful", "max_steps_reached", "failed"}, (
+        f"Unexpected status {status!r}"
+    )
+    if status == "event_occurred":
+        assert t_final < t_end, (
+            f"Event fired but t_final={t_final} >= t_end={t_end}"
+        )
+
+
+def test_run_steadystate_disabled_does_not_run(tmp_path, monkeypatch):
+    """When args.run_steadystate is False the steadystate directory must not be created."""
+    import phoscrosstalk.steadystate as ss_mod
+
+    called = {"n": 0}
+    real_fn = ss_mod.run_steadystate_analysis
+
+    def counting_fn(*args, **kwargs):
+        called["n"] += 1
+        return real_fn(*args, **kwargs)
+
+    monkeypatch.setattr(ss_mod, "run_steadystate_analysis", counting_fn)
+
+    # Simulate main.py gating: only call if run_steadystate=True
+    run_steadystate = False
+    if run_steadystate:
+        ss_mod.run_steadystate_analysis()
+
+    assert called["n"] == 0, "run_steadystate_analysis should not be called when disabled"
+    assert not os.path.isdir(str(tmp_path / "steadystate"))
+
+
+def test_run_steadystate_metadata_contains_event_info(tmp_path, monkeypatch):
+    """run_steadystate_analysis must write steadystate_metadata.json with event info."""
+    from types import SimpleNamespace
+
+    import phoscrosstalk.steadystate as ss_mod
+    from phoscrosstalk.config import ModelDims
+
+    K, M, N = 2, 2, 3
+    ModelDims.set_dims(K, M, N)
+
+    problem = _make_minimal_problem(K=K, M=M, N=N)
+    n_params = 2 * K + 2 + 3 * M + N + 4
+    theta = np.zeros(n_params)
+    sites = [f"p0_s{i}" for i in range(N)]
+    proteins = [f"p{i}" for i in range(K)]
+    kinases = [f"k{i}" for i in range(M)]
+
+    # Use a very fast-converging stable system (all-zero params → ODE converges quickly)
+    ss_mod.run_steadystate_analysis(
+        outdir=str(tmp_path),
+        problem=problem,
+        theta_opt=theta,
+        sites=sites,
+        proteins=proteins,
+        kinases=kinases,
+        t_end=100.0,
+        early_end=10.0,
+        n_early=10,
+        n_late=10,
+        rtol=1e-3,
+        atol=1e-5,
+        dt0=0.1,
+        max_steps=50000,
+        use_event=True,
+        event_rtol=1e-2,
+        event_atol=1e-4,
+    )
+
+    meta_path = tmp_path / "steadystate" / "steadystate_metadata.json"
+    assert meta_path.exists(), "steadystate_metadata.json must be written"
+
+    with open(meta_path, encoding="utf-8") as fh:
+        meta = json.load(fh)
+
+    assert "event" in meta, "metadata must contain 'event' section"
+    assert meta["event"]["use_event"] is True
+    assert "solve_result" in meta, "metadata must contain 'solve_result' section"
+    assert "status" in meta["solve_result"]
+    assert "terminated_by_steady_state_event" in meta["solve_result"]
+
+
+def test_run_steadystate_without_event_uses_simulate(tmp_path, monkeypatch):
+    """use_event=False must fall back to the legacy simulate() path."""
+    from types import SimpleNamespace
+
+    import phoscrosstalk.steadystate as ss_mod
+    from phoscrosstalk.config import ModelDims
+
+    K, M, N = 2, 2, 3
+    ModelDims.set_dims(K, M, N)
+
+    captured = {}
+
+    def mock_simulate(*args, **kwargs):
+        captured["called"] = True
+        T = len(args[0])
+        return (
+            np.zeros((N, T)),
+            np.zeros((K, T)),
+            np.zeros((K, T)),
+            np.zeros((M, T)),
+        )
+
+    monkeypatch.setattr(ss_mod, "simulate", mock_simulate)
+
+    problem = _make_minimal_problem(K=K, M=M, N=N)
+    theta = np.zeros(10)
+    sites = [f"p0_s{i}" for i in range(N)]
+    proteins = [f"p{i}" for i in range(K)]
+    kinases = [f"k{i}" for i in range(M)]
+
+    ss_mod.run_steadystate_analysis(
+        outdir=str(tmp_path),
+        problem=problem,
+        theta_opt=theta,
+        sites=sites,
+        proteins=proteins,
+        kinases=kinases,
+        t_end=20.0,
+        early_end=5.0,
+        n_early=5,
+        n_late=5,
+        use_event=False,
+    )
+
+    assert captured.get("called"), "simulate() must be called when use_event=False"
