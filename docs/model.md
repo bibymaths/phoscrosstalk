@@ -12,7 +12,7 @@ R(t)    – mRNA levels                    shape (K,)
 S(t)    – protein activation state       shape (K,)
 A(t)    – protein abundance              shape (K,)
 Kdyn(t) – kinase activity                shape (M,)
-p(t)    – phosphosite occupancy          shape (N,)
+p(t)    – relative phosphosite signal    shape (N,)
 
 Full dimension: 3K + M + N
 ```
@@ -59,15 +59,21 @@ The optimized parameter vector `theta` has dimension `2K + 2 + 3M + N + 4`:
     `k_act` and `s_prod` are **not** part of `theta`. They are closures
     computed from input data and fixed before optimization.
 
+!!! note "Phosphosite state interpretation"
+    Phosphosite state `p` is modeled as a nonnegative relative signal, not a
+    fractional occupancy.  Occupancy-like regulation uses `q = p/(1+p)`.  This
+    allows fitting fold-change or relative-intensity phosphoproteomics values
+    above 1 while retaining bounded regulatory feedback.
+
 ## Phosphorylation mechanisms
 
 Three kinase mechanisms are implemented in `jax_mechanisms.py`:
 
 | Mechanism | Flag     | Description                                                |
 |-----------|----------|------------------------------------------------------------|
-| Distributive | `dist`| Each kinase acts independently on each site               |
-| Sequential   | `seq` | Ordered site modification; prior sites affect subsequent  |
-| Random/Cooperative | `rand` | Random-order kinase action with cooperative effects |
+| Distributive | `dist`| Independent site phosphorylation; gate = 1                |
+| Sequential   | `seq` | Downstream site gating uses bounded predecessor proxy `q_prev = p_prev/(1+p_prev)`, with a small leak |
+| Random/Crowding-Aware | `rand` | Gate uses mean bounded protein-level proxy `q̄`; not raw `p` as occupancy |
 
 ## Scalar loss
 

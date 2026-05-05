@@ -133,5 +133,5 @@ older pipeline version.
 
 **Fix:** Re-run the full optimization pipeline and then relaunch the dashboard:
 ```bash
-streamlit run phoscrosstalk/app.py
+uv run streamlit run phoscrosstalk/app.py
 ```

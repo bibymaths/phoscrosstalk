@@ -3,7 +3,20 @@
 All runtime options are configured in `config.toml`.
 The CLI only accepts `--config <path>` (plus `--help` and `--version`).
 
-## Base command
+## Recommended: run from repo root with `uv`
+
+```bash
+# Sync dependencies
+uv sync
+
+# Run the pipeline
+uv run phoscrosstalk --config config.toml
+
+# Launch the Streamlit dashboard
+uv run streamlit run phoscrosstalk/app.py
+```
+
+## Base command (installed environment)
 
 ```bash
 phoscrosstalk --config config.toml
@@ -106,11 +119,17 @@ include_tfs_as_proteins = true
 ## Dashboard
 
 ```bash
-streamlit run phoscrosstalk/app.py
+uv run streamlit run phoscrosstalk/app.py
 ```
 
 Point the dashboard at an existing results directory to explore fitted
 trajectories, parameter distributions, and kinase activity.
+
+The dashboard asks for a results directory path in its **sidebar text input**
+(e.g. `test_results_dist`).
+
+> **Note:** The dashboard does not accept a `--results-dir` CLI flag; the path
+> is entered interactively via the sidebar.
 
 ## Help
 

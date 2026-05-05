@@ -47,11 +47,17 @@ R(t)    – mRNA level (ODE state)              shape (K,)
 S(t)    – protein activation / signalling     shape (K,)
 A(t)    – protein abundance                   shape (K,)
 Kdyn(t) – kinase activity                     shape (M,)
-p(t)    – phosphosite occupancy               shape (N,)
+p(t)    – relative phosphosite signal      shape (N,)
 ```
 
 where **K** = number of model proteins, **M** = number of kinases,
 **N** = number of phosphosites.
+
+> **Phosphosite state interpretation:** Phosphosite state `p` is modeled as a
+> nonnegative relative signal, not a fractional occupancy.  Occupancy-like
+> regulation uses `q = p/(1+p)`.  This allows fitting fold-change or
+> relative-intensity phosphoproteomics values above 1 while retaining bounded
+> regulatory feedback.
 
 ### Derived rates
 
@@ -179,7 +185,20 @@ run_sensitivity = false
 
 ## Running PhosCrosstalk
 
-### Base command
+### Recommended: run from repo root with `uv`
+
+```bash
+# Sync dependencies
+uv sync
+
+# Run the pipeline with a config file
+uv run phoscrosstalk --config config.toml
+
+# Launch the Streamlit dashboard
+uv run streamlit run phoscrosstalk/app.py
+```
+
+### Base command (installed environment)
 
 ```bash
 phoscrosstalk --config config.toml
@@ -199,14 +218,20 @@ max_steps = 50
 ```
 
 ```bash
-phoscrosstalk --config smoke_config.toml
+uv run phoscrosstalk --config smoke_config.toml
 ```
 
 ### Dashboard
 
 ```bash
-streamlit run phoscrosstalk/app.py
+uv run streamlit run phoscrosstalk/app.py
 ```
+
+The dashboard asks for a results directory path in its sidebar.
+Enter the path to a completed run directory (e.g. `test_results_dist`).
+
+> **Note:** The dashboard does not accept a `--results-dir` CLI flag.
+> The results directory is configured interactively via the sidebar text input.
 
 ---
 

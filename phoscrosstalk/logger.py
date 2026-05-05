@@ -189,17 +189,58 @@ class RichLogger:
 # Global singleton accessor
 def get_logger(log_file="pipeline.log", timestamp=True):
     """
-    Get the logger instance.
+    Return the process-wide ``RichLogger`` singleton.
+
+    This function is **idempotent**: once the singleton has been created by
+    the first call (typically from ``main.py`` or the first imported module),
+    all subsequent calls return the same instance regardless of the arguments
+    passed.  This prevents:
+
+    * Duplicate ``FileHandler`` / ``StreamHandler`` additions when multiple
+      modules call ``get_logger()`` at import time.
+    * Multiple timestamped ``.log`` files being created within a single
+      pipeline run or Streamlit session (because every call would otherwise
+      generate a fresh timestamp and attempt to set up a new handler).
+
+    Singleton / handler policy
+    --------------------------
+    * The first call wins: it creates ``RichLogger`` with the supplied
+      ``log_file`` name (optionally timestamped) and attaches both a
+      ``RichHandler`` (console) and a ``FileHandler``.
+    * All subsequent calls return the existing instance untouched.
+    * If you need a *different* log file for a new session (e.g., a second
+      CLI invocation in the same interpreter), reset ``RichLogger._instance``
+      to ``None`` before calling ``get_logger()`` again.  This is intentional
+      and explicit rather than automatic, to avoid accidental log-file
+      proliferation.
+
+    Streamlit note
+    --------------
+    Streamlit reruns do **not** reimport already-cached modules, so the
+    singleton persists across reruns within the same server process.  A new
+    timestamped log file is therefore created only when the server process
+    starts, not on every page rerender.
 
     Args:
-        log_file (str): Base filename.
-        timestamp (bool): If True, appends YYYY-MM-DD_HH-MM-SS to the filename.
+        log_file (str): Base filename used only on the *first* call.
+        timestamp (bool): If ``True`` (default), a ``YYYY-MM-DD_HH-MM-SS``
+            suffix is appended to the base filename on the first call.
+            Subsequent calls ignore this argument entirely.
+
+    Returns:
+        RichLogger: The singleton logger instance.
     """
+    # Fast path: singleton already initialised – return immediately without
+    # generating a new timestamp or adding any handlers.
+    if RichLogger._instance is not None:
+        return RichLogger._instance
+
     if log_file is None:
         log_file = "pipeline.log"
 
     if timestamp:
-        # Generate format: pipeline_2023-10-27_15-30-00.log
+        # Generate a timestamped filename only once, at singleton creation.
+        # Format: pipeline_2023-10-27_15-30-00.log
         ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         root, ext = os.path.splitext(log_file)
         if not ext:
