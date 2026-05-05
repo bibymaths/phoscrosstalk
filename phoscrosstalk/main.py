@@ -4,12 +4,62 @@ main.py
 Entry point for the Global Phospho-Network Model orchestration.
 """
 
-import os
+# ---------------------------------------------------------------------------
+# CPU / XLA environment setup — MUST happen before any JAX import.
+#
+# 1. Read the optional ``[runtime] cpu_threads`` value directly from the TOML
+#    file (stdlib-only, no JAX) so the thread count can be config-driven.
+# 2. Call setup_cpu_env() which sets JAX_PLATFORMS, XLA_FLAGS, and all
+#    BLAS/OpenMP thread-cap variables.
+#
+# phoscrosstalk/__init__.py no longer imports JAX-dependent symbols at the
+# top level (it uses PEP-562 lazy __getattr__), so importing runtime_env here
+# is safe — it only uses ``os`` and ``sys``.
+# ---------------------------------------------------------------------------
 
-os.environ["JAX_PLATFORMS"] = "cpu"
+import os
+import sys
+
+
+def _read_runtime_cpu_threads():
+    """
+    Pre-parse *only* the ``[runtime] cpu_threads`` key from the config file
+    that was passed on the command line (or the default ``./config.toml``).
+
+    Uses only the standard library so that no JAX import can happen before
+    the env vars are configured.  Returns ``"auto"`` on any error.
+    """
+    try:
+        try:
+            import tomllib  # stdlib Python >= 3.11
+        except ModuleNotFoundError:
+            import tomli as tomllib  # fallback
+
+        argv = sys.argv[1:]
+        config_path = "./config.toml"
+        for i, arg in enumerate(argv):
+            if arg == "--config" and i + 1 < len(argv):
+                config_path = argv[i + 1]
+            elif arg.startswith("--config="):
+                config_path = arg.split("=", 1)[1]
+
+        with open(config_path, "rb") as _f:
+            raw = tomllib.load(_f)
+        return raw.get("runtime", {}).get("cpu_threads", "auto")
+    except Exception:
+        return "auto"
+
+
+from phoscrosstalk.runtime_env import log_env_summary, setup_cpu_env  # noqa: E402
+
+_n_cpu_threads = setup_cpu_env(n_threads=_read_runtime_cpu_threads())
+
+# ---------------------------------------------------------------------------
+# Standard library and third-party imports (JAX enters here via phoscrosstalk
+# submodule imports below — env vars are already set at this point).
+# ---------------------------------------------------------------------------
 
 import argparse
-import os
 from types import SimpleNamespace
 
 import numpy as np
@@ -452,9 +502,17 @@ def main():
     )
 
     # ------------------------------------------------------------------
-    # PRINT CONFIG SUMMARY
+    # PRINT CONFIG SUMMARY AND RUNTIME ENVIRONMENT
     # ------------------------------------------------------------------
     _print_config_summary(cfg, config_path)
+    log_env_summary(logger)
+    logger.info(
+        "[runtime_env] CPU threads configured: %d"
+        "  (source: SLURM_CPUS_PER_TASK=%s, config cpu_threads=%s)",
+        _n_cpu_threads,
+        os.environ.get("SLURM_CPUS_PER_TASK", "unset"),
+        getattr(getattr(cfg, "runtime", None), "cpu_threads", "auto"),
+    )
 
     # Create output directory
     os.makedirs(outdir, exist_ok=True)

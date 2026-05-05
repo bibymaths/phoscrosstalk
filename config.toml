@@ -797,6 +797,51 @@ run_sensitivity = true
 
 
 # =============================================================================
+# [runtime] – CPU / XLA threading configuration
+# =============================================================================
+#
+# These settings control how many CPU threads JAX/XLA and BLAS libraries use.
+# They are applied BEFORE JAX is imported, so they are truly effective.
+#
+# cpu_threads
+# -----------
+#   "auto"  (default)
+#       Auto-detect from environment variables in priority order:
+#         1. SLURM_CPUS_PER_TASK  – set automatically by srun/sbatch
+#         2. OMP_NUM_THREADS      – set by the user or scheduler
+#         3. os.cpu_count()       – all logical CPUs visible to the process
+#
+#   <positive integer>
+#       Explicit override.  Use when you want to pin the thread count
+#       regardless of SLURM or OMP settings.  Example: cpu_threads = 8
+#
+# Affected environment variables (set via os.environ.setdefault, so any
+# value already present in the environment is never overwritten):
+#
+#   JAX_PLATFORMS            → "cpu"
+#   XLA_FLAGS                → --xla_cpu_multi_thread_eigen=true
+#                               intra_op_parallelism_threads=<cpu_threads>
+#   OMP_NUM_THREADS          → <cpu_threads>
+#   OPENBLAS_NUM_THREADS     → <cpu_threads>
+#   MKL_NUM_THREADS          → <cpu_threads>
+#   VECLIB_MAXIMUM_THREADS   → <cpu_threads>
+#   NUMBA_NUM_THREADS        → <cpu_threads>
+#
+# SLURM example
+# -------------
+#   srun --cpus-per-task=16 --ntasks=1 phoscrosstalk --config config.toml
+#
+#   With cpu_threads = "auto" the code reads SLURM_CPUS_PER_TASK=16 and
+#   configures 16 threads for JAX + all BLAS/OpenMP libraries.
+#
+#   If you want to use only physical cores (8 on an 8c/16t node), set:
+#       cpu_threads = 8
+# =============================================================================
+[runtime]
+cpu_threads = "auto"
+
+
+# =============================================================================
 # [steadystate] – long-horizon relaxation analysis
 # =============================================================================
 #
