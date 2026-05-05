@@ -22,6 +22,14 @@ import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
 
+try:
+    import networkx as _nx
+
+    _HAS_NX = True
+except ImportError:  # pragma: no cover
+    _HAS_NX = False
+    _nx = None
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from phoscrosstalk.config import ModelDims
@@ -43,6 +51,7 @@ from phoscrosstalk.dashboard_io import (
     load_steadystate_outputs,
     validate_run_directory,
 )
+from phoscrosstalk.knockouts import run_live_knockout
 from phoscrosstalk.simulation import build_full_A0, simulate_p_scipy
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -781,8 +790,6 @@ with tab_ko:
         run_ko_btn = st.button("\u25b6 Run live KO", type="primary")
 
         if run_ko_btn:
-            from phoscrosstalk.knockouts import run_live_knockout
-
             t_ko_eval = np.linspace(0.0, float(ko_t_max), 200)
             with st.spinner("Simulating WT and KO…"):
                 try:
@@ -796,6 +803,7 @@ with tab_ko:
                         kinases=kinases,
                         sites=sites,
                         snap=snap,
+                        a_proteins=labels.get("A_proteins", []),
                     )
 
                     obs_prot_idx = proteins.index(observe_ko_prot)
@@ -1123,13 +1131,11 @@ with tab_net:
 
 def _render_plotly_network(df_net: pd.DataFrame, src_col: str, tgt_col: str) -> None:
     """Render a small network as Plotly scatter-with-lines."""
-    try:
-        import networkx as nx
-    except ImportError:
+    if not _HAS_NX:
         st.info("networkx not installed; cannot render network.")
         return
 
-    G = nx.DiGraph()
+    G = _nx.DiGraph()
     weight_col = (
         "Weight_Fitted" if "Weight_Fitted" in df_net.columns
         else (df_net.columns[2] if df_net.shape[1] > 2 else None)
@@ -1138,7 +1144,7 @@ def _render_plotly_network(df_net: pd.DataFrame, src_col: str, tgt_col: str) -> 
         w = float(row[weight_col]) if weight_col else 1.0
         G.add_edge(str(row[src_col]), str(row[tgt_col]), weight=w)
 
-    pos = nx.spring_layout(G, seed=42, k=1.5)
+    pos = _nx.spring_layout(G, seed=42, k=1.5)
     edge_x, edge_y = [], []
     for u, v in G.edges():
         x0, y0 = pos[u]; x1, y1 = pos[v]

@@ -27,6 +27,7 @@ def run_live_knockout(
     kinases,
     sites,
     snap,
+    a_proteins=None,
     k_act_fn=None,
     s_prod_fn=None,
 ):
@@ -40,13 +41,7 @@ def run_live_knockout(
     ------------------
     ``ko_type`` may be ``"kinase"``, ``"protein"``, or ``"site"``:
       - kinase KO : sets log(alpha) for that kinase to −20 (≈ zero activity).
-      - protein KO: sets log(d_deg) so the protein degrades instantly
-                    (s_prod contribution ≈ 0 achieved by zeroing one alpha).
-                    Actually implemented as setting alpha of that kinase-protein
-                    to −20 to match the existing knockouts.py convention, or
-                    if the protein has no kinase, zeroes s_prod by a different
-                    approach.  We use the simplest compatible convention: set
-                    log(k_deact) for that protein to +10 (fast deactivation).
+      - protein KO: sets log(k_deact) for that protein to +10 (fast deactivation).
       - site KO   : zeros all kinase edges for that site in K_site_kin.
 
     Args:
@@ -58,6 +53,9 @@ def run_live_knockout(
         kinases (list[str]): Kinase names.
         sites (list[str]): Phosphosite names.
         snap (dict): Preopt snapshot dict (from ``load_preopt_snapshot``).
+        a_proteins (list[str] | None): Names of proteins that have abundance data,
+            in the same row order as ``snap["A_scaled"]``. Used to build the initial
+            protein-abundance state vector.  If ``None``, A₀ is initialised to zeros.
         k_act_fn: Optional JAX closure for derived k_act(t).
         s_prod_fn: Optional JAX closure for derived s_prod(t).
 
@@ -74,7 +72,7 @@ def run_live_knockout(
     ModelDims.set_dims(K, M, N)
 
     A_scaled = snap.get("A_scaled", np.empty((0, 0)))
-    prot_idx_for_A = _prot_idx_for_A(snap, proteins)
+    prot_idx_for_A = _prot_idx_for_A(A_scaled, proteins, a_proteins)
     A0 = _build_A0(K, t_eval, A_scaled, prot_idx_for_A)
 
     common_kwargs = dict(
@@ -146,13 +144,27 @@ def run_live_knockout(
     }
 
 
-def _prot_idx_for_A(snap, proteins):
-    """Derive protein indices for A_scaled from snapshot A_proteins."""
-    a_proteins_path = None
-    # Try to infer from meta – not stored in snap; callers may pass directly.
-    # We rely on the snapshot having A_proteins stored (not yet guaranteed),
-    # so we return empty if absent.
-    return np.array([], dtype=int)
+def _prot_idx_for_A(A_scaled, proteins, a_proteins):
+    """Derive protein indices for A_scaled rows, given the A_proteins name list.
+
+    Args:
+        A_scaled (np.ndarray): Protein abundance matrix (n_A_proteins × T).
+        proteins (list[str]): Full protein list (length K).
+        a_proteins (list[str] | None): Names of proteins with abundance data,
+            in the same row order as A_scaled.  When None or empty the function
+            returns an empty index array.
+
+    Returns:
+        np.ndarray of dtype int, length n_A_proteins.
+    """
+    if a_proteins is None or len(a_proteins) == 0:
+        return np.array([], dtype=int)
+    prot_map = {p: i for i, p in enumerate(proteins)}
+    indices = []
+    for name in a_proteins:
+        if name in prot_map:
+            indices.append(prot_map[name])
+    return np.array(indices, dtype=int)
 
 
 def _build_A0(K, t_eval, A_scaled, prot_idx_for_A):

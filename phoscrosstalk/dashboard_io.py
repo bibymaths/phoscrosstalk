@@ -114,6 +114,11 @@ def validate_run_directory(results_dir: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _sanitize_finite(arr: np.ndarray) -> np.ndarray:
+    """Replace non-finite values (Inf, -Inf) with NaN."""
+    return np.where(np.isfinite(arr), arr, np.nan)
+
+
 def _mtime(path: str) -> float:
     try:
         return os.path.getmtime(path)
@@ -122,7 +127,7 @@ def _mtime(path: str) -> float:
 
 
 def _md5(path: str, chunk: int = 65536) -> str:
-    h = hashlib.md5()
+    h = hashlib.sha256()
     try:
         with open(path, "rb") as fh:
             while True:
@@ -176,8 +181,8 @@ def load_entity_labels(results_dir: str) -> dict[str, list[str]]:
                 "kinases": list(d["kinases"]),
                 "A_proteins": list(d["A_proteins"]) if "A_proteins" in d else [],
             }
-        except Exception:
-            pass
+        except (OSError, ValueError, KeyError):
+            pass  # Corrupt NPZ — fall back to TXT files
 
     def _read_txt(name: str) -> list[str]:
         p = os.path.join(snap_dir, f"{name}.txt")
@@ -213,8 +218,8 @@ def load_preopt_snapshot(results_dir: str) -> dict[str, Any] | None:
         try:
             raw = np.load(npz_path, allow_pickle=True)
             return {k: raw[k] for k in raw.files}
-        except Exception:
-            pass
+        except (OSError, ValueError):
+            pass  # Corrupt consolidated NPZ — fall back to individual TSVs
 
     # Fall back to individual TSVs / TXTs
     def _vec(name, dtype=float, required=True):
@@ -288,7 +293,7 @@ def load_fitted_params(results_dir: str) -> dict[str, Any] | None:
     try:
         raw = np.load(path, allow_pickle=True)
         return {k: raw[k] for k in raw.files}
-    except Exception:
+    except (OSError, ValueError):
         return None
 
 
@@ -634,7 +639,7 @@ def build_dashboard_cache(results_dir: str, force: bool = False) -> dict[str, An
                 save_dict = {}
                 for key, df in ss.items():
                     arr = df.values.astype(float)
-                    finite_arr = np.where(np.isfinite(arr), arr, np.nan)
+                    finite_arr = _sanitize_finite(arr)
                     save_dict[key + "_values"] = finite_arr
                     save_dict[key + "_rows"] = np.array(list(df.index), dtype=object)
                     save_dict[key + "_cols"] = np.array(list(df.columns), dtype=object)
