@@ -129,8 +129,8 @@ output_dir        = "thesis_dist"
 
 crosstalk_tsv     = ""
 rna_data          = "data_timeseries/filtered_input3.csv"
-tf_net            = "data_interactions/kinase_sites.tsv"
-kinase_tsv        = "data_interactions/tf_mrna.tsv"
+tf_net            = "data_interactions/tf_mrna.csv"
+kinase_tsv        = "data_interactions/kinase_sites.tsv"
 kea_ks_table      = ""
 unified_graph_pkl = "data_curated/processed/unified_kinase_graph.gpickle"
 
