@@ -15,6 +15,8 @@ Public interface:
 import json
 import os
 
+import diffrax
+import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -22,7 +24,9 @@ from matplotlib import pyplot as plt
 
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.logger import get_logger
+from phoscrosstalk.mechanisms import compute_prev_site_idx, make_rhs
 from phoscrosstalk.simulation import build_full_A0, simulate
+from phoscrosstalk.solver_config import make_diffrax_solver, make_stepsize_controller
 
 logger = get_logger(__name__)
 
@@ -207,6 +211,13 @@ def _save_metadata_json(
     has_k_act_fn,
     has_s_prod_fn,
     has_R_data0,
+    use_event=False,
+    event_rtol=None,
+    event_atol=None,
+    solve_status="unknown",
+    t_final=None,
+    final_deriv_norm=None,
+    final_state_norm=None,
 ):
     meta = {
         "horizon": {
@@ -222,6 +233,18 @@ def _save_metadata_json(
             "dt0": dt0,
             "max_steps": max_steps,
         },
+        "event": {
+            "use_event": use_event,
+            "event_rtol": event_rtol,
+            "event_atol": event_atol,
+        },
+        "solve_result": {
+            "status": solve_status,
+            "t_final": t_final,
+            "final_deriv_norm": final_deriv_norm,
+            "final_state_norm": final_state_norm,
+            "terminated_by_steady_state_event": solve_status == "event_occurred",
+        },
         "model": {
             "mechanism": mechanism,
             "k_act_fn_provided": has_k_act_fn,
@@ -236,6 +259,203 @@ def _save_metadata_json(
     }
     with open(os.path.join(ss_dir, "steadystate_metadata.json"), "w") as fh:
         json.dump(meta, fh, indent=2)
+
+
+def _run_steadystate_solve(
+    t_long: np.ndarray,
+    P_data: np.ndarray,
+    A0_initial: np.ndarray,
+    theta_opt: np.ndarray,
+    Cg,
+    Cl,
+    site_prot_idx,
+    K_site_kin,
+    R,
+    L_alpha,
+    kin_to_prot_idx,
+    receptor_mask_prot,
+    receptor_mask_kin,
+    mechanism: str,
+    rtol: float,
+    atol: float,
+    dt0: float,
+    max_steps: int,
+    k_act_fn=None,
+    s_prod_fn=None,
+    R_data0=None,
+    rna_relax: float = 0.1,
+    use_event: bool = True,
+    event_rtol: float | None = None,
+    event_atol: float | None = None,
+):
+    """Run the steady-state ODE solve with optional Diffrax steady_state_event.
+
+    When ``use_event=True`` (default), terminates early once the vector field
+    satisfies ``norm(f) < atol_ev + rtol_ev * norm(y)``.  After the event fires,
+    Diffrax fills remaining ``SaveAt`` time-points with ``inf``; those are
+    converted to ``NaN`` here so downstream code (which already masks non-finite
+    values) handles them correctly.
+
+    Returns
+    -------
+    P_ss, A_ss, S_ss, Kdyn_ss : np.ndarray  (entities × time)
+        Simulation outputs; NaN where the solve did not reach.
+    t_trimmed : np.ndarray
+        Time vector trimmed to the last valid (finite) column.
+    solve_status : str
+        One of "successful", "event_occurred", "max_steps_reached", "failed".
+    t_final_actual : float
+        Last time point with at least one finite value.
+    """
+    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+    T = len(t_long)
+    N_sites = P_data.shape[0]
+
+    # Build initial conditions (mirrors simulation.py)
+    x0 = np.zeros(3 * K + M + N, dtype=np.float64)
+
+    if R_data0 is not None:
+        r_data = np.asarray(R_data0, dtype=np.float64)
+        r0 = r_data[:, 0].copy() if r_data.ndim > 1 else r_data.copy()
+        r0 = np.nan_to_num(r0, nan=1.0, posinf=5.0, neginf=0.0)
+        r0 = np.clip(r0, 0.0, 10.0)
+    else:
+        r0 = np.ones(K, dtype=np.float64)
+    x0[:K] = r0
+
+    a0 = np.nan_to_num(A0_initial[:, 0].astype(np.float64), nan=1.0, posinf=5.0, neginf=0.0)
+    a0 = np.clip(a0, 0.0, 5.0)
+    x0[2 * K : 3 * K] = a0
+
+    p0 = np.nan_to_num(P_data[:, 0].astype(np.float64), nan=0.0, posinf=10.0, neginf=0.0)
+    p0 = np.clip(p0, 0.0, None)
+    x0[3 * K + M :] = p0
+
+    _nan_P = np.full((N_sites, T), np.nan)
+    _nan_A = np.full((K, T), np.nan)
+    _nan_S = np.full((K, T), np.nan)
+    _nan_K = np.full((M, T), np.nan)
+
+    if not np.all(np.isfinite(x0)):
+        return _nan_P, _nan_A, _nan_S, _nan_K, t_long, "failed", float(t_long[0])
+
+    prev_site_idx = compute_prev_site_idx(
+        np.asarray(site_prot_idx, dtype=np.int32), N
+    )
+
+    args = (
+        jnp.asarray(theta_opt, dtype=jnp.float32),
+        jnp.asarray(Cg, dtype=jnp.float32),
+        jnp.asarray(Cl, dtype=jnp.float32),
+        jnp.asarray(site_prot_idx, dtype=jnp.int32),
+        jnp.asarray(K_site_kin, dtype=jnp.float32),
+        jnp.asarray(R, dtype=jnp.float32),
+        jnp.asarray(L_alpha, dtype=jnp.float32),
+        jnp.asarray(kin_to_prot_idx, dtype=jnp.int32),
+        jnp.asarray(receptor_mask_prot, dtype=jnp.float32),
+        jnp.asarray(receptor_mask_kin, dtype=jnp.float32),
+        jnp.asarray(prev_site_idx, dtype=jnp.int32),
+    )
+
+    rhs_fn = make_rhs(
+        K, M, N, mechanism,
+        k_act_fn=k_act_fn, s_prod_fn=s_prod_fn, rna_relax=rna_relax,
+    )
+    term = diffrax.ODETerm(rhs_fn)
+    t_eval = jnp.asarray(t_long, dtype=jnp.float32)
+    y0_jax = jnp.asarray(x0, dtype=jnp.float32)
+    saveat = diffrax.SaveAt(ts=t_eval)
+    stepsize_ctrl = make_stepsize_controller(rtol=rtol, atol=atol)
+    solver = make_diffrax_solver("tsit5")
+
+    # Build steady-state event if requested
+    event = None
+    if use_event:
+        _ertol = event_rtol if event_rtol is not None else rtol
+        _eatol = event_atol if event_atol is not None else atol
+        cond_fn = diffrax.steady_state_event(rtol=_ertol, atol=_eatol)
+        event = diffrax.Event(cond_fn=cond_fn)
+
+    try:
+        sol = diffrax.diffeqsolve(
+            term,
+            solver,
+            t0=float(t_long[0]),
+            t1=float(t_long[-1]),
+            dt0=dt0,
+            y0=y0_jax,
+            args=args,
+            saveat=saveat,
+            stepsize_controller=stepsize_ctrl,
+            max_steps=max_steps,
+            event=event,
+            throw=False,
+            adjoint=diffrax.DirectAdjoint(),
+        )
+    except Exception as exc:
+        logger.warning(f"[!] Steady-state solve raised exception: {exc}")
+        return _nan_P, _nan_A, _nan_S, _nan_K, t_long, "failed", float(t_long[0])
+
+    # Determine termination status
+    result = sol.result
+    if result == diffrax.RESULTS.successful:
+        solve_status = "successful"
+    elif result == diffrax.RESULTS.event_occurred:
+        solve_status = "event_occurred"
+    elif result == diffrax.RESULTS.max_steps_reached:
+        solve_status = "max_steps_reached"
+    else:
+        solve_status = "failed"
+
+    xs_all = np.asarray(sol.ys, dtype=np.float64)  # (T, state_dim)
+
+    # After a steady-state event, Diffrax fills remaining save-points with inf.
+    # Convert those to NaN so downstream code (which masks non-finite values) is
+    # consistent and unambiguous about missing / not-yet-reached time-points.
+    if solve_status == "event_occurred":
+        xs_all = np.where(np.isinf(xs_all), np.nan, xs_all)
+
+    # Find the last time-point that has at least one finite state value.
+    row_finite = np.any(np.isfinite(xs_all), axis=1)  # (T,)
+    if np.any(row_finite):
+        last_valid_idx = int(np.max(np.where(row_finite)[0]))
+        t_final_actual = float(t_long[last_valid_idx])
+    else:
+        last_valid_idx = -1
+        t_final_actual = float(t_long[0])
+
+    # Slice outputs at the save-time indices (all T, clipping to state dims)
+    def _safe_slice(start, stop):
+        out = xs_all[:, start:stop]  # (T, dim)
+        return np.where(np.isfinite(out), out, np.nan)
+
+    R_rna_out = _safe_slice(0, K)
+    S_out = _safe_slice(K, 2 * K)
+    A_out = _safe_slice(2 * K, 3 * K)
+    Kdyn_out = _safe_slice(3 * K, 3 * K + M)
+    P_out = _safe_slice(3 * K + M, 3 * K + M + N)
+
+    # Clip bounded states (mirrors simulation.py)
+    np.clip(S_out, 0.0, 1.0, out=S_out)
+    np.clip(Kdyn_out, 0.0, 1.0, out=Kdyn_out)
+    np.clip(A_out, 0.0, 5.0, out=A_out)
+    np.clip(P_out, 0.0, None, out=P_out)
+
+    # Trim to last valid index if event fired early
+    if last_valid_idx >= 0 and last_valid_idx < T - 1:
+        t_trimmed = t_long[: last_valid_idx + 1]
+        P_trim = P_out[: last_valid_idx + 1, :].T  # (N, T_trim)
+        A_trim = A_out[: last_valid_idx + 1, :].T
+        S_trim = S_out[: last_valid_idx + 1, :].T
+        K_trim = Kdyn_out[: last_valid_idx + 1, :].T
+    else:
+        t_trimmed = t_long
+        P_trim = P_out.T  # (N, T)
+        A_trim = A_out.T
+        S_trim = S_out.T
+        K_trim = Kdyn_out.T
+
+    return P_trim, A_trim, S_trim, K_trim, t_trimmed, solve_status, t_final_actual
 
 
 def run_steadystate_analysis(
@@ -257,6 +477,9 @@ def run_steadystate_analysis(
     top_n: int = 10,
     skip_plots_on_nonfinite: bool = True,
     strict: bool = False,
+    use_event: bool = True,
+    event_rtol: float | None = None,
+    event_atol: float | None = None,
 ) -> None:
     """Simulate the network over a long time horizon (terminal-input relaxation).
 
@@ -268,6 +491,13 @@ def run_steadystate_analysis(
     This is a *long-horizon relaxation* analysis, not a strict biological
     steady state, because derived inputs are not recomputed from a converged
     mRNA level.
+
+    When ``use_event=True`` (default), a ``diffrax.steady_state_event`` terminates
+    the solve early once the vector field norm falls below the convergence threshold
+    ``norm(f) < atol_ev + rtol_ev * norm(y)``, saving compute time for quickly
+    converging systems.  ``event_rtol``/``event_atol`` default to ``rtol``/``atol``
+    when not set.  The fallback (long-horizon grid + ``t_end``) still acts as the
+    maximum integration limit.
 
     Args:
         outdir:                  Root output directory; results go to
@@ -289,6 +519,12 @@ def run_steadystate_analysis(
         top_n:                   Number of top-dynamic-range trajectories to plot.
         skip_plots_on_nonfinite: Skip seaborn/matplotlib plots when all-NaN.
         strict:                  Raise RuntimeError on all-NaN output.
+        use_event:               Use ``diffrax.steady_state_event`` for early
+                                 termination when the ODE converges (default True).
+        event_rtol:              Relative tolerance for the steady-state event
+                                 (defaults to ``rtol`` when ``None``).
+        event_atol:              Absolute tolerance for the steady-state event
+                                 (defaults to ``atol`` when ``None``).
 
     Output files (written to ``{outdir}/steadystate/``)
     ----------------------------------------------------
@@ -301,7 +537,7 @@ def run_steadystate_analysis(
     New:
       steadystate_diagnostics.tsv  -- per-state finite/NaN/Inf counts and ranges
       steadystate_convergence.tsv  -- per-state absolute and relative last-step deltas
-      steadystate_metadata.json    -- horizon, tolerances, mechanism, closure info
+      steadystate_metadata.json    -- horizon, tolerances, event info, solve status
     """
     logger.info("\n[*] Running long-horizon relaxation analysis...")
     ss_dir = os.path.join(outdir, "steadystate")
@@ -346,43 +582,126 @@ def run_steadystate_analysis(
         f"rna_relax={rna_relax}"
     )
 
-    # 3. JAX/Diffrax simulation over the long horizon
-    try:
-        result = simulate(
-            t_long,
-            problem.P_data,
-            A0_initial,
-            theta_opt,
-            problem.Cg,
-            problem.Cl,
-            problem.site_prot_idx,
-            problem.K_site_kin,
-            problem.R,
-            problem.L_alpha,
-            problem.kin_to_prot_idx,
-            problem.receptor_mask_prot,
-            problem.receptor_mask_kin,
-            problem.mechanism,
-            full_output=True,
-            rtol=rtol,
-            atol=atol,
-            max_steps=max_steps,
-            dt0=dt0 if dt0 is not None else 0.01,
-            k_act_fn=k_act_fn,
-            s_prod_fn=s_prod_fn,
-            R_data0=R_data0,
-            rna_relax=rna_relax,
-        )
-    except RuntimeError as exc:
-        logger.warning(f"[!] Long-horizon simulation failed with RuntimeError: {exc}")
-        _save_failure_diagnostics(ss_dir, str(exc))
-        if strict:
-            raise RuntimeError(
-                "Long-horizon relaxation simulation failed (strict=True)."
-            ) from exc
-        return
+    # 3. Run simulation using Diffrax-native steady-state event (or plain simulate)
+    _solve_dt0 = dt0 if dt0 is not None else 0.01
 
-    P_ss, A_ss, S_ss, Kdyn_ss = result
+    if use_event:
+        logger.info(
+            f"   -> Using diffrax.steady_state_event "
+            f"(event_rtol={event_rtol or rtol:.1e}, event_atol={event_atol or atol:.1e})"
+        )
+        try:
+            P_ss, A_ss, S_ss, Kdyn_ss, t_out, solve_status, t_final_actual = (
+                _run_steadystate_solve(
+                    t_long,
+                    problem.P_data,
+                    A0_initial,
+                    theta_opt,
+                    problem.Cg,
+                    problem.Cl,
+                    problem.site_prot_idx,
+                    problem.K_site_kin,
+                    problem.R,
+                    problem.L_alpha,
+                    problem.kin_to_prot_idx,
+                    problem.receptor_mask_prot,
+                    problem.receptor_mask_kin,
+                    problem.mechanism,
+                    rtol=rtol,
+                    atol=atol,
+                    dt0=_solve_dt0,
+                    max_steps=max_steps,
+                    k_act_fn=k_act_fn,
+                    s_prod_fn=s_prod_fn,
+                    R_data0=R_data0,
+                    rna_relax=rna_relax,
+                    use_event=True,
+                    event_rtol=event_rtol,
+                    event_atol=event_atol,
+                )
+            )
+        except Exception as exc:
+            logger.warning(f"[!] Long-horizon simulation failed: {exc}")
+            _save_failure_diagnostics(ss_dir, str(exc))
+            if strict:
+                raise RuntimeError(
+                    "Long-horizon relaxation simulation failed (strict=True)."
+                ) from exc
+            return
+    else:
+        # Legacy path: plain simulate() over full long-horizon grid
+        try:
+            result = simulate(
+                t_long,
+                problem.P_data,
+                A0_initial,
+                theta_opt,
+                problem.Cg,
+                problem.Cl,
+                problem.site_prot_idx,
+                problem.K_site_kin,
+                problem.R,
+                problem.L_alpha,
+                problem.kin_to_prot_idx,
+                problem.receptor_mask_prot,
+                problem.receptor_mask_kin,
+                problem.mechanism,
+                full_output=True,
+                rtol=rtol,
+                atol=atol,
+                max_steps=max_steps,
+                dt0=_solve_dt0,
+                k_act_fn=k_act_fn,
+                s_prod_fn=s_prod_fn,
+                R_data0=R_data0,
+                rna_relax=rna_relax,
+            )
+        except RuntimeError as exc:
+            logger.warning(f"[!] Long-horizon simulation failed with RuntimeError: {exc}")
+            _save_failure_diagnostics(ss_dir, str(exc))
+            if strict:
+                raise RuntimeError(
+                    "Long-horizon relaxation simulation failed (strict=True)."
+                ) from exc
+            return
+
+        P_ss, A_ss, S_ss, Kdyn_ss = result
+        t_out = t_long
+        solve_status = "successful" if np.any(np.isfinite(P_ss)) else "failed"
+        t_final_actual = float(t_long[-1])
+
+    # Log termination status
+    _status_msg = {
+        "successful": "Solve reached t_end normally.",
+        "event_occurred": f"Steady-state event fired; solution converged at t≈{t_final_actual:.1f} min (< t_end={t_end:.1f}).",
+        "max_steps_reached": "Max steps reached before t_end; output may be incomplete.",
+        "failed": "Solve failed; check diagnostics.",
+        "unknown": "Status unknown.",
+    }.get(solve_status, f"Status: {solve_status}")
+    logger.info(f"   -> {_status_msg}")
+
+    # Compute final derivative norm and state norm for logging/metadata
+    final_deriv_norm = None
+    final_state_norm = None
+    if np.any(np.isfinite(P_ss)):
+        # Use last finite column as a proxy for the final state norm
+        last_col = P_ss[:, -1]
+        finite_last = last_col[np.isfinite(last_col)]
+        if finite_last.size > 0:
+            final_state_norm = float(np.sqrt(np.mean(finite_last**2)))
+        # Use second-to-last finite column for derivative norm proxy
+        if P_ss.shape[1] >= 2:
+            prev_col = P_ss[:, -2]
+            finite_prev = prev_col[np.isfinite(prev_col)]
+            if finite_last.size > 0 and finite_prev.size > 0 and finite_last.shape == finite_prev.shape:
+                deriv_proxy = np.abs(finite_last - finite_prev)
+                final_deriv_norm = float(np.sqrt(np.mean(deriv_proxy**2)))
+
+    logger.info(
+        f"   -> t_final={t_final_actual:.2f}  "
+        f"final_state_norm(P)={final_state_norm}  "
+        f"final_deriv_norm_proxy(P)={final_deriv_norm}"
+    )
 
     # 4. Non-finite diagnostics
     matrices = {
@@ -406,7 +725,7 @@ def run_steadystate_analysis(
                 "P_ss is all non-finite in long-horizon relaxation (strict=True)."
             )
         _save_output_tsvs(
-            ss_dir, P_ss, A_ss, S_ss, Kdyn_ss, t_long, sites, proteins, kinases
+            ss_dir, P_ss, A_ss, S_ss, Kdyn_ss, t_out, sites, proteins, kinases
         )
         _save_convergence_tsv(ss_dir, matrices)
         _save_metadata_json(
@@ -424,6 +743,13 @@ def run_steadystate_analysis(
             k_act_fn is not None,
             s_prod_fn is not None,
             R_data0 is not None,
+            use_event=use_event,
+            event_rtol=event_rtol,
+            event_atol=event_atol,
+            solve_status=solve_status,
+            t_final=t_final_actual,
+            final_deriv_norm=final_deriv_norm,
+            final_state_norm=final_state_norm,
         )
         if skip_plots_on_nonfinite:
             logger.warning("[!] Skipping plots due to all-NaN P_ss output.")
@@ -431,34 +757,35 @@ def run_steadystate_analysis(
 
     # 5. Convergence metrics
     _save_convergence_tsv(ss_dir, matrices)
-    delta_abs_p = np.abs(P_ss[:, -1] - P_ss[:, -2])
-    finite_delta = delta_abs_p[np.isfinite(delta_abs_p)]
-    if finite_delta.size > 0:
-        logger.info(
-            f"   -> Convergence metric (mean |delta P| at last step): {finite_delta.mean():.6e}"  # noqa: E501
-        )
+    if P_ss.shape[1] >= 2:
+        delta_abs_p = np.abs(P_ss[:, -1] - P_ss[:, -2])
+        finite_delta = delta_abs_p[np.isfinite(delta_abs_p)]
+        if finite_delta.size > 0:
+            logger.info(
+                f"   -> Convergence metric (mean |delta P| at last step): {finite_delta.mean():.6e}"  # noqa: E501
+            )
 
     # 6. Save output TSVs
     _save_output_tsvs(
-        ss_dir, P_ss, A_ss, S_ss, Kdyn_ss, t_long, sites, proteins, kinases
+        ss_dir, P_ss, A_ss, S_ss, Kdyn_ss, t_out, sites, proteins, kinases
     )
 
     # 7. Plots
     _plot_convergence_heatmap(
-        ss_dir, P_ss, t_long, "Phosphosites", skip_plots_on_nonfinite
+        ss_dir, P_ss, t_out, "Phosphosites", skip_plots_on_nonfinite
     )
-    _plot_convergence_heatmap(ss_dir, A_ss, t_long, "Proteins", skip_plots_on_nonfinite)
+    _plot_convergence_heatmap(ss_dir, A_ss, t_out, "Proteins", skip_plots_on_nonfinite)
     _plot_convergence_heatmap(
-        ss_dir, S_ss, t_long, "Protein_Activity_S", skip_plots_on_nonfinite
+        ss_dir, S_ss, t_out, "Protein_Activity_S", skip_plots_on_nonfinite
     )
     _plot_convergence_heatmap(
-        ss_dir, Kdyn_ss, t_long, "Kinase_Activity_Kdyn", skip_plots_on_nonfinite
+        ss_dir, Kdyn_ss, t_out, "Kinase_Activity_Kdyn", skip_plots_on_nonfinite
     )
 
     _plot_trajectories(
         ss_dir,
         P_ss,
-        t_long,
+        t_out,
         sites,
         "Top_Changing_Sites",
         ylabel="Relative phosphosite signal",
@@ -468,7 +795,7 @@ def run_steadystate_analysis(
     _plot_trajectories(
         ss_dir,
         A_ss,
-        t_long,
+        t_out,
         proteins,
         "Protein_Abundance_A",
         ylabel="Protein abundance state",
@@ -478,7 +805,7 @@ def run_steadystate_analysis(
     _plot_trajectories(
         ss_dir,
         S_ss,
-        t_long,
+        t_out,
         proteins,
         "S_Dynamics",
         ylabel="Fraction active",
@@ -488,7 +815,7 @@ def run_steadystate_analysis(
     _plot_trajectories(
         ss_dir,
         Kdyn_ss,
-        t_long,
+        t_out,
         kinases,
         "Kdyn_Dynamics",
         ylabel="Fraction active",
@@ -512,6 +839,13 @@ def run_steadystate_analysis(
         k_act_fn is not None,
         s_prod_fn is not None,
         R_data0 is not None,
+        use_event=use_event,
+        event_rtol=event_rtol,
+        event_atol=event_atol,
+        solve_status=solve_status,
+        t_final=t_final_actual,
+        final_deriv_norm=final_deriv_norm,
+        final_state_norm=final_state_norm,
     )
 
     logger.info("[*] Long-horizon relaxation analysis complete.")
