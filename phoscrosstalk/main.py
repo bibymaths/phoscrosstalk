@@ -597,10 +597,25 @@ def main():
     )
     # --- end TODO(data-loader-refactor) pre-filter phospho ---
 
-    # 1. Load primary phospho data
-    (sites, proteins, site_prot_idx, positions, t, Y, A_data, A_proteins) = (
-        data_loader.load_site_data(_filtered_data_path)
-    )
+    # Track temporary pre-filter files for cleanup after loaders return.
+    # H1: temp files must be deleted after use to prevent leaks.
+    _tmp_files_to_cleanup = []
+    if _filtered_data_path != args.data:
+        _tmp_files_to_cleanup.append(_filtered_data_path)
+
+    try:
+        # 1. Load primary phospho data
+        (sites, proteins, site_prot_idx, positions, t, Y, A_data, A_proteins) = (
+            data_loader.load_site_data(_filtered_data_path)
+        )
+    finally:
+        # Delete the phospho temp file as soon as the loader has consumed it.
+        for _p in _tmp_files_to_cleanup:
+            try:
+                os.unlink(_p)
+            except OSError:
+                pass
+        _tmp_files_to_cleanup.clear()
 
     logger.success(f"[*] Loaded {len(sites)} sites, {len(proteins)} proteins.")
 
@@ -623,7 +638,16 @@ def main():
             logger_=logger,
         )
         # --- end TODO(data-loader-refactor) pre-filter RNA ---
-        gene_ids, t_rna, rna_matrix = data_loader.load_rna_data(_filtered_rna_path)
+        _rna_tmp = _filtered_rna_path if _filtered_rna_path != args.rna_data else None
+        try:
+            gene_ids, t_rna, rna_matrix = data_loader.load_rna_data(_filtered_rna_path)
+        finally:
+            # H1: delete RNA temp file immediately after loader returns.
+            if _rna_tmp is not None:
+                try:
+                    os.unlink(_rna_tmp)
+                except OSError:
+                    pass
         logger.success(
             f"[*] Loaded mRNA data: {len(gene_ids)} genes x {len(t_rna)} time points."
         )
@@ -673,9 +697,17 @@ def main():
 
     if A_data is not None and len(A_data) > 0:
         prot_map = {p: i for i, p in enumerate(proteins)}
-        mask_A = [p in prot_map for p in A_proteins]
+        mask_A = np.array([p in prot_map for p in A_proteins], dtype=bool)
+        n_A_before = int(mask_A.shape[0])
         A_data = A_data[mask_A]
         A_proteins = A_proteins[mask_A]
+        n_A_dropped = n_A_before - len(A_proteins)
+        if n_A_dropped > 0:
+            # H4: log when abundance rows are discarded (e.g. after crosstalk filter)
+            logger.info(
+                f"[*] Abundance data: dropped {n_A_dropped}/{n_A_before} protein row(s) "
+                "not present in filtered protein list."
+            )
         prot_idx_for_A = np.array([prot_map[p] for p in A_proteins], dtype=int)
         A_scaled, A_bases, A_amps = data_loader.apply_scaling(
             A_data, mode=args.scale_mode
@@ -694,6 +726,17 @@ def main():
         t_mrna=t_rna,
         rna_data=rna_matrix,
         scheme=args.weight_scheme,
+    )
+
+    # H3: Validate biological inputs (non-negative finite data) before fitting.
+    from phoscrosstalk.optimization import validate_biological_inputs  # noqa: PLC0415
+
+    validate_biological_inputs(
+        P_data=P_scaled,
+        A_scaled=A_scaled if A_scaled.size > 0 else None,
+        rna_data_scaled=None,  # RNA data validated later after matching
+        W_data=W_data,
+        W_data_prot=W_data_prot,
     )
 
     # 6. Matrices & Graph
@@ -871,7 +914,8 @@ def main():
 
     # 9. Global Setup & Bounds
     logger.header(f"[*] K={ModelDims.K}, M={ModelDims.M}, N={ModelDims.N}")
-    xl, xu, dim = create_bounds(ModelDims.K, ModelDims.M, ModelDims.N)
+    # H2: Pass cfg.bounds so that config-driven rate limits are respected.
+    xl, xu, dim = create_bounds(ModelDims.K, ModelDims.M, ModelDims.N, bounds=getattr(cfg, "bounds", None))
 
     logger.info(
         f"[DEBUG] create_bounds → xl type={type(xl)}, xu type={type(xu)}, dim={dim}"
@@ -928,6 +972,12 @@ def main():
     R_data0 = None
 
     if rna_matrix is not None and gene_ids is not None:
+        # H5: Guard against shape mismatch between weight matrix and gene list.
+        assert W_data_mrna.shape[0] == len(gene_ids), (
+            f"W_data_mrna.shape[0]={W_data_mrna.shape[0]} != len(gene_ids)={len(gene_ids)}. "
+            "This indicates a mismatch between the RNA weight matrix and the gene list."
+        )
+
         (
             rna_fit_genes,
             rna_obs_matched_raw,
@@ -1144,8 +1194,8 @@ def main():
     f1 = F[:, 0]
     f2 = F[:, 1]
     f3 = F[:, 2]
-    # f4 (RNA loss) is in column 3 when present
-    F[:, 3] if F.shape[1] > 3 else np.zeros(len(f1))
+    # L1: f4 (RNA loss) is in column 3 when present; assign it properly.
+    f4 = F[:, 3] if F.shape[1] > 3 else np.zeros(len(f1))
 
     analysis.save_derived_rates(
         outdir=outdir,
@@ -1156,8 +1206,8 @@ def main():
         t_rna=t_rna,
     )
 
-    analysis.save_run_results(outdir, F, X, f1, f2, f3, total_losses, F[best_idx])
-    analysis.plot_run_diagnostics(outdir, F, F[best_idx], f1, f2, f3, X)
+    analysis.save_run_results(outdir, F, X, f1, f2, f3, total_losses, F[best_idx], f4=f4)
+    analysis.plot_run_diagnostics(outdir, F, F[best_idx], f1, f2, f3, X, f4=f4)
 
     analysis.save_fitted_simulation(
         outdir,

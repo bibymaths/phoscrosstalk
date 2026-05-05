@@ -33,13 +33,6 @@ from types import SimpleNamespace
 import jax
 import jax.numpy as jnp
 import numpy as np
-from evosax.algorithms import CMA_ES, Sep_CMA_ES
-from evosax.core.restart import RestartParams, RestartState, cma_cond, spread_cond
-from qdax.core.containers.mapelites_repertoire import (
-    MapElitesRepertoire,
-    compute_cvt_centroids,
-)
-from qdax.core.emitters.mutation_operators import isoline_variation
 
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.logger import get_logger
@@ -117,6 +110,15 @@ def make_restart_params():
     provide an empty RestartParams while spread_cond / cma_cond still access
     these attributes dynamically.
     """
+    # Lazy import: only required when actually running the hybrid solver.
+    try:
+        from evosax.core.restart import RestartParams  # noqa: PLC0415
+    except ImportError as exc:
+        raise ImportError(
+            "evosax is required for the hybrid solver. "
+            "Install it with: pip install evosax==0.2.0"
+        ) from exc
+
     values = {
         "fitness_spread_threshold": 1e-12,
         "tol_x": 1e-12,
@@ -290,6 +292,20 @@ def run_evosax(
         Entire final population un-normalised to original space,
         shape ``(popsize, n_var)``, ``float64``.
     """
+    # Lazy imports: only required when actually running the hybrid solver.
+    try:
+        from evosax.algorithms import CMA_ES, Sep_CMA_ES  # noqa: PLC0415
+        from evosax.core.restart import (  # noqa: PLC0415
+            RestartState,
+            cma_cond,
+            spread_cond,
+        )
+    except ImportError as exc:
+        raise ImportError(
+            "evosax is required for the hybrid solver. "
+            "Install it with: pip install evosax==0.2.0"
+        ) from exc
+
     xl_j = jnp.asarray(xl, dtype=jnp.float32)
     xu_j = jnp.asarray(xu, dtype=jnp.float32)
     span = xu_j - xl_j
@@ -549,6 +565,17 @@ def compute_cvt_centroids_compat(
     Other versions return:
         centroids, key
     """
+    # Lazy import: only required when actually running the hybrid solver.
+    try:
+        from qdax.core.containers.mapelites_repertoire import (  # noqa: PLC0415
+            compute_cvt_centroids,
+        )
+    except ImportError as exc:
+        raise ImportError(
+            "qdax is required for the hybrid solver. "
+            "Install it with: pip install qdax>=0.5.0"
+        ) from exc
+
     out = compute_cvt_centroids(
         num_descriptors=num_descriptors,
         num_init_cvt_samples=num_init_cvt_samples,
@@ -636,6 +663,20 @@ def run_qdax_mapelites(
     object
         QDax ``MapElitesRepertoire`` after *n_iterations* iterations.
     """
+    # Lazy imports: only required when actually running the hybrid solver.
+    try:
+        from qdax.core.containers.mapelites_repertoire import (  # noqa: PLC0415
+            MapElitesRepertoire,
+        )
+        from qdax.core.emitters.mutation_operators import (  # noqa: PLC0415
+            isoline_variation,
+        )
+    except ImportError as exc:
+        raise ImportError(
+            "qdax is required for the hybrid solver. "
+            "Install it with: pip install qdax>=0.5.0"
+        ) from exc
+
     K = ModelDims.K
     M = ModelDims.M
 
