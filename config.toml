@@ -1,16 +1,132 @@
+# =============================================================================
 # PhosCrosstalk configuration file
-# All runtime options live here; the CLI only accepts --config <path>.
+# =============================================================================
+#
+# All runtime options live here.
+# The CLI should only need:
+#
+#     phoscrosstalk --config config.toml
+#
+# ---------------------------------------------------------------------------
+# IMPORTANT STRUCTURAL RULE
+# ---------------------------------------------------------------------------
+#
+# The optimisation path has three separate solver/AD layers:
+#
+#   1. Optimistix least-squares solver
+#      Controls parameter fitting, e.g. Levenberg-Marquardt.
+#
+#   2. Optimistix Jacobian mode
+#      Controls how Optimistix differentiates the residual vector:
+#
+#          jac_mode = "fwd"  → forward-mode AD through residuals
+#          jac_mode = "bwd"  → reverse-mode AD through residuals
+#
+#   3. Diffrax ODE adjoint
+#      Controls how gradients pass through the ODE solve.
+#
+# The critical compatibility rule is:
+#
+#   jac_mode = "fwd" requires:
+#       ode_adjoint = "forward"
+#       or, rarely, ode_adjoint = "direct"
+#
+#   jac_mode = "bwd" requires:
+#       ode_adjoint = "recursive"
+#       or ode_adjoint = "checkpoint"
+#
+# DO NOT use:
+#
+#   jac_mode = "fwd"
+#   ode_adjoint = "recursive"
+#
+# because RecursiveCheckpointAdjoint does not support forward-mode AD.
+#
+# This was the major structural issue that had to be fixed.
+#
+# ---------------------------------------------------------------------------
+# Recommended production profile for coupled RNA/protein/phosphosite ODEs
+# ---------------------------------------------------------------------------
+#
+# For likely stiff biological systems:
+#
+#   [optimisation]
+#   ls_solver    = "lm"
+#   jac_mode     = "fwd"
+#   optx_adjoint = "implicit"
+#
+#   [solver]
+#   ode_solver   = "kvaerno4"
+#   ode_adjoint  = "forward"
+#
+# This is the active profile below.
+#
+# ---------------------------------------------------------------------------
+# Alternative profiles
+# ---------------------------------------------------------------------------
+#
+# Fast non-stiff sanity check:
+#
+#   [solver]
+#   ode_solver  = "tsit5"
+#   ode_adjoint = "forward"
+#   rtol        = 1e-6
+#   atol        = 1e-9
+#   max_steps   = 32768
+#
+# Reverse-mode fallback:
+#
+#   [optimisation]
+#   jac_mode = "bwd"
+#
+#   [solver]
+#   ode_solver  = "kvaerno4"
+#   ode_adjoint = "recursive"
+#
+# Use reverse-mode fallback only if forward-mode becomes too slow, too memory
+# intensive, or fails because of unsupported JVPs in your model path.
+#
+# ---------------------------------------------------------------------------
+# Do not define duplicate active [solver] or [optimisation] blocks.
+# TOML parsers reject duplicate tables.
+# Keep alternatives as comments only.
+# =============================================================================
 
-# ---------------------------------------------------------------------------
-# [paths]  – input files and output directory
-# Required: data, ptm_intra, ptm_inter
-# Optional: set to "" or omit the key entirely to disable.
-# ---------------------------------------------------------------------------
+
+# =============================================================================
+# [paths] – input files and output directory
+# =============================================================================
+#
+# Required:
+#   data
+#   ptm_intra
+#   ptm_inter
+#
+# Optional:
+#   crosstalk_tsv
+#   rna_data
+#   tf_net
+#   kinase_tsv
+#   kea_ks_table
+#   unified_graph_pkl
+#
+# Optional paths can be disabled with:
+#
+#   key = ""
+#
+# Notes:
+#   - data should contain phosphosite/protein time-series data.
+#   - rna_data enables RNA/mRNA coupling.
+#   - tf_net enables TF-driven activation terms.
+#   - kinase_tsv or kea_ks_table provides kinase-site priors.
+#   - unified_graph_pkl is only used if lambda_net > 0.
+# =============================================================================
 [paths]
 data              = "data_subset/subnetwork_EPHA2_LYN/filtered_input1_subset.csv"
 ptm_intra         = "data_curated/processed/ptm_intra.db"
 ptm_inter         = "data_curated/processed/ptm_inter.db"
 output_dir        = "test_results_dist"
+
 crosstalk_tsv     = ""
 rna_data          = "data_subset/subnetwork_EPHA2_LYN/filtered_input3_subset.csv"
 tf_net            = "data_subset/subnetwork_EPHA2_LYN/tf_mrna_subset.csv"
@@ -18,97 +134,575 @@ kinase_tsv        = "data_subset/subnetwork_EPHA2_LYN/kinase_sites_subset.tsv"
 kea_ks_table      = ""
 unified_graph_pkl = "data_curated/processed/unified_kinase_graph.gpickle"
 
-# ---------------------------------------------------------------------------
-# [model]  – ODE model settings
-# ---------------------------------------------------------------------------
+
+# =============================================================================
+# [model] – biological model and preprocessing options
+# =============================================================================
+#
+# mechanism:
+#   "dist"  – distributive phosphorylation mechanism
+#   "seq"   – sequential phosphorylation mechanism
+#   "rand"  – random phosphorylation mechanism
+#
+# scale_mode:
+#   "none"   – use values as provided after basic cleaning
+#   "minmax" – min-max scale each trajectory
+#   "zscore" – z-score scale each trajectory
+#
+# weight_scheme:
+#   "uniform"          – equal weight for all observed points
+#   "inverse_variance" – higher weight for lower-variance measurements
+#   "time_weighted"    – emphasize selected time regions, depending on weighting.py
+#
+# length_scale:
+#   Controls spatial/local PTM interaction decay in local crosstalk matrix Cl.
+#   Smaller values make local PTM coupling more position-restricted.
+#
+# receptors:
+#   Protein names treated as externally stimulated receptors.
+#
+# receptor_kinases:
+#   Kinase names treated as externally stimulated receptor kinases.
+#
+# include_tfs_as_proteins:
+#   false – only proteins from phospho/protein data enter the model.
+#   true  – TF-related proteins may be added when RNA/TF network supports them.
+# =============================================================================
 [model]
-mechanism               = "dist"      # dist | seq | rand
-scale_mode              = "none"     # none | minmax | zscore
+mechanism               = "dist"      # options: "dist" | "seq" | "rand"
+scale_mode              = "none"      # options: "none" | "minmax" | "zscore"
 length_scale            = 25.0
-weight_scheme           = "uniform"  # uniform | inverse_variance | time_weighted
+weight_scheme           = "uniform"   # options: "uniform" | "inverse_variance" | "time_weighted"
+
 receptors               = []
 receptor_kinases        = []
 include_tfs_as_proteins = false
 
-# ---------------------------------------------------------------------------
-# [optimisation]  – multi-start fitting control
-# solver = "lm"     → run_single_optimisation only (classic path)
-# solver = "hybrid" → run_hybrid_fit (Phase 0 LHS + Phase 1 evosax + Phase 2 LM + QDax)
-# ---------------------------------------------------------------------------
-[optimisation]
-n_starts   = 5
-max_steps  = 500          # LM iteration cap when solver = "lm"
-solver     = "lm"      # lm | hybrid
-verbose    = false
-loss_type  = "mse"
-lambda_net = 0.0
-reg_lambda = 0.0001
-rtol       = 1e-8          # Optimistix convergence rtol
-atol       = 1e-8          # Optimistix convergence atol
 
+# =============================================================================
+# [optimisation] – parameter fitting control
+# =============================================================================
+#
+# solver:
+#   "lm"     – classic multi-start Optimistix least-squares fitting
+#   "hybrid" – LHS screen + evosax global search + LM polish + QDax repertoire
+#
+# n_starts:
+#   Number of random starting points for solver = "lm".
+#   Increase for rugged loss landscapes.
+#
+# max_steps:
+#   Optimistix iteration cap for each local optimisation run.
+#   This is NOT the ODE solver max_steps.
+#
+# ls_solver:
+#   "lm"           – Levenberg-Marquardt. Best default for nonlinear ODE fitting.
+#   "gauss_newton" – faster near solution, less stable far from solution.
+#   "dogleg"       – trust-region method, useful if LM behaves poorly.
+#   "indirect_lm"  – trust-region LM variant; usually more overhead than "lm".
+#
+# Recommended:
+#   ls_solver = "lm"
+#
+# optx_adjoint:
+#   Controls gradients through the Optimistix solve itself.
+#   Usually relevant only if differentiating through the fitted solution.
+#
+#   "implicit"   – recommended default.
+#   "checkpoint" – differentiates through iterations; rarely needed here.
+#   "recursive"  – alias-style option if your factory supports it.
+#
+# Recommended:
+#   optx_adjoint = "implicit"
+#
+# jac_mode:
+#   Controls how Optimistix computes the residual Jacobian.
+#
+#   "fwd" – forward-mode Jacobian.
+#           Usually best for least-squares residual problems where the parameter
+#           vector is moderate and the residual vector is large.
+#
+#   "bwd" – reverse-mode Jacobian.
+#           Use if forward-mode fails or is too expensive.
+#
+# COMPATIBILITY:
+#
+#   jac_mode = "fwd" requires:
+#       [solver] ode_adjoint = "forward"
+#
+#   jac_mode = "bwd" requires:
+#       [solver] ode_adjoint = "recursive" or "checkpoint"
+#
+# verbose:
+#   false – normal logging
+#   true  – Optimistix internal progress logging, can be noisy
+#
+# loss_type:
+#   Currently kept for compatibility. Main fitting path uses residual-vector
+#   least squares.
+#
+# lambda_net:
+#   Weight for kinase-network Laplacian regularisation on alpha.
+#   Requires unified_graph_pkl.
+#   Set 0.0 to disable.
+#
+# reg_lambda:
+#   L2 regularisation on parameter vector theta.
+#
+# rtol / atol:
+#   Optimistix convergence tolerances.
+#   These are not ODE tolerances.
+# =============================================================================
+[optimisation]
+n_starts      = 5
+max_steps     = 500
+
+solver        = "lm"         # options: "lm" | "hybrid"
+ls_solver     = "lm"         # options: "lm" | "gauss_newton" | "dogleg" | "indirect_lm"
+
+optx_adjoint  = "implicit"   # options: "implicit" | "checkpoint" | "recursive"
+jac_mode      = "fwd"        # options: "fwd" | "bwd"
+
+verbose       = false
+loss_type     = "mse"
+
+lambda_net    = 0.0
+reg_lambda    = 0.0001
+
+rtol          = 1e-8
+atol          = 1e-8
+
+
+# =============================================================================
+# [solver] – Diffrax ODE solver configuration
+# =============================================================================
+#
+# This section controls the ODE integration inside fitting and simulation.
+#
+# ode_solver:
+#
+#   Explicit solvers:
+#
+#     "tsit5"
+#         Best first test for non-stiff or mildly stiff systems.
+#         Fast, adaptive, good general-purpose explicit RK method.
+#
+#     "dopri5"
+#         Similar family to Tsit5. Useful benchmark, rarely better for this case.
+#
+#     "dopri8"
+#         High-order explicit method. Expensive. Use mainly for high-accuracy
+#         non-stiff validation, not routine fitting.
+#
+#     "bosh3"
+#         Lower-order explicit method. Can be useful for rough fast tests.
+#
+#   Implicit stiff solvers:
+#
+#     "kvaerno3"
+#         Lower-order stiff ESDIRK. More robust than explicit methods, cheaper
+#         than Kvaerno4/5, but less accurate.
+#
+#     "kvaerno4"
+#         Best practical default for stiff biological ODE fitting.
+#         Recommended active solver for coupled RNA/protein/phosphosite systems.
+#
+#     "kvaerno5"
+#         Higher-order stiff solver. Use for final validation if Kvaerno4 works
+#         and you need tighter accuracy. More expensive.
+#
+# Recommended:
+#   ode_solver = "kvaerno4"
+#
+# ode_adjoint:
+#
+#   "forward"
+#       Required for jac_mode = "fwd".
+#       Best default for Optimistix least_squares with LM/Gauss-Newton/Dogleg.
+#
+#   "recursive"
+#       RecursiveCheckpointAdjoint.
+#       Recommended reverse-mode Diffrax adjoint.
+#       Use with jac_mode = "bwd".
+#
+#   "checkpoint"
+#       Same conceptual role as recursive if your factory maps it that way.
+#
+#   "direct"
+#       Supports both forward and reverse AD, but is usually slower.
+#       Use only for special mixed-AD or Hessian/debugging cases.
+#
+#   "backsolve"
+#       Continuous adjoint. Low memory but approximate gradients.
+#       Not recommended for main fitting.
+#
+#   "none"
+#       Let Diffrax default behavior apply. Not recommended for this project
+#       because explicit configuration prevents AD mismatches.
+#
+# rtol / atol:
+#   ODE adaptive step tolerances.
+#
+#   Looser:
+#       rtol = 1e-5
+#       atol = 1e-8
+#       faster and usually enough during calibration.
+#
+#   Tighter:
+#       rtol = 1e-6
+#       atol = 1e-9
+#       better for final validation but slower.
+#
+# max_steps:
+#   Maximum internal ODE solver steps.
+#   Increase when using stiff solvers or long simulations.
+#
+# dt0:
+#   Initial step size.
+#   For early fast phosphosite dynamics, 0.01 is reasonable.
+#   For long steady-state simulations, a larger dt0 may be acceptable.
+#
+# root_find_max_steps:
+#   Used only by implicit solvers such as Kvaerno3/4/5.
+#   If implicit stage solves fail, increase from 10 to 20 or 30.
+#
 # ---------------------------------------------------------------------------
-# [loss_weights]  – relative weight of each objective term
+# Active profile below:
+#   Stiff biological calibration profile
+#   Optimistix jac_mode = "fwd"
+#   Diffrax ode_adjoint = "forward"
 # ---------------------------------------------------------------------------
+[solver]
+ode_solver          = "tsit5"    # best default for likely stiff biochemical ODEs
+ode_adjoint         = "forward"     # required because [optimisation] jac_mode = "fwd"
+
+rtol                = 1e-5
+atol                = 1e-8
+max_steps           = 32768
+dt0                 = 0.01
+root_find_max_steps = 10
+
+
+# =============================================================================
+# Alternative solver profiles
+# =============================================================================
+#
+# Keep these commented. Do not create duplicate active [solver] or [optimisation]
+# sections in TOML.
+#
+# ---------------------------------------------------------------------------
+# Profile A: fast non-stiff sanity check
+# ---------------------------------------------------------------------------
+#
+# Use this first when debugging shapes, data loading, and residual construction.
+# If it works and is stable, it may be enough.
+#
+# [optimisation]
+# jac_mode     = "fwd"
+# ls_solver    = "lm"
+# optx_adjoint = "implicit"
+#
+# [solver]
+# ode_solver          = "tsit5"
+# ode_adjoint         = "forward"
+# rtol                = 1e-6
+# atol                = 1e-9
+# max_steps           = 32768
+# dt0                 = 0.01
+# root_find_max_steps = 10
+#
+# ---------------------------------------------------------------------------
+# Profile B: main stiff biological fit
+# ---------------------------------------------------------------------------
+#
+# This is the active profile in this file.
+#
+# [optimisation]
+# jac_mode     = "fwd"
+# ls_solver    = "lm"
+# optx_adjoint = "implicit"
+#
+# [solver]
+# ode_solver          = "kvaerno4"
+# ode_adjoint         = "forward"
+# rtol                = 1e-5
+# atol                = 1e-8
+# max_steps           = 131072
+# dt0                 = 0.01
+# root_find_max_steps = 20
+#
+# ---------------------------------------------------------------------------
+# Profile C: higher-accuracy stiff final validation
+# ---------------------------------------------------------------------------
+#
+# Use after obtaining a good fit. More expensive.
+#
+# [solver]
+# ode_solver          = "kvaerno5"
+# ode_adjoint         = "forward"
+# rtol                = 1e-6
+# atol                = 1e-9
+# max_steps           = 131072
+# dt0                 = 0.01
+# root_find_max_steps = 20
+#
+# ---------------------------------------------------------------------------
+# Profile D: reverse-mode fallback
+# ---------------------------------------------------------------------------
+#
+# Use if forward-mode AD fails or is too expensive.
+#
+# [optimisation]
+# jac_mode     = "bwd"
+# ls_solver    = "lm"
+# optx_adjoint = "implicit"
+#
+# [solver]
+# ode_solver          = "kvaerno4"
+# ode_adjoint         = "recursive"
+# rtol                = 1e-5
+# atol                = 1e-8
+# max_steps           = 131072
+# dt0                 = 0.01
+# root_find_max_steps = 20
+#
+# ---------------------------------------------------------------------------
+# Profile E: not recommended except for debugging mixed AD
+# ---------------------------------------------------------------------------
+#
+# DirectAdjoint supports both forward and reverse AD but is usually slower.
+#
+# [solver]
+# ode_solver          = "tsit5"
+# ode_adjoint         = "direct"
+# rtol                = 1e-6
+# atol                = 1e-9
+# max_steps           = 32768
+# dt0                 = 0.01
+# root_find_max_steps = 10
+#
+# ---------------------------------------------------------------------------
+# Profile F: avoid for main fitting
+# ---------------------------------------------------------------------------
+#
+# BacksolveAdjoint gives approximate gradients. Do not use as the default
+# calibration path.
+#
+# [solver]
+# ode_solver          = "tsit5"
+# ode_adjoint         = "backsolve"
+# rtol                = 1e-6
+# atol                = 1e-9
+# max_steps           = 32768
+# dt0                 = 0.01
+# root_find_max_steps = 10
+
+
+# =============================================================================
+# [loss_weights] – relative weight of each residual block
+# =============================================================================
+#
+# These weights are baked into the residual vector as sqrt(weight) factors:
+#
+#   residual = sqrt(weight * element_weight) * (simulation - observation)
+#
+# Therefore least-squares minimises the weighted sum of squared residuals.
+#
+# phospho:
+#   Weight for phosphosite trajectories.
+#
+# abundance:
+#   Weight for protein abundance trajectories.
+#
+# mrna:
+#   Weight for RNA / R_rna trajectories.
+#
+# reg:
+#   Weight multiplier for regularisation block if applied in the objective path.
+#
+# Practical advice:
+#   - Start with all 1.0.
+#   - If phosphosite fit dominates and RNA is ignored, increase mrna.
+#   - If RNA dominates and phosphosite fit gets poor, reduce mrna.
+#   - Keep reg modest unless parameters become biologically implausible.
+# =============================================================================
 [loss_weights]
 phospho   = 1.0
 abundance = 1.0
 mrna      = 1.0
 reg       = 1.0
 
-# ---------------------------------------------------------------------------
-# [hybrid]  – settings used only when [optimisation] solver = "hybrid"
+
+# =============================================================================
+# [hybrid] – settings used only when [optimisation] solver = "hybrid"
+# =============================================================================
 #
-# Phase 0:  Latin Hypercube Sampling warm-start screen
-# Phase 1:  evosax global search (CMA-ES family)
-# Phase 2:  Optimistix LM polish on top-K evosax candidates
-# Phase 3:  QDax MAP-Elites behavioural repertoire (always runs)
-# ---------------------------------------------------------------------------
+# Hybrid pipeline:
+#
+#   Phase 0: Latin Hypercube Sampling warm-start screen
+#   Phase 1: evosax global search
+#   Phase 2: Optimistix LM polish on top candidates
+#   Phase 3: QDax MAP-Elites behavioural repertoire
+#
+# Use hybrid when:
+#   - local LM repeatedly gets trapped,
+#   - initial parameter guesses are unreliable,
+#   - many multi-start runs fail,
+#   - the objective landscape is highly rugged.
+#
+# Do not use hybrid for quick debugging. It is much more expensive.
+# =============================================================================
 [hybrid]
 
-# ── Phase 0: LHS screen ────────────────────────────────────────────────────
-# skip_lhs = true bypasses Phase 0; evosax starts from a random population.
-lhs_n_samples = 128    # total LHS draw size
-lhs_top_p     = 8     # top-P seeds forwarded to evosax as warm-start
+# ---------------------------------------------------------------------------
+# Phase 0: LHS screen
+# ---------------------------------------------------------------------------
+#
+# lhs_n_samples:
+#   Number of random Latin Hypercube samples.
+#   Increase for high-dimensional parameter spaces.
+#
+# lhs_top_p:
+#   Number of best LHS candidates forwarded to evosax.
+#
+# skip_lhs:
+#   false – use LHS warm-start screen.
+#   true  – bypass LHS and let evosax start randomly.
+# ---------------------------------------------------------------------------
+lhs_n_samples = 128
+lhs_top_p     = 8
 skip_lhs      = false
 
-# ── Phase 1: evosax global search ──────────────────────────────────────────
-# es_algo choices:
-#   sep_cma_es  – O(n) per step, preferred for dim 50-500  (default)
-#   cma_es      – full covariance, preferred for dim ≤ 100
-#   de          – Differential Evolution, robust when ODE solve fails often
+
+# ---------------------------------------------------------------------------
+# Phase 1: evosax global search
+# ---------------------------------------------------------------------------
+#
+# es_algo:
+#   "sep_cma_es"
+#       Separable CMA-ES.
+#       O(n) scaling.
+#       Preferred for dimensions around 50–500.
+#
+#   "cma_es"
+#       Full covariance CMA-ES.
+#       Better covariance modeling but O(n^2).
+#       Use mainly when parameter dimension is <= 100.
+#
+#   "de"
+#       Differential Evolution.
+#       Often robust when ODE solves fail frequently or gradients are poor.
+#
+# es_popsize:
+#   Population size per generation.
+#
+# es_n_generations:
+#   Number of global-search generations.
+#
+# es_sigma_init:
+#   Initial mutation scale in normalised [0, 1] parameter space.
+#
+# es_top_k:
+#   Number of final candidates passed to LM polish.
+# ---------------------------------------------------------------------------
 es_algo          = "sep_cma_es"
 es_popsize       = 64
 es_n_generations = 200
-es_sigma_init    = 0.3    # initial step size in normalised [0,1] space
-es_top_k         = 5      # number of LM seeds drawn from final evosax population
+es_sigma_init    = 0.3
+es_top_k         = 5
 
-# ── Phase 2: LM polish ─────────────────────────────────────────────────────
+
+# ---------------------------------------------------------------------------
+# Phase 2: LM polish
+# ---------------------------------------------------------------------------
+#
 # These override [optimisation] max_steps / rtol / atol for the hybrid path.
+# Keep them similar to the classic LM settings unless polishing is too slow.
+# ---------------------------------------------------------------------------
 lm_max_steps = 500
 lm_rtol      = 1e-8
 lm_atol      = 1e-8
 
-# ── General ────────────────────────────────────────────────────────────────
-seed    = 0      # master RNG seed (covers LHS, evosax, QDax init)
-verbose = true  # per-generation / per-seed progress logging
 
 # ---------------------------------------------------------------------------
-# [qdax]  – MAP-Elites behavioural repertoire
-# Runs after Phase 2; builds a 2-D grid of parameter sets
-# (BD axes: log10 median kinase half-life, log10 median protein half-life).
-# Output saved to {output_dir}/{run_prefix}_qdax_repertoire.npz
+# General hybrid controls
 # ---------------------------------------------------------------------------
+#
+# seed:
+#   Master random seed.
+#
+# verbose:
+#   true gives detailed per-generation/per-seed logging.
+# ---------------------------------------------------------------------------
+seed    = 0
+verbose = true
+
+
+# =============================================================================
+# [qdax] – MAP-Elites behavioural repertoire
+# =============================================================================
+#
+# Used after hybrid fitting.
+#
+# Behaviour descriptor axes:
+#   1. log10 median kinase half-life
+#   2. log10 median protein half-life
+#
+# Output:
+#   {output_dir}/hybrid_qdax_repertoire.npz
+#
+# n_centroids:
+#   Number of CVT centroids.
+#   Higher = finer behavioural map, more compute.
+#
+# batch_size:
+#   Number of variants evaluated per MAP-Elites iteration.
+#
+# n_iterations:
+#   Total MAP-Elites iterations.
+#
+# iso_sigma / line_sigma:
+#   Mutation parameters for isoline variation.
+# =============================================================================
 [qdax]
-n_centroids  = 1024    # Voronoi CVT centroids (grid resolution)
-batch_size   = 256     # number of variants evaluated per MAP-Elites iteration
-n_iterations = 2000    # total MAP-Elites iterations
-iso_sigma    = 0.005   # isoline mutation – perturbation magnitude
-line_sigma   = 0.05    # isoline mutation – line interpolation spread
+n_centroids  = 1024
+batch_size   = 256
+n_iterations = 2000
+iso_sigma    = 0.005
+line_sigma   = 0.05
 
-# ---------------------------------------------------------------------------
-# [bounds]  – per-parameter rate bounds (used by create_bounds())
-# All values must be positive.
-# ---------------------------------------------------------------------------
+
+# =============================================================================
+# [bounds] – parameter bounds used by create_bounds()
+# =============================================================================
+#
+# All values must be positive except gamma internals if represented separately.
+#
+# rate_min:
+#   Lower bound for positive kinetic rates after exponentiation.
+#
+# rate_max:
+#   Generic upper bound for kinetic rates.
+#
+# protein_degradation_max:
+#   Upper bound for protein degradation rates.
+#   Keep biologically conservative.
+#
+# kinase_rate_max:
+#   Upper bound for kinase activation/deactivation rates.
+#
+# phosphatase_rate_max:
+#   Upper bound for phosphosite off-rates / dephosphorylation-like terms.
+#
+# gamma_abs_max:
+#   Intended absolute cap for gamma-like coupling coefficients if used by bounds.
+#
+# rna_max:
+#   Biological/numerical upper guide for RNA fold-change.
+#
+# abundance_max:
+#   Biological/numerical upper guide for protein abundance fold-change.
+# =============================================================================
 [bounds]
 rate_min                = 1e-5
 rate_max                = 10.0
@@ -119,61 +713,155 @@ gamma_abs_max           = 2.0
 rna_max                 = 10.0
 abundance_max           = 5.0
 
-# ---------------------------------------------------------------------------
-# [solver]  – Diffrax ODE solver tolerances
-# ---------------------------------------------------------------------------
-[solver]
-rtol      = 1e-6
-atol      = 1e-9
-max_steps = 32768
 
-# ---------------------------------------------------------------------------
-# [time]  – time-point configuration
-# ---------------------------------------------------------------------------
+# =============================================================================
+# [time] – time-point and interpolation options
+# =============================================================================
+#
+# mrna_time_points:
+#   RNA sampling time points.
+#   Used when RNA data is provided and matched to model proteins.
+#
+# interpolation:
+#   "piecewise_constant"
+#       Holds input values constant between observed time points.
+#       More robust for sparse biological time-series.
+#
+#   "linear"
+#       Linear interpolation between observed time points.
+#       Smoother but can introduce artificial intermediate dynamics.
+#
+# Recommended:
+#   piecewise_constant for sparse omics time series.
+# =============================================================================
 [time]
 mrna_time_points = [4, 8, 15, 30, 60, 120, 240, 480, 960]
-interpolation    = "piecewise_constant"   # piecewise_constant | linear
+interpolation    = "piecewise_constant"   # options: "piecewise_constant" | "linear"
 
-# ---------------------------------------------------------------------------
-# [derived_rates]  – options for data-derived rate functions
-# ---------------------------------------------------------------------------
+
+# =============================================================================
+# [derived_rates] – data-derived rate functions
+# =============================================================================
+#
+# s_prod_fn:
+#   "softplus"
+#       Positive smooth production function.
+#       Recommended because it avoids negative production rates.
+#
+#   "linear"
+#       Direct linear form.
+#       Use only if you explicitly want signed/linear behavior and have guards.
+#
+# rna_relax:
+#   Relaxation strength for RNA/R_rna dynamics.
+#
+#   Smaller values:
+#       slower RNA relaxation, smoother trajectories.
+#
+#   Larger values:
+#       faster RNA tracking, potentially stiffer dynamics.
+#
+# For stiff coupled RNA/protein/phosphosite models, high rna_relax can make
+# explicit solvers struggle.
+# =============================================================================
 [derived_rates]
-s_prod_fn = "softplus"   # softplus | linear
+s_prod_fn = "softplus"   # options: "softplus" | "linear"
 rna_relax = 0.02
 
-# ---------------------------------------------------------------------------
-# [analysis]  – downstream analyses to run after fitting
-# ---------------------------------------------------------------------------
+
+# =============================================================================
+# [analysis] – downstream analyses after fitting
+# =============================================================================
+#
+# tune:
+#   Hyperparameter scan before final fitting.
+#
+# run_steadystate:
+#   Long-horizon simulation to study convergence/relaxation.
+#
+# run_knockouts:
+#   In-silico knockout screen.
+#
+# run_sensitivity:
+#   Global sensitivity analysis.
+#
+# Practical advice:
+#   During solver debugging, set all to false.
+#   After fitting is stable, enable analyses one by one.
+# =============================================================================
 [analysis]
 tune            = false
 run_steadystate = true
 run_knockouts   = true
 run_sensitivity = true
 
-# ---------------------------------------------------------------------------
-# [steadystate]  – long-horizon relaxation analysis options
-# The network is simulated under terminal/derived input far beyond the observed
-# time window to study convergence of the relative phosphosite signal and other
-# bounded states.  These parameters are only used when analysis.run_steadystate = true.
+
+# =============================================================================
+# [steadystate] – long-horizon relaxation analysis
+# =============================================================================
 #
-# Validation:
-#   t_end > early_end > 0
-#   n_early >= 2, n_late >= 2
-#   late_grid in {"linear", "geomspace"}
-#   rtol > 0, atol > 0
-#   dt0 = null (auto) or > 0
-#   max_steps > 0, top_n > 0
-# ---------------------------------------------------------------------------
+# Used only when:
+#
+#   [analysis]
+#   run_steadystate = true
+#
+# Purpose:
+#   Simulates the fitted model beyond the observed time window to study whether
+#   phosphosite, protein, kinase, and RNA states converge or diverge.
+#
+# t_end:
+#   Final simulation time in minutes.
+#
+# early_end:
+#   End of dense early-time grid.
+#
+# n_early:
+#   Number of points in [0, early_end].
+#
+# n_late:
+#   Number of points in (early_end, t_end].
+#
+# late_grid:
+#   "geomspace"
+#       More points near early late-time transition, fewer near t_end.
+#       Recommended for relaxation.
+#
+#   "linear"
+#       Uniform late-time grid.
+#
+# rtol / atol:
+#   ODE tolerances for steady-state simulation.
+#   Separate from fitting solver tolerances.
+#
+# dt0:
+#   Initial ODE step for steady-state simulation.
+#   Can be larger than fitting dt0 because the simulation is long-horizon.
+#
+# max_steps:
+#   Long-horizon simulations need a large step cap.
+#
+# top_n:
+#   Number of top trajectories shown in plots.
+#
+# skip_plots_on_nonfinite:
+#   true prevents plotting crashes when all outputs are NaN/non-finite.
+#
+# strict:
+#   false – log warnings on non-finite steady-state results.
+#   true  – raise RuntimeError on non-finite results.
+# =============================================================================
 [steadystate]
-t_end                 = 2000.0    # final simulation time (minutes)
-early_end             = 100.0     # end of fine early time grid (minutes)
-n_early               = 100       # number of time points in [0, early_end]
-n_late                = 80        # number of time points in (early_end, t_end]
-late_grid             = "geomspace"  # "geomspace" | "linear"
-rtol                  = 1e-6
-atol                  = 1e-8
-dt0                   = 0.1       # initial ODE step size (null = auto)
-max_steps             = 131072
-top_n                 = 10        # top-N trajectories shown in line plots
-skip_plots_on_nonfinite = true    # skip seaborn plots when output is all-NaN
-strict                = false     # raise RuntimeError on non-finite steady-state
+t_end                    = 2000.0
+early_end                = 100.0
+n_early                  = 100
+n_late                   = 80
+late_grid                = "geomspace"  # options: "geomspace" | "linear"
+
+rtol                     = 1e-6
+atol                     = 1e-8
+dt0                      = 0.1
+max_steps                = 131072
+
+top_n                    = 10
+skip_plots_on_nonfinite  = true
+strict                   = false

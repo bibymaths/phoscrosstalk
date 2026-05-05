@@ -158,15 +158,22 @@ def _print_config_summary(cfg, config_path: str) -> None:
         "  [optimisation]",
         f"    n_starts  = {o.n_starts}",
         f"    max_steps = {o.max_steps}",
+        f"    ls_solver = {getattr(o, 'ls_solver', 'lm')}",
+        f"    optx_adjoint = {getattr(o, 'optx_adjoint', 'implicit')}",
+        f"    jac_mode = {getattr(o, 'jac_mode', 'fwd')}",
         f"    lambda_net = {o.lambda_net}",
         f"    reg_lambda = {o.reg_lambda}",
         "",
         "  [loss_weights]",
         f"    phospho={lw.phospho}  abundance={lw.abundance}  "
-        f"mrna={lw.mrna}  reg={lw.reg}",
+        f"    mrna={lw.mrna}  reg={lw.reg}",
         "",
         "  [solver]",
-        f"    rtol={s.rtol}  atol={s.atol}  max_steps={s.max_steps}",
+        f"    ode_solver={getattr(s, 'ode_solver', 'tsit5')}  "
+        f"    ode_adjoint={getattr(s, 'ode_adjoint', 'forward')}",
+        f"    rtol={s.rtol}  atol={s.atol}  max_steps={s.max_steps}  "
+        f"    dt0={getattr(s, 'dt0', 0.01)}  "
+        f"    root_find_max_steps={getattr(s, 'root_find_max_steps', 10)}",
         "",
     ]
     if an is not None:
@@ -361,6 +368,17 @@ def main():
         max_steps=cfg.optimisation.max_steps,
         lambda_net=cfg.optimisation.lambda_net,
         reg_lambda=cfg.optimisation.reg_lambda,
+        # Optimistix least-squares controls
+        ls_solver=getattr(cfg.optimisation, "ls_solver", "lm"),
+        optx_adjoint=getattr(cfg.optimisation, "optx_adjoint", "implicit"),
+        jac_mode=getattr(cfg.optimisation, "jac_mode", "fwd"),
+
+        # Diffrax ODE solver controls
+        ode_solver=getattr(cfg.solver, "ode_solver", "tsit5"),
+        ode_adjoint=getattr(cfg.solver, "ode_adjoint", "forward"),
+        ode_dt0=getattr(cfg.solver, "dt0", 0.01),
+        ode_root_find_max_steps=getattr(cfg.solver, "root_find_max_steps", 10),
+
         # solver backend + hybrid settings
         solver=getattr(cfg.optimisation, "solver", "lm"),
         es_algo=getattr(
@@ -802,6 +820,10 @@ def main():
         R_data0=R_data0,
         rna_relax=cfg.derived_rates.rna_relax,
         W_data_mrna=W_data_mrna_matched if len(rna_fit_genes) > 0 else None,
+        ode_solver_kind=args.ode_solver,
+        ode_dt0=args.ode_dt0,
+        ode_root_find_max_steps=args.ode_root_find_max_steps,
+        ode_adjoint_kind=args.ode_adjoint,
     )
 
     # Validate problem shapes before starting optimization
@@ -853,6 +875,10 @@ def main():
             rna_fit_genes=rna_fit_genes,
             R_data0=R_data0,
             rna_relax=cfg.derived_rates.rna_relax,
+            ode_solver_kind=args.ode_solver,
+            ode_adjoint_kind=args.ode_adjoint,
+            dt0=args.ode_dt0,
+            root_find_max_steps=args.ode_root_find_max_steps,
         )
 
         _hybrid_loss_fn = make_loss_fn(

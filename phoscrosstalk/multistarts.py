@@ -160,13 +160,27 @@ def run_multi_start_optimization(problem, args, P_scaled):
         R_data0=getattr(problem, "R_data0", None),
         W_data_mrna=getattr(problem, "W_data_mrna", None),
         rna_relax=getattr(problem, "rna_relax", 0.1),
+        ode_solver_kind=getattr(args, "ode_solver", "tsit5"),
+        ode_adjoint_kind=getattr(args, "ode_adjoint", "forward"),
+        dt0=getattr(args, "ode_dt0", 0.01),
+        root_find_max_steps=getattr(args, "ode_root_find_max_steps", 10),
     )
 
     starts = _generate_starts(n_starts, xl, xu)
 
     logger.header("[*] Starting Multi-Start Optimistix Optimisation")
     logger.info(f"    Optimizer: Optimistix LevenbergMarquardt(verbose={opt_verbose})")
-    logger.info("    ODE solver: Diffrax Tsit5 + PIDController + DirectAdjoint")
+    logger.info(
+        "    ODE solver: "
+        f"Diffrax {getattr(args, 'ode_solver', 'tsit5')} "
+        f"+ PIDController + {getattr(args, 'ode_adjoint', 'forward')} adjoint"
+    )
+    logger.info(
+        "    Optimistix: "
+        f"{getattr(args, 'ls_solver', 'lm')} "
+        f"+ jac={getattr(args, 'jac_mode', 'fwd')} "
+        f"+ adjoint={getattr(args, 'optx_adjoint', 'implicit')}"
+    )
     logger.info(f"    {len(starts)} starting points, max_steps={max_steps} each")
     logger.info(
         f"    weights: phospho={w_phospho}, abundance={w_abundance}, reg={w_reg}, mrna={w_mrna}"  # noqa: E501
@@ -189,6 +203,9 @@ def run_multi_start_optimization(problem, args, P_scaled):
                 rtol=opt_rtol,
                 atol=opt_atol,
                 verbose=opt_verbose,
+                optx_adjoint=getattr(args, "optx_adjoint", "implicit"),
+                ls_solver=getattr(args, "ls_solver", "lm"),
+                jac_mode=getattr(args, "jac_mode", "fwd")
             )
             all_X.append(theta_opt)
             all_F.append([f1, f2, f3, f4])
