@@ -126,7 +126,7 @@ def _mtime(path: str) -> float:
         return 0.0
 
 
-def _md5(path: str, chunk: int = 65536) -> str:
+def _sha256(path: str, chunk: int = 65536) -> str:
     h = hashlib.sha256()
     try:
         with open(path, "rb") as fh:
