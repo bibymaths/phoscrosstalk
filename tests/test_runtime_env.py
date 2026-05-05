@@ -12,9 +12,6 @@ Verifies that:
 
 import os
 
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -118,9 +115,7 @@ class TestMergeXlaFlags:
         from phoscrosstalk.runtime_env import _merge_xla_flags
 
         existing = "--xla_cpu_multi_thread_eigen=false --some_other_flag=1"
-        result = _merge_xla_flags(
-            existing, {"--xla_cpu_multi_thread_eigen": "true"}
-        )
+        result = _merge_xla_flags(existing, {"--xla_cpu_multi_thread_eigen": "true"})
         assert "--xla_cpu_multi_thread_eigen=true" in result
         assert "--xla_cpu_multi_thread_eigen=false" not in result
         assert "--some_other_flag=1" in result
@@ -129,9 +124,7 @@ class TestMergeXlaFlags:
         from phoscrosstalk.runtime_env import _merge_xla_flags
 
         existing = "intra_op_parallelism_threads=4"
-        result = _merge_xla_flags(
-            existing, {"intra_op_parallelism_threads": "16"}
-        )
+        result = _merge_xla_flags(existing, {"intra_op_parallelism_threads": "16"})
         assert "intra_op_parallelism_threads=16" in result
         assert "intra_op_parallelism_threads=4" not in result
 

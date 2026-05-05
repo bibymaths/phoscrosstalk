@@ -15,7 +15,6 @@ from __future__ import annotations
 import diffrax
 import optimistix as optx
 
-
 _VALID_ODE_SOLVERS = {
     "tsit5",
     "dopri5",
@@ -42,10 +41,7 @@ _VALID_LS_SOLVERS = {
     "gauss_newton",
 }
 
-_VALID_OPTX_ADJOINTS = {
-    "implicit",
-    "checkpoint"
-}
+_VALID_OPTX_ADJOINTS = {"implicit", "checkpoint"}
 
 
 def make_diffrax_solver(

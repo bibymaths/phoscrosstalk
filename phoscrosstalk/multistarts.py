@@ -380,9 +380,19 @@ def run_multi_start_optimization(problem, args, P_scaled):
                         result = future.result()
                         results_map[result[0]] = result
                     except Exception as exc:
-                        logger.warning(f"    -> Run {orig_i + 1} raised exception: {exc}")
+                        logger.warning(
+                            f"    -> Run {orig_i + 1} raised exception: {exc}"
+                        )
                         results_map[orig_i] = (
-                            orig_i, False, None, None, None, None, None, None, str(exc)
+                            orig_i,
+                            False,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            str(exc),
                         )
         except Exception as exc:
             logger.warning(
@@ -406,11 +416,29 @@ def run_multi_start_optimization(problem, args, P_scaled):
                         ls_solver=getattr(args, "ls_solver", "lm"),
                         jac_mode=getattr(args, "jac_mode", "fwd"),
                     )
-                    results_map[i] = (i, True, theta_opt, total_loss, f1, f2, f3, f4, None)
+                    results_map[i] = (
+                        i,
+                        True,
+                        theta_opt,
+                        total_loss,
+                        f1,
+                        f2,
+                        f3,
+                        f4,
+                        None,
+                    )
                 except Exception as inner_exc:
                     logger.warning(f"    -> Run {i + 1} failed: {inner_exc}")
                     results_map[i] = (
-                        i, False, None, None, None, None, None, None, str(inner_exc)
+                        i,
+                        False,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        str(inner_exc),
                     )
 
         # Collect results in original start order

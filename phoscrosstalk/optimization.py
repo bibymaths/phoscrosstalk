@@ -40,7 +40,6 @@ import numpy as np
 import optimistix as optx
 from numba import njit
 
-from phoscrosstalk.logger import get_logger
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.core_mechanisms import decode_theta
 from phoscrosstalk.jax_mechanisms import (
@@ -48,6 +47,7 @@ from phoscrosstalk.jax_mechanisms import (
     compute_prev_site_idx,
     make_rhs,
 )
+from phoscrosstalk.logger import get_logger
 from phoscrosstalk.simulation import build_full_A0, simulate_ode
 from phoscrosstalk.solver_config import (
     make_diffrax_adjoint,
@@ -403,9 +403,7 @@ def make_loss_fn(
     )
     term = diffrax.ODETerm(rhs_fn)
     solver = make_diffrax_solver(
-        ode_solver_kind,
-        root_find_max_steps=root_find_max_steps,
-        scan_kind=scan_kind
+        ode_solver_kind, root_find_max_steps=root_find_max_steps, scan_kind=scan_kind
     )
     sctrl = make_stepsize_controller(rtol=rtol, atol=atol)
     saveat = diffrax.SaveAt(ts=t_eval)
@@ -448,7 +446,7 @@ def make_loss_fn(
             stepsize_controller=sctrl,
             max_steps=max_steps,
             throw=False,
-            adjoint=adjoint
+            adjoint=adjoint,
         )
 
         xs = sol.ys  # (T_unified, 3K+M+N) – new state layout
@@ -703,8 +701,7 @@ def make_residuals_fn(
 
     term = diffrax.ODETerm(rhs_fn)
     ode_solver = make_diffrax_solver(
-        ode_solver_kind,
-        root_find_max_steps=root_find_max_steps
+        ode_solver_kind, root_find_max_steps=root_find_max_steps
     )
     sctrl = make_stepsize_controller(rtol=rtol, atol=atol)
     saveat = diffrax.SaveAt(ts=t_eval)
@@ -848,6 +845,7 @@ def make_residuals_fn(
         return finite_residuals, (f1, f2, f3, f4)
 
     return residuals_fn
+
 
 def run_single_optimisation(
     residuals_fn,
