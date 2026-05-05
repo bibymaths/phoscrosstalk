@@ -14,7 +14,7 @@ import pandas as pd
 from phoscrosstalk.config import DEFAULT_TIMEPOINTS
 from phoscrosstalk.logger import get_logger
 
-logger = get_logger()
+logger = get_logger(__name__)
 
 
 def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):

@@ -91,7 +91,7 @@ from phoscrosstalk.post_processing import (
 from phoscrosstalk.sensitivity import _generate_param_labels, run_global_sensitivity
 from phoscrosstalk.weighting import build_weight_matrices
 
-logger = get_logger()
+logger = get_logger(__name__)
 
 
 def _save_model_entities_table(
