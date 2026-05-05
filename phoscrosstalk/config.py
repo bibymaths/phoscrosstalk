@@ -209,6 +209,42 @@ _DEFAULTS = {
         "event_rtol": None,  # null → use solver rtol
         "event_atol": None,  # null → use solver atol
     },
+    # Dense / continuous output after fitting.
+    # Does NOT affect the optimisation loss; purely for post-fit export and
+    # dashboard visualisation.
+    "simulation": {
+        # Run a dense-grid forward simulation after fitting and save the output.
+        "dense_output": True,
+        # Number of uniformly-spaced time points in [0, t_max_observed].
+        "dense_n_points": 200,
+        # Label written to the interpolation_method column in the dense output TSV.
+        "dense_interpolation": "diffrax_dense",
+        # Write fit_timeseries_dense.tsv to the output directory.
+        "save_dense": True,
+    },
+    # Continuous interpolation of observed data for diagnostics/visualisation.
+    # This is NOT used in the loss function and does NOT expand training targets.
+    # Interpolated observed curves are exported to fit_timeseries_dense.tsv with
+    # series_type = "observed_interpolated_dense" so they cannot be confused with
+    # measured data.
+    "data_interpolation": {
+        # Enable observed-data cubic interpolation for diagnostic output.
+        # Default False keeps backward compatibility with existing configs.
+        "enabled": False,
+        # Interpolation method applied to observed sparse arrays.
+        # Supported: "linear" (safe for NaN-heavy data), "cubic_hermite"
+        # (uses diffrax.CubicInterpolation via backward_hermite_coefficients).
+        "method": "linear",
+        # When True, forward-fill the last observed value beyond the final
+        # non-NaN time point.  Applies to interpolation-only arrays; does NOT
+        # modify the original sparse observed data used in the loss.
+        "fill_forward_nans_at_end": False,
+        # Strategy for NaNs at the start of a time series before the first
+        # non-NaN observation.  null → leave as NaN (safest); "zero" → fill
+        # with zero; "first_valid" → repeat the first valid value.
+        # Never fills the original training arrays.
+        "replace_nans_at_start": None,
+    },
 }
 
 
@@ -674,6 +710,37 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
         ):
             errors.append(
                 f"  [steadystate] event_atol = {ss_event_atol!r} must be null or a positive number."
+            )
+
+    # -------------------------------------------------------------------
+    # Simulation dense output
+    # -------------------------------------------------------------------
+    sim_cfg = getattr(cfg, "simulation", None)
+    if sim_cfg is not None:
+        dense_n = getattr(sim_cfg, "dense_n_points", 200)
+        if not isinstance(dense_n, int) or dense_n < 2:
+            errors.append(
+                f"  [simulation] dense_n_points = {dense_n!r} must be an integer >= 2."
+            )
+
+    # -------------------------------------------------------------------
+    # Data interpolation (diagnostic only, not used in loss)
+    # -------------------------------------------------------------------
+    di_cfg = getattr(cfg, "data_interpolation", None)
+    if di_cfg is not None:
+        di_method = getattr(di_cfg, "method", "linear")
+        _valid_di = {"linear", "cubic_hermite"}
+        if di_method not in _valid_di:
+            errors.append(
+                f"  [data_interpolation] method = {di_method!r} is invalid. "
+                f"Must be one of: {sorted(_valid_di)}"
+            )
+        replace_start = getattr(di_cfg, "replace_nans_at_start", None)
+        _valid_replace = {None, "zero", "first_valid"}
+        if replace_start not in _valid_replace:
+            errors.append(
+                f"  [data_interpolation] replace_nans_at_start = {replace_start!r} "
+                f"is invalid. Must be one of: null, 'zero', 'first_valid'."
             )
 
     # -------------------------------------------------------------------
