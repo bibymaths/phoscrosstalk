@@ -4,8 +4,6 @@
 
 ::: phoscrosstalk.config
 
-::: phoscrosstalk.core_mechanisms
-
 ::: phoscrosstalk.jax_mechanisms
 
 ::: phoscrosstalk.simulation

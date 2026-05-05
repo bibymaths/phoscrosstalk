@@ -12,7 +12,7 @@ import pandas as pd
 import seaborn as sns
 
 from phoscrosstalk.config import ModelDims
-from phoscrosstalk.core_mechanisms import decode_theta
+from phoscrosstalk.jax_mechanisms import decode_theta_jax
 from phoscrosstalk.logger import get_logger
 
 logger = get_logger(__name__)

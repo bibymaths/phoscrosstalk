@@ -1,56 +1,60 @@
-import numpy as np
-import numpy.typing as npt
-from numba import njit, prange
+import jax
+import jax.numpy as jnp
+from jax import lax
 
-FloatArray = npt.NDArray[np.float64]
-
-
-@njit("f8(f8[:, ::1], f8[:, ::1])", fastmath=True, parallel=True)
-def frechet_distance(true_coords: FloatArray, pred_coords: FloatArray) -> float:
+@jax.jit
+def frechet_distance(true_coords, pred_coords):
     """
-    Compute the discrete Fréchet distance between two curves.
+    Compute the discrete Fréchet distance between two curves using JAX.
 
     Args:
-        true_coords (FloatArray): The coordinates of the true curve.
-        pred_coords (FloatArray): The coordinates of the predicted curve.
+        true_coords: array of shape (n, d)
+        pred_coords: array of shape (m, d)
 
     Returns:
-        float: The discrete Fréchet distance between the two curves.
+        Scalar JAX array containing the discrete Fréchet distance.
     """
+    true_coords = jnp.asarray(true_coords, dtype=jnp.float64)
+    pred_coords = jnp.asarray(pred_coords, dtype=jnp.float64)
 
-    # Get dimensions
-    n, m = len(true_coords), len(pred_coords)
+    # Pairwise Euclidean distances, shape (n, m)
+    dist = jnp.linalg.norm(
+        true_coords[:, None, :] - pred_coords[None, :, :],
+        axis=-1,
+    )
 
-    # Compute pairwise euclidean distance
-    p = 2
-    dist = np.zeros((n, m))
-    for i in prange(n):
-        for j in prange(m):
-            # Compute Euclidean distance
-            # Formula: (sum(|x_i - y_j|^p))^(1/p)
-            dist[i, j] = np.sum(np.abs(true_coords[i] - pred_coords[j]) ** p) ** (
-                1.0 / p
+    n, m = dist.shape
+
+    # First cell
+    cost00 = dist[0, 0]
+
+    # First column:
+    # cost[i, 0] = max(cost[i - 1, 0], dist[i, 0])
+    first_col = lax.associative_scan(jnp.maximum, dist[:, 0])
+    first_col = first_col.at[0].set(cost00)
+
+    # First row:
+    # cost[0, j] = max(cost[0, j - 1], dist[0, j])
+    first_row = lax.associative_scan(jnp.maximum, dist[0, :])
+    first_row = first_row.at[0].set(cost00)
+
+    # Initialize DP matrix with first row and first column.
+    cost = jnp.full((n, m), jnp.inf, dtype=dist.dtype)
+    cost = cost.at[:, 0].set(first_col)
+    cost = cost.at[0, :].set(first_row)
+
+    def row_step(i, cost):
+        def col_step(j, cost):
+            prev_min = jnp.minimum(
+                jnp.minimum(cost[i - 1, j], cost[i, j - 1]),
+                cost[i - 1, j - 1],
             )
+            value = jnp.maximum(prev_min, dist[i, j])
+            return cost.at[i, j].set(value)
 
-    cost = np.full((n, m), np.inf)
+        cost = lax.fori_loop(1, m, col_step, cost)
+        return cost
 
-    cost[0, 0] = dist[0, 0]
-
-    # Compute dynamic programming matrix
-    for i in range(1, n):
-        # First column
-        cost[i, 0] = max(cost[i - 1, 0], dist[i, 0])
-    for j in range(1, m):
-        # First row
-        cost[0, j] = max(cost[0, j - 1], dist[0, j])
-    for i in range(1, n):
-        # Rest of the matrix
-        for j in range(1, m):
-            # Minimum of three values
-            # (left, above, diagonal)
-            # Formula: min(left, above, diagonal)
-            cost[i, j] = max(
-                min(cost[i - 1, j], cost[i, j - 1], cost[i - 1, j - 1]), dist[i, j]
-            )
+    cost = lax.fori_loop(1, n, row_step, cost)
 
     return cost[-1, -1]

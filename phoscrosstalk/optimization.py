@@ -38,14 +38,12 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import optimistix as optx
-from numba import njit
 
 from phoscrosstalk.config import ModelDims
-from phoscrosstalk.core_mechanisms import decode_theta
 from phoscrosstalk.jax_mechanisms import (
     compute_objectives_jax,
     compute_prev_site_idx,
-    make_rhs,
+    make_rhs, decode_theta_jax,
 )
 from phoscrosstalk.logger import get_logger
 from phoscrosstalk.simulation import build_full_A0, simulate_ode
@@ -74,35 +72,64 @@ _RNA_CLIP_UPPER: float = 20.0
 # but small enough to remain representable in float32 (~3.4e38 max).
 _FAILED_SOLVE_PENALTY: float = 1e3
 
-
-@njit(cache=True)
-def bio_score_nb(theta, K, M, N):
+@jax.jit
+def bio_score_nb(theta, K: int, M: int, N: int):
     """
-    Numba-compiled kernel to calculate the Biological Plausibility Score.
+    JAX-compiled Biological Plausibility Score.
 
-    Derives the half-lives (t_half = ln(2)/k) for kinases and proteins from the parameter
-    vector theta and penalizes deviations from expected biological time scales.
+    Derives kinase and protein half-lives:
+
+        t_half = log(2) / k
+
+    Then penalizes deviation of the median half-lives from expected biological
+    time scales:
+
+        kinase median half-life target: 10
+        protein median half-life target: 600
+
+    Lower score = more biologically plausible.
 
     Args:
-        theta (np.ndarray): Parameter vector (length 2*K+2+3*M+N+4).
-        K, M, N (int): Model dimensions.
+        theta: JAX array parameter vector.
+        K: Number of proteins.
+        M: Number of kinases.
+        N: Number of phosphosites.
 
     Returns:
-        float: The calculated biological score (lower is better/more plausible).
-    """  # noqa: E501
-    (k_deact, d_deg, _, _, _, kK_act, kK_deact, _, _, _, _, _) = decode_theta(
-        theta, K, M, N
-    )
-    t_half_kinase = np.log(2.0) / kK_deact
-    t_half_protein = np.log(2.0) / d_deg
+        Scalar JAX array.
+    """
+    (
+        k_deact,
+        d_deg,
+        _,
+        _,
+        _,
+        kK_act,
+        kK_deact,
+        _,
+        _,
+        _,
+        _,
+        _,
+    ) = decode_theta_jax(theta, K, M, N)
 
-    median_t_kinase = np.sort(t_half_kinase)[len(t_half_kinase) // 2]
-    median_t_protein = np.sort(t_half_protein)[len(t_half_protein) // 2]
+    eps = 1e-12
 
-    return (np.log10(median_t_kinase) - np.log10(10.0)) ** 2 + (
-        np.log10(median_t_protein) - np.log10(600.0)
+    t_half_kinase = jnp.log(2.0) / jnp.maximum(kK_deact, eps)
+    t_half_protein = jnp.log(2.0) / jnp.maximum(d_deg, eps)
+
+    median_t_kinase = jnp.median(t_half_kinase)
+    median_t_protein = jnp.median(t_half_protein)
+
+    score_kinase = (
+        jnp.log10(jnp.maximum(median_t_kinase, eps)) - jnp.log10(10.0)
     ) ** 2
 
+    score_protein = (
+        jnp.log10(jnp.maximum(median_t_protein, eps)) - jnp.log10(600.0)
+    ) ** 2
+
+    return score_kinase + score_protein
 
 def bio_score(theta):
     """
@@ -1166,7 +1193,7 @@ def validate_biological_inputs(
 
     # --- Decoded parameter check ---
     if theta is not None and K is not None and M is not None and N is not None:
-        from phoscrosstalk.core_mechanisms import decode_theta
+        from phoscrosstalk.jax_mechanisms import decode_theta_jax
 
         (
             k_deact,
@@ -1181,7 +1208,7 @@ def validate_biological_inputs(
             gamma_A_S,
             gamma_A_p,
             gamma_K_net,
-        ) = decode_theta(np.asarray(theta, dtype=np.float64), K, M, N)
+        ) = decode_theta_jax(np.asarray(theta, dtype=np.float64), K, M, N)
 
         for pname, parr in [
             ("k_deact", k_deact),
