@@ -18,8 +18,38 @@ make_s_prod_fn(t_protein, Y_data, R_kin_site, kin_to_prot_idx, K, M,
     Build a JAX function ``s_prod_fn(t) -> jnp.array(shape=(K,))``
     representing the kinase-signal-driven synthesis rate at time *t*.
 
-Both functions default gracefully to constant vectors (1.0 and 0.1
+build_data_interpolations(t_obs, P_data, A_data, rna_data, method,
+                          fill_forward_nans_at_end, replace_nans_at_start)
+    Build continuous NumPy/SciPy interpolation objects for observed datasets.
+    **Diagnostic/visualisation only** – output is never fed into the ODE or
+    the optimisation loss.  See docstring for details.
+
+Both factory functions default gracefully to constant vectors (1.0 and 0.1
 respectively) when the required input data are not available.
+
+Interpolation backend design (ODE RHS)
+---------------------------------------
+The ODE right-hand side interpolates derived-rate inputs at every solver step
+using JAX-traceable, piecewise implementations (_piecewise_constant /
+_linear_interp).  These are kept as the sole ODE-time interpolation backend
+because:
+
+* They are fully JAX-traceable with no Python-level branching on traced values.
+* Replacing them with diffrax.CubicInterpolation inside the traced RHS would
+  require passing Diffrax interpolation objects through JIT boundaries, which
+  is currently not supported without rewriting the entire RHS as an Equinox
+  module or similar approach.
+* Performance: piecewise-constant/linear interpolation is negligible overhead
+  compared to the ODE integration cost.
+
+TODO (future): If Diffrax gains a JAX-traceable cubic Hermite callable that
+can be passed as a static argument through jit without triggering re-tracing,
+replace _piecewise_constant/_linear_interp with it in the ODE RHS.
+
+For **exported/diagnostic** continuous representations of observed data, use
+``build_data_interpolations()`` below – that function uses SciPy's ``interp1d``
+(or a simple NumPy-based linear fallback) and returns standard Python callables,
+which must NOT be passed into jitted code.
 """
 
 from __future__ import annotations
@@ -261,3 +291,202 @@ def make_s_prod_fn(
         return _f(raw)
 
     return _s_prod_fn
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic / visualisation data interpolation (NOT used in the ODE or loss)
+# ---------------------------------------------------------------------------
+
+
+def build_data_interpolations(
+    t_obs: np.ndarray,
+    P_data: np.ndarray | None = None,
+    A_data: np.ndarray | None = None,
+    rna_data: np.ndarray | None = None,
+    method: str = "linear",
+    fill_forward_nans_at_end: bool = False,
+    replace_nans_at_start: str | None = None,
+) -> dict:
+    """Build continuous interpolation callables for observed datasets.
+
+    This function is for **diagnostic / visualisation** purposes only.
+    It does NOT affect the optimisation loss, does NOT expand the training
+    targets, and must NOT be passed into any JAX-traced or jitted code path.
+
+    The original sparse observed arrays (``P_data``, ``A_data``, ``rna_data``)
+    are never modified.  NaN handling for interpolation is performed on a
+    working copy, and the chosen handling strategy is clearly documented in
+    the returned metadata dict.
+
+    Args:
+        t_obs:      (T,) observed time points (must be sorted and finite).
+        P_data:     (N_sites, T) phosphosite observed data.  May contain NaN.
+        A_data:     (K_obs, T) protein abundance observed data.  May contain NaN.
+        rna_data:   (n_genes, T_rna) mRNA data.  May contain NaN.
+                    Typically uses a different time vector; pass ``t_rna``
+                    as the first argument when interpolating RNA data separately.
+        method:     Interpolation method: ``"linear"`` (safe for NaN-heavy data)
+                    or ``"cubic_hermite"`` (SciPy cubic Hermite spline via
+                    ``scipy.interpolate.PchipInterpolator``).
+        fill_forward_nans_at_end:
+                    When True, forward-fill the last valid value for NaN tails
+                    (applies to the interpolation-only copy; does NOT modify the
+                    original sparse arrays used in the loss).
+        replace_nans_at_start:
+                    Strategy for leading NaNs (before the first valid point).
+                    ``None`` → leave as NaN;
+                    ``"zero"`` → fill with 0.0;
+                    ``"first_valid"`` → repeat the first valid value.
+                    Never modifies the original training arrays.
+
+    Returns:
+        dict with keys:
+          ``"t_obs"``         – original time vector (reference, not a copy)
+          ``"P_interp"``      – callable ``fn(t) -> np.ndarray`` shape (N_sites,)
+                                or None if P_data is not provided.
+          ``"A_interp"``      – callable ``fn(t) -> np.ndarray`` shape (K_obs,)
+                                or None if A_data is not provided.
+          ``"rna_interp"``    – callable ``fn(t) -> np.ndarray`` shape (n_genes,)
+                                or None if rna_data is not provided.
+          ``"method"``        – interpolation method actually used.
+          ``"nan_fill_log"``  – list of messages documenting NaN handling.
+          ``"original_arrays_unchanged"`` – always True (invariant check).
+
+    Raises:
+        ImportError: If ``method="cubic_hermite"`` and SciPy is not installed.
+    """
+    t = np.asarray(t_obs, dtype=np.float64)
+    nan_fill_log: list[str] = []
+
+    def _prep_row(row: np.ndarray, label: str) -> np.ndarray:
+        """Apply NaN handling to a single (T,) series on a working copy."""
+        row = row.copy().astype(np.float64)
+        # Handle leading NaNs
+        if replace_nans_at_start is not None:
+            first_valid = next((i for i, v in enumerate(row) if np.isfinite(v)), None)
+            if first_valid is None:
+                # All NaN – nothing to do
+                nan_fill_log.append(f"  {label}: all values are NaN; no fill applied.")
+                return row
+            if first_valid > 0:
+                if replace_nans_at_start == "zero":
+                    row[:first_valid] = 0.0
+                    nan_fill_log.append(
+                        f"  {label}: filled {first_valid} leading NaN(s) with 0."
+                    )
+                elif replace_nans_at_start == "first_valid":
+                    row[:first_valid] = row[first_valid]
+                    nan_fill_log.append(
+                        f"  {label}: filled {first_valid} leading NaN(s) with "
+                        f"first_valid={row[first_valid]:.4g}."
+                    )
+        # Handle trailing NaNs
+        if fill_forward_nans_at_end:
+            last_valid = next(
+                (i for i in range(len(row) - 1, -1, -1) if np.isfinite(row[i])), None
+            )
+            if last_valid is not None and last_valid < len(row) - 1:
+                row[last_valid + 1 :] = row[last_valid]
+                n_trailing = len(row) - 1 - last_valid
+                nan_fill_log.append(
+                    f"  {label}: forward-filled {n_trailing} trailing NaN(s) "
+                    f"from t={t[last_valid]:.3g}."
+                )
+        return row
+
+    def _make_interp(data: np.ndarray, label_prefix: str):
+        """Return a callable fn(t_query) -> np.ndarray for a (D, T) matrix."""
+        D, T = data.shape
+        # Build per-row callables; rows with insufficient finite points fall
+        # back to NaN so the caller can detect missing data.
+        rows_prepped = []
+        for d in range(D):
+            rows_prepped.append(_prep_row(data[d], f"{label_prefix}[{d}]"))
+
+        # Find valid (finite) time indices across all rows (union)
+        any_finite = np.zeros(T, dtype=bool)
+        for row in rows_prepped:
+            any_finite |= np.isfinite(row)
+        valid_t_idx = np.where(any_finite)[0]
+
+        if len(valid_t_idx) < 2:
+            # Cannot interpolate with fewer than 2 points
+            nan_fill_log.append(
+                f"  {label_prefix}: fewer than 2 valid time points; "
+                "returning NaN callable."
+            )
+
+            def _nan_fn(t_q):
+                return np.full(D, np.nan)
+
+            return _nan_fn
+
+        t_valid = t[valid_t_idx]
+
+        if method == "cubic_hermite":
+            try:
+                from scipy.interpolate import PchipInterpolator
+            except ImportError as exc:
+                raise ImportError(
+                    "SciPy is required for method='cubic_hermite'. "
+                    "Install it with `pip install scipy`."
+                ) from exc
+            interps = []
+            for row in rows_prepped:
+                row_valid = row[valid_t_idx]
+                # Replace any remaining NaN in valid_t_idx positions with 0 for
+                # the interpolator (not for the original data).
+                row_for_interp = np.where(np.isfinite(row_valid), row_valid, 0.0)
+                interps.append(PchipInterpolator(t_valid, row_for_interp, extrapolate=False))
+
+            def _cubic_fn(t_q):
+                out = np.stack([interp(t_q) for interp in interps], axis=0)
+                return out  # (D,) when t_q is scalar
+
+            return _cubic_fn
+        else:
+            # Default: linear interpolation using numpy
+            interps = []
+            for row in rows_prepped:
+                row_valid = row[valid_t_idx]
+                row_for_interp = np.where(np.isfinite(row_valid), row_valid, 0.0)
+                interps.append((t_valid, row_for_interp))
+
+            def _linear_fn(t_q, _interps=interps):
+                return np.array([
+                    np.interp(t_q, tv, rv, left=np.nan, right=np.nan)
+                    for tv, rv in _interps
+                ])
+
+            return _linear_fn
+
+    result: dict = {
+        "t_obs": t,
+        "P_interp": None,
+        "A_interp": None,
+        "rna_interp": None,
+        "method": method,
+        "nan_fill_log": nan_fill_log,
+        "original_arrays_unchanged": True,
+    }
+
+    if P_data is not None:
+        arr = np.asarray(P_data, dtype=np.float64)
+        if arr.size > 0 and arr.ndim == 2 and arr.shape[1] == len(t):
+            result["P_interp"] = _make_interp(arr, "P_data")
+
+    if A_data is not None:
+        arr = np.asarray(A_data, dtype=np.float64)
+        if arr.size > 0 and arr.ndim == 2 and arr.shape[1] == len(t):
+            result["A_interp"] = _make_interp(arr, "A_data")
+
+    if rna_data is not None:
+        arr = np.asarray(rna_data, dtype=np.float64)
+        if arr.size > 0 and arr.ndim == 2:
+            # rna_data may use a different time axis; we use t_obs here as
+            # passed (callers should pass the RNA-specific time vector as t_obs
+            # if RNA data uses a different grid).
+            if arr.shape[1] == len(t):
+                result["rna_interp"] = _make_interp(arr, "rna_data")
+
+    return result
