@@ -1116,6 +1116,82 @@ def _save_preopt_snapshot_txt_csv(
     _save_vector_tsv(os.path.join(snap_dir, "xl.tsv"), xl)
     _save_vector_tsv(os.path.join(snap_dir, "xu.tsv"), xu)
 
+    # Also write a consolidated NPZ for faster dashboard loading
+    save_preopt_snapshot_npz(snap_dir, t=t, Y=Y, P_scaled=P_scaled,
+                             A_data=A_data, A_scaled=A_scaled, Cg=Cg, Cl=Cl,
+                             K_site_kin=K_site_kin, R=R, L_alpha=L_alpha,
+                             W_data=W_data, W_data_prot=W_data_prot,
+                             site_prot_idx=site_prot_idx,
+                             kin_to_prot_idx=kin_to_prot_idx,
+                             receptor_mask_prot=receptor_mask_prot,
+                             receptor_mask_kin=receptor_mask_kin,
+                             positions=positions, xl=xl, xu=xu)
+
+    # Write entity labels NPZ
+    _labels_npz = os.path.join(snap_dir, "entity_labels.npz")
+    if not os.path.exists(_labels_npz):
+        _a_prots = list(A_proteins) if A_proteins is not None else []
+        np.savez(
+            _labels_npz,
+            sites=np.array(list(sites), dtype=object),
+            proteins=np.array(list(proteins), dtype=object),
+            kinases=np.array(list(kinases), dtype=object),
+            A_proteins=np.array(_a_prots, dtype=object),
+        )
+
+
+def save_preopt_snapshot_npz(snap_dir, *, t, Y, P_scaled, A_data, A_scaled,
+                              Cg, Cl, K_site_kin, R, L_alpha, W_data,
+                              W_data_prot, site_prot_idx, kin_to_prot_idx,
+                              receptor_mask_prot, receptor_mask_kin,
+                              positions, xl, xu) -> None:
+    """
+    Save a consolidated machine-readable NPZ of all pre-optimisation inputs.
+
+    Written to ``snap_dir/preopt_snapshot.npz``.  Existing files are not
+    overwritten – delete the file first if a refresh is needed.
+
+    Args:
+        snap_dir (str): Path to the ``preopt_snapshot/`` directory.
+        t, Y, P_scaled, A_data, A_scaled, Cg, Cl, K_site_kin, R, L_alpha,
+        W_data, W_data_prot, site_prot_idx, kin_to_prot_idx,
+        receptor_mask_prot, receptor_mask_kin, positions, xl, xu:
+            Model input arrays.
+    """
+    out_path = os.path.join(snap_dir, "preopt_snapshot.npz")
+    if os.path.exists(out_path):
+        return
+
+    def _safe(arr):
+        if arr is None:
+            return np.empty(0)
+        a = np.asarray(arr)
+        return a if a.size > 0 else np.empty(0)
+
+    np.savez(
+        out_path,
+        t=_safe(t),
+        Y=_safe(Y),
+        P_scaled=_safe(P_scaled),
+        A_data=_safe(A_data),
+        A_scaled=_safe(A_scaled),
+        Cg=_safe(Cg),
+        Cl=_safe(Cl),
+        K_site_kin=_safe(K_site_kin),
+        R=_safe(R),
+        L_alpha=_safe(L_alpha),
+        W_data=_safe(W_data),
+        W_data_prot=_safe(W_data_prot),
+        site_prot_idx=_safe(site_prot_idx),
+        kin_to_prot_idx=_safe(kin_to_prot_idx),
+        receptor_mask_prot=_safe(receptor_mask_prot),
+        receptor_mask_kin=_safe(receptor_mask_kin),
+        positions=_safe(positions),
+        xl=_safe(xl),
+        xu=_safe(xu),
+    )
+    logger.info(f"[*] Saved preopt_snapshot.npz to {out_path}")
+
 
 def save_mrna_outputs(outdir, gene_ids, t_rna, rna_data_obs, rna_simulated):
     """
