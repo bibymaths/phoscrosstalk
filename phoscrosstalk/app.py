@@ -522,7 +522,7 @@ st.sidebar.title("\U0001f9ec PhosCrosstalk Explorer")
 
 results_dir = st.sidebar.text_input(
     "Results directory path",
-    value="test_results_dist",  # example; change to your run directory
+    value="Write results folder path here.",  # example; change to your run directory
     help="Path to a completed PhosCrosstalk run directory.",
 ).strip()
 
@@ -1663,9 +1663,11 @@ with tab_ss:
 
     if ss_data is None or len(ss_data) == 0:
         st.warning("No steady-state outputs found in `steadystate/`.")
+
         if snap is not None and params is not None:
             st.subheader("Live long-horizon simulation")
             css1, css2 = st.columns([1, 3])
+
             with css1:
                 ss_t_end = st.slider(
                     "End time (min)", 1000, 50000, 10000, 1000, key="ss_t_end"
@@ -1673,6 +1675,7 @@ with tab_ss:
                 run_ss_btn = st.button(
                     "\u25b6 Run steady-state sim", type="primary", key="run_ss"
                 )
+
             with css2:
                 if run_ss_btn:
                     from phoscrosstalk.steadystate import build_long_horizon_time_grid
@@ -1683,6 +1686,7 @@ with tab_ss:
                         n_early=100,
                         n_late=200,
                     )
+
                     with st.spinner("Simulating long horizon…"):
                         ss_r = _run_simulation(
                             results_dir,
@@ -1690,6 +1694,7 @@ with tab_ss:
                             num_points=len(t_ss_grid),
                             mechanism=mechanism,
                         )
+
                     if ss_r:
                         _plot_ss_results(
                             ss_r["t"],
@@ -1704,18 +1709,75 @@ with tab_ss:
                             selected_protein,
                             use_logx,
                         )
+                    else:
+                        st.error("Live steady-state simulation failed.")
+
     else:
+        ss_metadata = ss_data.get("metadata")
+
+        if isinstance(ss_metadata, dict) and ss_metadata:
+            with st.expander("Steady-state metadata", expanded=False):
+                st.json(ss_metadata)
+
+            solve_result = ss_metadata.get("solve_result", {})
+            event_info = ss_metadata.get("event", {})
+
+            status = solve_result.get("status", "unknown")
+            t_final = solve_result.get("t_final", None)
+            terminated = solve_result.get(
+                "terminated_by_steady_state_event", False
+            )
+
+            if terminated:
+                st.success(
+                    f"Steady-state event terminated the solve at t ≈ {t_final} min."
+                )
+            else:
+                st.info(
+                    f"Steady-state solve status: `{status}`. "
+                    f"Final reported time: `{t_final}`."
+                )
+
+            st.caption(
+                f"use_event={event_info.get('use_event')} · "
+                f"event_rtol={event_info.get('event_rtol')} · "
+                f"event_atol={event_info.get('event_atol')}"
+            )
+
         for key, df_ss in ss_data.items():
-            if df_ss is None or df_ss.empty:
+            if key == "metadata":
                 continue
+
+            if df_ss is None:
+                continue
+
+            if not isinstance(df_ss, pd.DataFrame):
+                st.warning(
+                    f"Skipping steady-state entry `{key}` because it is "
+                    f"{type(df_ss).__name__}, not a DataFrame."
+                )
+                continue
+
+            if df_ss.empty:
+                continue
+
             st.subheader(f"steadystate_{key}")
+
             arr = df_ss.values.astype(float)
             n_fin = int(np.sum(np.isfinite(arr)))
+
             if n_fin == 0:
                 st.warning(f"All values in {key} are non-finite; skipping.")
                 continue
+
             try:
-                t_ss_axis = np.array([float(c) for c in df_ss.columns])
+                t_ss_axis = np.array(
+                    [
+                        float(str(c).replace("t_", ""))
+                        for c in df_ss.columns
+                    ],
+                    dtype=float,
+                )
             except ValueError:
                 t_ss_axis = np.arange(len(df_ss.columns), dtype=float)
 
@@ -1723,45 +1785,67 @@ with tab_ss:
 
             if key in ("S", "Kdyn", "proteins"):
                 fig_ss_line = go.Figure()
+
                 for ri, rname in enumerate(row_names[:20]):
                     y = np.where(np.isfinite(arr[ri]), arr[ri], np.nan)
                     fig_ss_line.add_trace(
-                        go.Scatter(x=t_ss_axis, y=y, mode="lines", name=str(rname))
+                        go.Scatter(
+                            x=t_ss_axis,
+                            y=y,
+                            mode="lines",
+                            name=str(rname),
+                        )
                     )
+
                 ylab = (
-                    "Activity fraction [0-1]"
+                    "Activity fraction [0–1]"
                     if key in ("S", "Kdyn")
                     else "Protein abundance"
                 )
+
                 fig_ss_line.update_layout(
                     height=400,
                     template="plotly_white",
                     xaxis_title="Time (min)",
                     yaxis_title=ylab,
-                    title=f"Steady-state \u2014 {key}",
+                    title=f"Steady-state — {key}",
                 )
+
                 if use_logx:
-                    fig_ss_line.update_xaxes(type="log")
+                    x_plot, tickvals, ticktext = _pseudo_log_time_axis(t_ss_axis)
+                    for trace in fig_ss_line.data:
+                        trace.x = x_plot
+                    fig_ss_line.update_xaxes(
+                        type="linear",
+                        tickmode="array",
+                        tickvals=tickvals,
+                        ticktext=ticktext,
+                        title_text="Time (min, pseudo-log: log10(t + 1))",
+                    )
+
                 st.plotly_chart(fig_ss_line, use_container_width=True)
 
             elif key == "sites":
                 finite_arr = np.where(np.isfinite(arr), arr, np.nan)
+
                 fig_ss_h = px.imshow(
                     finite_arr,
                     x=[str(c) for c in df_ss.columns],
                     y=[str(r) for r in row_names],
                     color_continuous_scale="Plasma",
-                    title="Relative phosphosite signal \u2014 steady-state",
+                    title="Relative phosphosite signal — steady-state",
                     labels={"color": "Relative phosphosite signal"},
                     aspect="auto",
                 )
+
                 fig_ss_h.update_layout(height=500)
                 st.plotly_chart(fig_ss_h, use_container_width=True)
 
             n_nan = int(np.sum(~np.isfinite(arr)))
             if n_nan > 0:
                 st.caption(
-                    f"\u2139\ufe0f {n_nan}/{arr.size} values are NaN/Inf (shown as blank)."  # noqa: E501
+                    f"ℹ️ {n_nan}/{arr.size} values are NaN/Inf "
+                    "(shown as blank)."
                 )
 
             st.download_button(
@@ -1771,21 +1855,26 @@ with tab_ss:
                 key=f"dl_ss_{key}",
             )
 
-        if "sites" in ss_data and ss_data["sites"] is not None:
+        if "sites" in ss_data and isinstance(ss_data["sites"], pd.DataFrame):
             df_sv = ss_data["sites"]
-            arr_sv = df_sv.values.astype(float)
-            if arr_sv.shape[1] >= 10 and np.any(np.isfinite(arr_sv)):
-                delta = np.nanmean(np.abs(arr_sv[:, -1] - arr_sv[:, -10]))
-                if np.isfinite(delta):
-                    if delta < 1e-4:
-                        st.success(
-                            f"System appears converged (\u0394 relative phosphosite signal: {delta:.2e})"  # noqa: E501
-                        )
-                    else:
-                        st.warning(
-                            f"System may not be fully converged (\u0394 relative phosphosite signal: {delta:.2e})"  # noqa: E501
-                        )
 
+            if not df_sv.empty:
+                arr_sv = df_sv.values.astype(float)
+
+                if arr_sv.shape[1] >= 10 and np.any(np.isfinite(arr_sv)):
+                    delta = np.nanmean(np.abs(arr_sv[:, -1] - arr_sv[:, -10]))
+
+                    if np.isfinite(delta):
+                        if delta < 1e-4:
+                            st.success(
+                                "System appears converged "
+                                f"(Δ relative phosphosite signal: {delta:.2e})"
+                            )
+                        else:
+                            st.warning(
+                                "System may not be fully converged "
+                                f"(Δ relative phosphosite signal: {delta:.2e})"
+                            )
 # ══════════════════════════════════════════════════════════════════════════
 # I · NETWORK
 # ══════════════════════════════════════════════════════════════════════════
