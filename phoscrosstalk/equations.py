@@ -215,7 +215,11 @@ def _generate_latex_source(
     # --- GLOBAL ---
     lines.append(r"\section{Global Definitions}")
     lines.append(r"\begin{itemize}")
-    lines.append(r"\item $q_i = p_i / (1 + p_i) \in [0,1)$: bounded regulatory proxy used for occupancy-like regulation, crosstalk summaries, and mechanism gates.")
+    lines.append(r"\item Input Stimulus: $u(t) = \frac{1}{1 + e^{-t/0.1}}$")
+    lines.append(
+        r"\item $q_i = p_i / (1 + p_i) \in [0,1)$: bounded regulatory proxy "
+        r"used for occupancy-like regulation, crosstalk summaries, and mechanism gates."
+    )
 
     bg = get_p("beta_g", 0, r"\beta_g")
     bl = get_p("beta_l", 0, r"\beta_l")
@@ -395,8 +399,12 @@ def _generate_latex_source(
             )
 
         # Production: saturating drive from kinase signal, crosstalk factor, gate,
-        # and protein abundance factor.  The relative phosphosite signal p is NOT
-        # bounded; the old (1-p) production factor is not part of the active RHS.
+        # and protein abundance factor (1 + A_site).
+        # The abundance factor (1 + A_site) replaces the old occupancy-based saturation
+        # term (1 - p_i): in the relative-signal model p is nonnegative and unbounded,
+        # so (1 - p) is not a valid saturation gate.  Instead, protein abundance scales
+        # the available substrate pool for phosphorylation.
+        # p is NOT bounded; the old (1-p) production factor is not part of the active RHS.
         v_raw = rf"{c_term}\,\left[{k_on_str}\right]\,{mech_term}\,(1 + A_\text{{site}})"
 
         # Print each equation as a real display equation (breqn can break lines here)
