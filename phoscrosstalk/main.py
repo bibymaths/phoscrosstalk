@@ -932,6 +932,28 @@ def main():
         max_steps=args.solver_max_steps,
     )
 
+    # Store picklable rebuild kwargs on problem so that parallel multi-start
+    # workers can reconstruct k_act_fn / s_prod_fn inside the worker process
+    # without receiving non-picklable JAX closures across process boundaries.
+    problem._k_act_rebuild_kwargs = {
+        "t_rna": t_rna,
+        "rna_data": rna_matrix,
+        "tf_prot_weights": tf_prot_weights,
+        "K": K,
+        "interp_mode": interp_mode,
+        "protein_self_rna_idx": entity_masks["protein_self_rna_idx"],
+    }
+    problem._s_prod_rebuild_kwargs = {
+        "t_protein": t,
+        "Y_data": P_scaled,
+        "R_kin_site": R,
+        "kin_to_prot_idx": kin_to_prot_idx,
+        "K": K,
+        "M": M,
+        "s_prod_fn_type": s_prod_fn_type,
+        "interp_mode": interp_mode,
+    }
+
     # Validate problem shapes before starting optimization
     try:
         validate_problem_shapes(problem)
