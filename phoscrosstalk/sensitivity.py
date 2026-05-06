@@ -304,7 +304,6 @@ def run_global_sensitivity(
             Y_mse[i] = mse
             f_out.write(row_data)
 
-    print("")  # clear line
     logger.success(f"    -> Saved perturbation data to {perturbation_file}")
     logger.success(f"    -> Saved perturbation params to {param_file}")
 

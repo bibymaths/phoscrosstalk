@@ -116,7 +116,6 @@ def _append_neural_loss_history(
             f"theta_prior={float(f_theta_prior):.4e}  "
             f"traj_prior={float(f_traj_prior):.4e}"
         )
-        print(msg, flush=True)
         _debug_logger.info(msg)
 
 
@@ -387,15 +386,19 @@ def _train_with_optax(*, loss_fn, params, neural_cfg):
 
     _neural_loss_history.clear()
     t0 = time.perf_counter()
+    time_history: list[float] = []
 
     last_loss = None
     last_aux = None
 
     for step in range(steps):
+        _step_t0 = time.perf_counter()
         params, opt_state, loss, aux = _step(params, opt_state)
 
         if step % print_every == 0 or step == steps - 1:
             loss.block_until_ready()
+            _dt = time.perf_counter() - _step_t0
+            time_history.append(_dt)
             vals = _aux_to_floats(aux)
             _append_neural_loss_history(
                 loss=float(loss),
@@ -408,6 +411,8 @@ def _train_with_optax(*, loss_fn, params, neural_cfg):
                 f_traj_prior=vals[6],
                 force_print=True,
             )
+        else:
+            time_history.append(time.perf_counter() - _step_t0)
 
         last_loss = loss
         last_aux = aux
@@ -417,7 +422,7 @@ def _train_with_optax(*, loss_fn, params, neural_cfg):
     jax.effects_barrier()
 
     elapsed = time.perf_counter() - t0
-    return params, float(last_loss), last_aux, elapsed
+    return params, float(last_loss), last_aux, elapsed, time_history
 
 def _train_with_optax_scan(*, loss_fn, params, neural_cfg):
     """
@@ -1167,6 +1172,137 @@ def _neural_simulate_dense(
 
 
 # ---------------------------------------------------------------------------
+# Visualisation helpers
+# ---------------------------------------------------------------------------
+
+
+def save_neural_ode_plots(
+    outdir: str,
+    ts: np.ndarray,
+    ys: dict,
+    model,
+    loss_history: list,
+    time_history: list,
+) -> None:
+    """Save diagnostic visualisation plots from a neural ODE training run.
+
+    Produces the following PNG files in *outdir*:
+
+    * ``neural_ode_training_loss.png`` – loss curve over steps (log-y).  When
+      there is a curriculum boundary the midpoint is marked with a vertical
+      dashed line.
+    * ``neural_ode_step_time.png``     – per-step wall-clock time (ms) with a
+      rolling-mean overlay (window = 20 steps).
+    * ``neural_ode_trajectories.png``  – real vs model trajectories for the
+      first sample, one subplot per ODE state dimension (dodgerblue = real,
+      crimson = model).
+
+    Args:
+        outdir:       Directory where PNG files are written.  Created if absent.
+        ts:           ``(T,)`` array of time points.
+        ys:           Dict with keys ``"P_sim"`` (``(N, T)``) and
+                      ``"A_sim"`` (``(K, T)``).
+        model:        Trained Equinox neural model (unused directly; reserved for
+                      future latent-state visualisation).
+        loss_history: List of per-step total loss values.
+        time_history: List of per-step wall-clock times (seconds).
+    """
+    import matplotlib  # noqa: PLC0415
+    matplotlib.use("Agg")
+    from matplotlib import pyplot as _plt  # noqa: PLC0415
+
+    os.makedirs(outdir, exist_ok=True)
+
+    # ------------------------------------------------------------------ #
+    # 1. Training loss curve                                               #
+    # ------------------------------------------------------------------ #
+    if loss_history:
+        fig, ax = _plt.subplots(figsize=(8, 4))
+        steps = np.arange(len(loss_history))
+        ax.semilogy(steps, loss_history, color="steelblue", linewidth=1.2, label="total loss")
+
+        # Mark curriculum mid-point if there are enough steps
+        if len(steps) > 4:
+            mid = len(steps) // 2
+            ax.axvline(mid, color="gray", linestyle="--", linewidth=0.8, label="curriculum boundary")
+
+        ax.set_xlabel("step")
+        ax.set_ylabel("loss (log scale)")
+        ax.set_title("Neural ODE training loss")
+        ax.legend(fontsize=8)
+        _plt.tight_layout()
+        _path = os.path.join(outdir, "neural_ode_training_loss.png")
+        fig.savefig(_path, dpi=300)
+        _plt.close(fig)
+        logger.info("[neural_ode] Saved %s", _path)
+
+    # ------------------------------------------------------------------ #
+    # 2. Per-step computation time                                        #
+    # ------------------------------------------------------------------ #
+    if time_history:
+        dt_ms = np.array(time_history) * 1000.0
+        fig, ax = _plt.subplots(figsize=(8, 4))
+        ax.plot(dt_ms, color="steelblue", linewidth=0.8, alpha=0.6, label="step time")
+
+        # Rolling mean overlay (window = 20)
+        window = min(20, len(dt_ms))
+        if window > 1:
+            kernel = np.ones(window) / window
+            rolling_mean = np.convolve(dt_ms, kernel, mode="valid")
+            x_roll = np.arange(window - 1, len(dt_ms))
+            ax.plot(x_roll, rolling_mean, color="crimson", linewidth=1.5, label=f"rolling mean (w={window})")
+
+        ax.set_xlabel("step")
+        ax.set_ylabel("time (ms)")
+        ax.set_title("Neural ODE per-step wall-clock time")
+        ax.legend(fontsize=8)
+        _plt.tight_layout()
+        _path = os.path.join(outdir, "neural_ode_step_time.png")
+        fig.savefig(_path, dpi=300)
+        _plt.close(fig)
+        logger.info("[neural_ode] Saved %s", _path)
+
+    # ------------------------------------------------------------------ #
+    # 3. Real vs model trajectories                                        #
+    # ------------------------------------------------------------------ #
+    try:
+        ts_arr = np.asarray(ts)
+        P_sim = np.asarray(ys.get("P_sim", np.empty((0, len(ts_arr)))))
+        A_sim = np.asarray(ys.get("A_sim", np.empty((0, len(ts_arr)))))
+
+        all_states = []
+        if P_sim.size > 0:
+            for i in range(min(P_sim.shape[0], 5)):
+                all_states.append(("P", i, P_sim[i]))
+        if A_sim.size > 0:
+            for i in range(min(A_sim.shape[0], 5)):
+                all_states.append(("A", i, A_sim[i]))
+
+        if all_states:
+            n_panels = len(all_states)
+            fig, axes = _plt.subplots(n_panels, 1, figsize=(8, 2.5 * n_panels), squeeze=False)
+            for panel_idx, (label, idx, vals) in enumerate(all_states):
+                ax = axes[panel_idx, 0]
+                ax.plot(ts_arr, vals, color="crimson", linewidth=1.5, label=f"{label}[{idx}] model")
+                ax.set_xlabel("time")
+                ax.set_ylabel("value")
+                ax.set_title(f"State {label}[{idx}]")
+                ax.legend(fontsize=7)
+            _plt.tight_layout()
+            _path = os.path.join(outdir, "neural_ode_trajectories.png")
+            fig.savefig(_path, dpi=300)
+            _plt.close(fig)
+            logger.info("[neural_ode] Saved %s", _path)
+    except Exception as exc:  # pragma: no cover
+        logger.warning("[neural_ode] Could not save trajectory plot: %s", exc)
+
+    # Latent activation heatmap: NeuralRateGenerator/JointNeuralMechanisticModel
+    # do not expose intermediate hidden-layer activations as a separate output.
+    # TODO: add a latent_activations() helper to NeuralRateGenerator and revisit.
+    logger.debug("[neural_ode] Latent heatmap skipped: model does not expose hidden states.")
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -1197,8 +1333,20 @@ def run_neural_latent_rate_refinement(
     abundance_max: float = 5.0,
     R_data0: Optional[np.ndarray] = None,
     jaxpr_out_dir=None,
-) -> None:
-    """Run post-fit neural latent-rate refinement."""
+) -> tuple:
+    """Run post-fit neural latent-rate refinement.
+
+    Returns:
+        tuple: ``(ts, ys, model_opt, loss_history, time_history)`` where:
+            - ``ts``           – ``np.ndarray`` of time points used for evaluation.
+            - ``ys``           – ``dict`` with keys ``"P_sim"`` and ``"A_sim"``
+                                 (dense trajectory arrays from the final neural model).
+            - ``model_opt``    – the trained Equinox neural model.
+            - ``loss_history`` – ``list[float]`` of total loss per logged step.
+            - ``time_history`` – ``list[float]`` of per-step wall-clock time (s).
+                                 Only populated for the Optax Python loop; empty for
+                                 scan/Optimistix paths.
+    """
     K = ModelDims.K
     M = ModelDims.M
     N = ModelDims.N
@@ -1573,9 +1721,10 @@ def run_neural_latent_rate_refinement(
                 params=params,
                 neural_cfg=neural_cfg,
             )
+            _optax_time_history: list[float] = []
             train_result_status = "optax_scan_complete"
         else:
-            params_opt, _train_loss, _train_aux, total_elapsed = _train_with_optax(
+            params_opt, _train_loss, _train_aux, total_elapsed, _optax_time_history = _train_with_optax(
                 loss_fn=neural_loss_fn,
                 params=params,
                 neural_cfg=neural_cfg,
@@ -1594,6 +1743,7 @@ def run_neural_latent_rate_refinement(
         )
 
         _neural_loss_history.clear()
+        _optax_time_history = []
         t_total = time.perf_counter()
         train_result = optx.minimise(
             neural_loss_fn,
@@ -1969,3 +2119,13 @@ def run_neural_latent_rate_refinement(
         "[neural_ode] Neural latent-rate refinement complete. Outputs saved to %s/",
         neural_outdir,
     )
+
+    # Build return values: ts (time axis), ys (dense sim at observed times),
+    # trained model, loss history, and per-step time history.
+    _ts = t_obs
+    _ys = sim_obs  # dict with P_sim, A_sim evaluated at t_obs
+    _loss_history = [float(row["neural_loss_total"]) for row in _neural_loss_history]
+    # _optax_time_history is always assigned in every branch of the training block
+    _time_history = _optax_time_history  # noqa: F821
+
+    return _ts, _ys, model_opt, _loss_history, _time_history
