@@ -12,8 +12,6 @@
 
 ::: phoscrosstalk.multistarts
 
-::: phoscrosstalk.hybrid_fit
-
 ## Data and model utilities
 
 ::: phoscrosstalk.data_loader
