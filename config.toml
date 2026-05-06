@@ -563,11 +563,11 @@ reg       = 1.0
 #   Increase for high-dimensional parameter spaces.
 #
 # lhs_top_p:
-#   Number of best LHS candidates forwarded to evosax.
+#   Number of best LHS candidates forwarded to the Mutax DE search.
 #
 # skip_lhs:
 #   false – use LHS warm-start screen.
-#   true  – bypass LHS and let evosax start randomly.
+#   true  – bypass LHS and let Mutax start randomly.
 # ---------------------------------------------------------------------------
 lhs_n_samples = 128
 lhs_top_p     = 8
@@ -575,45 +575,74 @@ skip_lhs      = false
 
 
 # ---------------------------------------------------------------------------
-# Phase 1: evosax global search
+# Phase 1: Mutax Differential Evolution global search
 # ---------------------------------------------------------------------------
 #
-# es_algo:
-#   "sep_cma_es"
-#       Separable CMA-ES.
-#       O(n) scaling.
-#       Preferred for dimensions around 50–500.
+# de_strategy:
+#   "best1bin"  (default)
+#       Mutate towards the current best + 1 difference vector.
+#       Generally robust and fast to converge.
 #
-#   "cma_es"
-#       Full covariance CMA-ES.
-#       Better covariance modeling but O(n^2).
-#       Use mainly when parameter dimension is <= 100.
+#   "rand1bin"
+#       Mutate from a random individual.
+#       More exploratory; useful on highly multimodal landscapes.
 #
-#   "de"
-#       Differential Evolution.
-#       Often robust when ODE solves fail frequently or gradients are poor.
+# de_popsize:
+#   Population multiplier.  Total population = de_popsize × n_var.
 #
-# es_popsize:
-#   Population size per generation.
+# de_maxiter:
+#   Maximum number of Differential Evolution generations.
 #
-# es_n_generations:
-#   Number of global-search generations.
+# de_tol / de_atol:
+#   Convergence tolerances.  The solver stops early when the population
+#   spread falls below tol (relative) or atol (absolute).
 #
-# es_sigma_init:
-#   Initial mutation scale in normalised [0, 1] parameter space.
+# de_recombination:
+#   Crossover probability in [0, 1].
 #
-# es_top_k:
-#   Number of final candidates passed to LM polish.
+# de_workers:
+#   Number of JAX CPU devices Mutax uses to parallelise population
+#   evaluation.
+#
+#   -1        Use all JAX CPU devices visible (recommended when
+#             configure_jax_cpu_devices is called by main.py at startup).
+#   "auto"    Same as -1; mapped internally to -1.
+#   1         Serial evaluation (safest; no updating constraint).
+#   <int>     Use exactly this many JAX devices.
+#
+#   Requires configure_jax_cpu_devices() to be called before JAX import
+#   so that enough virtual CPU devices are exposed.  main.py does this
+#   automatically for [optimisation] solver = "hybrid".
+#
+# de_updating:
+#   "deferred"   (required when de_workers ≠ 1)
+#       The full population is evaluated in parallel before each mutation
+#       step.  Mutax enforces this automatically; the code will also warn
+#       and override if the wrong value is set.
+#
+#   "immediate"  (only valid with de_workers = 1)
+#       Each trial is accepted/rejected before the next is generated.
 # ---------------------------------------------------------------------------
-es_algo          = "sep_cma_es"
-es_popsize       = 64
-es_n_generations = 200
-es_sigma_init    = 0.3
-es_top_k         = 5
+de_strategy     = "best1bin"
+de_popsize      = 15
+de_maxiter      = 200
+de_tol          = 0.01
+de_atol         = 0.0
+de_recombination = 0.8
+de_workers      = -1
+de_updating     = "deferred"
+
+# Backward-compatible evosax aliases (still accepted and mapped to Mutax).
+# These are ignored when the above de_* keys are set explicitly.
+# es_algo          = "sep_cma_es"   → ignored (Mutax uses de_strategy)
+# es_popsize       = 64             → mapped to de_popsize if de_popsize absent
+# es_n_generations = 200            → mapped to de_maxiter if de_maxiter absent
+# es_sigma_init    = 0.3            → ignored by Mutax DE
+# es_top_k         = 5              → mapped to polish_top_k if absent
 
 
 # ---------------------------------------------------------------------------
-# Phase 2: LM polish
+# Phase 2: Optimistix LM polish
 # ---------------------------------------------------------------------------
 #
 # These override [optimisation] max_steps / rtol / atol for the hybrid path.
@@ -622,6 +651,9 @@ es_top_k         = 5
 lm_max_steps = 500
 lm_rtol      = 1e-8
 lm_atol      = 1e-8
+
+# Number of best global-search candidates to polish with Optimistix.
+polish_top_k = 5
 
 
 # ---------------------------------------------------------------------------

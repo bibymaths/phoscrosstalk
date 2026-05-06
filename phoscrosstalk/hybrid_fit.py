@@ -352,7 +352,7 @@ def run_mutax_de(
     recombination: float = 0.8,
     seed: int = 0,
     x0: np.ndarray | None = None,
-    workers: int = 1,
+    workers: int | str = 1,
     updating: str = "immediate",
     disp: bool = False,
     polish: bool = False,
@@ -378,6 +378,34 @@ def run_mutax_de(
             strategy,
         )
         strategy = "best1bin"
+
+    # ------------------------------------------------------------------
+    # Resolve worker count from JAX device budget.
+    # "auto" / None → use all visible JAX CPU devices (workers = -1).
+    # An explicit integer is respected as-is.
+    # ------------------------------------------------------------------
+    n_jax_devices = len(jax.devices("cpu"))
+
+    if workers is None or str(workers).lower() in ("auto",):
+        workers = -1
+
+    # When running with multiple workers Mutax requires deferred updating so
+    # that the full population is evaluated before each mutation step.
+    if workers != 1 and updating != "deferred":
+        logger.warning(
+            "[fit]  hybrid_fit  mutax_de  workers=%s requires updating='deferred'; "
+            "switching from %r to 'deferred'.",
+            workers,
+            updating,
+        )
+        updating = "deferred"
+
+    logger.info(
+        "[fit]  hybrid_fit  mutax_de  jax_cpu_devices=%d  de_workers=%s  updating=%s",
+        n_jax_devices,
+        str(workers),
+        updating,
+    )
 
     xl_j = jnp.asarray(xl, dtype=jnp.float64)
     xu_j = jnp.asarray(xu, dtype=jnp.float64)
@@ -792,7 +820,7 @@ def run_hybrid_fit(
         recombination=float(de_recombination),
         seed=int(seed),
         x0=x0,
-        workers=int(de_workers),
+        workers=de_workers,
         updating=de_updating,
         disp=bool(verbose),
         polish=bool(de_polish),
