@@ -379,7 +379,7 @@ def main():
     parser.add_argument(
         "--de-workers",
         type=int,
-        default=1,
+        default=None,
         dest="de_workers",
         help="Number of JAX devices used by Mutax. Use -1 for all available devices.",
     )
@@ -418,7 +418,7 @@ def main():
     # Save the raw CLI values before they are overwritten by the SimpleNamespace
     # built from the config file below.  We need them to apply CLI overrides.
     _cli_solver = args.solver  # None if not passed on CLI, "lm"/"hybrid" if passed
-    _cli_de_workers = args.de_workers  # int from CLI, default 1
+    _cli_de_workers = args.de_workers  # None if not passed on CLI, int if passed
 
     # ------------------------------------------------------------------
     # LOAD AND VALIDATE CONFIG
@@ -512,10 +512,9 @@ def main():
             getattr(cfg, "hybrid", SimpleNamespace()), "de_recombination", 0.8
         ),
         de_workers=(
-            # CLI --de-workers takes precedence when it differs from the default (1),
-            # indicating the user explicitly provided a value.
+            # CLI --de-workers takes precedence when explicitly provided (not None).
             _cli_de_workers
-            if _cli_de_workers != 1
+            if _cli_de_workers is not None
             else getattr(
                 getattr(cfg, "hybrid", SimpleNamespace()), "de_workers", 1
             )
