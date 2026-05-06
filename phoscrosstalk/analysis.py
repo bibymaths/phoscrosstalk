@@ -311,6 +311,7 @@ def _save_dense_simulation(
 
     P_sim_d = dense_result.get("P_sim", np.full((len(sites), n_dense), np.nan))
     A_sim_d = dense_result.get("A_sim", np.full((K, n_dense), np.nan))
+    R_sim_d = dense_result.get("R_sim", np.full((K, n_dense), np.nan))
 
     rows = []
 
@@ -417,6 +418,34 @@ def _save_dense_simulation(
         os.path.join(outdir, "fit_timeseries_dense.tsv"), sep="\t", index=False
     )
     logger.info(f"[*] Dense simulation output saved ({len(t_dense)} time points).")
+
+    # Dense mRNA / R_rna output (model only, simulated_dense series_type).
+    # Saved to mrna_fit_timeseries_dense.tsv when R_sim is available.
+    try:
+        if R_sim_d is not None and np.any(np.isfinite(R_sim_d)):
+            mrna_rows = []
+            for p_idx in range(K):
+                prot = proteins[p_idx]
+                for j, ti in enumerate(t_dense):
+                    mrna_rows.append(
+                        {
+                            "gene": prot,
+                            "time": float(ti),
+                            "value": float(R_sim_d[p_idx, j]),
+                            "series_type": "simulated_dense",
+                            "source": "model",
+                            "interpolation_method": interpolation_label,
+                        }
+                    )
+            df_mrna_dense = pd.DataFrame(mrna_rows)
+            df_mrna_dense.to_csv(
+                os.path.join(outdir, "mrna_fit_timeseries_dense.tsv"),
+                sep="\t",
+                index=False,
+            )
+            logger.info("[*] Dense mRNA simulation output saved.")
+    except Exception as exc:
+        logger.warning(f"[!] Dense mRNA output skipped: {exc}")
 
 
 def save_fitted_simulation(
@@ -1769,6 +1798,9 @@ def save_derived_rates(
         "proteins": proteins,
         "t_k_act": t_k,
         "t_s_prod": t_s,
+        # Shape semantics metadata
+        "entity_type_k_act": np.array(["protein"], dtype=object),
+        "entity_type_s_prod": np.array(["protein_aggregated"], dtype=object),
     }
 
     rows = []
@@ -1776,12 +1808,18 @@ def save_derived_rates(
     if k_act_fn is not None:
         k_act = np.vstack([np.asarray(k_act_fn(float(ti))) for ti in t_k]).T
         save_dict["k_act"] = k_act
+        logger.info(
+            f"[*] k_act(t): protein-level transcriptional drive, shape {k_act.shape}"
+        )
 
         for i, protein in enumerate(proteins):
             for j, time in enumerate(t_k):
                 rows.append(
                     {
                         "rate_type": "k_act",
+                        "entity_type": "protein",
+                        "protein": protein,
+                        "site": "",
                         "entity": protein,
                         "time": float(time),
                         "value": float(k_act[i, j]),
@@ -1791,12 +1829,18 @@ def save_derived_rates(
     if s_prod_fn is not None:
         s_prod = np.vstack([np.asarray(s_prod_fn(float(ti))) for ti in t_s]).T
         save_dict["s_prod"] = s_prod
+        logger.info(
+            f"[*] s_prod(t): protein-level aggregated phosphorylation drive, shape {s_prod.shape}"
+        )
 
         for i, protein in enumerate(proteins):
             for j, time in enumerate(t_s):
                 rows.append(
                     {
                         "rate_type": "s_prod",
+                        "entity_type": "protein_aggregated",
+                        "protein": protein,
+                        "site": "",
                         "entity": protein,
                         "time": float(time),
                         "value": float(s_prod[i, j]),
