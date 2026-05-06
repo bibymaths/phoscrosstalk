@@ -30,14 +30,12 @@ run_neural_latent_rate_refinement(...)
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from typing import Optional
 
 import diffrax
-import logging
-import os
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -820,7 +818,7 @@ def run_neural_latent_rate_refinement(
     )
 
     # ------------------------------------------------------------------
-    # 7. Train with Optimistix GradientDescent
+    # 8. Train with Optimistix GradientDescent
     # ------------------------------------------------------------------
     logger.info("[neural_ode] Training neural rate generator for %d steps...", neural_cfg.steps)
 
@@ -850,7 +848,7 @@ def run_neural_latent_rate_refinement(
     )
 
     # ------------------------------------------------------------------
-    # 8. Compute final loss after training
+    # 9. Compute final loss after training
     # ------------------------------------------------------------------
     loss_final, (f_p_fin, f_a_fin, f_r_fin, f_k_fin, f_s_fin) = neural_loss_fn(
         params_opt, None
@@ -866,7 +864,7 @@ def run_neural_latent_rate_refinement(
     neural_model_opt = eqx.combine(params_opt, static)
 
     # ------------------------------------------------------------------
-    # 9. Evaluate learned and prior rates at observed time points
+    # 10. Evaluate learned and prior rates at observed time points
     # ------------------------------------------------------------------
     T_obs = t_obs_j.shape[0]
     t_norms_obs = np.clip(t_obs / t_max, 0.0, 1.0)[:, None]  # (T_obs, 1)
@@ -1059,8 +1057,8 @@ def run_neural_latent_rate_refinement(
         "depth": int(neural_cfg.depth),
         "steps": int(neural_cfg.steps),
         "seed": int(neural_cfg.seed),
-        "optimizer": "gradient_descent_python_loop",
-        "optimizer_note": "jax.value_and_grad + jax.tree_util.tree_map (equivalent to GradientDescent; Python loop enables per-step logging)",
+        "optimizer": "optimistix.GradientDescent",
+        "optimizer_note": "optx.GradientDescent + optx.minimise (JIT-compiled while_loop); per-step loss logged via jax.debug.callback",
         "learning_rate": float(neural_cfg.learning_rate),
         "rtol": float(neural_cfg.rtol),
         "atol": float(neural_cfg.atol),
