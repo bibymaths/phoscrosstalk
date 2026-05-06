@@ -261,8 +261,15 @@ _DEFAULTS = {
         # Number of time points in the dense neural output grid.
         "dense_n_points": 200,
     },
-    # Continuous interpolation of observed data for diagnostics/visualisation.
-    # This is NOT used in the loss function and does NOT expand training targets.
+    # Diagnostic / developer flags.  All default to False so production runs
+    # are completely unaffected.
+    "debug": {
+        # When True, capture jaxpr (JAX computation graph) for each major
+        # flow step and save HTML + PDF reports under <output_dir>/jaxpr_reports/.
+        # Requires WeasyPrint for PDF output; HTML is always saved.
+        "save_jaxpr_reports": False,
+    },
+    # Continuous interpolation of observed data for diagnostics/visualisation.    # This is NOT used in the loss function and does NOT expand training targets.
     # Interpolated observed curves are exported to fit_timeseries_dense.tsv with
     # series_type = "observed_interpolated_dense" so they cannot be confused with
     # measured data.
