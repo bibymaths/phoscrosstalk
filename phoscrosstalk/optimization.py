@@ -28,6 +28,7 @@ Residual vector structure (for optx.least_squares):
 State layout: y = [R_rna, S, A, Kdyn, p]  (dim = 3*K + M + N)
 """
 
+import logging
 import os
 import pathlib
 from functools import partial
@@ -57,6 +58,15 @@ from phoscrosstalk.solver_config import (
 )
 
 logger = get_logger(__name__)
+
+# Module-level standard logger used by jax.debug.callback (must be a plain
+# logging.Logger — jax.debug.callback executes the callback outside the trace).
+_debug_logger = logging.getLogger("phoscrosstalk.optimization")
+
+
+def _log_residuals_step(total_loss):
+    """Plain Python callback for jax.debug.callback — logs the scalar total loss."""
+    _debug_logger.info("[fit]  step  loss=%.4e", float(total_loss))
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -880,6 +890,8 @@ def make_residuals_fn(
         f3 = jnp.where(jnp.isfinite(f3), f3, jnp.asarray(1e6, dtype=jnp.float64))
         f4 = jnp.where(jnp.isfinite(f4), f4, jnp.asarray(1e6, dtype=jnp.float64))
 
+        jax.debug.callback(_log_residuals_step, f1 + f2 + f3 + f4)
+
         return finite_residuals, (f1, f2, f3, f4)
 
     return residuals_fn
@@ -896,6 +908,7 @@ def run_single_optimisation(
     ls_solver: str = "lm",
     optx_adjoint: str = "implicit",
     jac_mode: str = "fwd",
+    jaxpr_out_dir=None,
 ):
     """
     Run a single Optimistix least-squares optimisation of the parameter vector.
@@ -950,6 +963,18 @@ def run_single_optimisation(
         logger.info(f"Using Optimistix adjoint: {optx_adjoint}")
         logger.info(f"Using Optimistix solver: {ls_solver}")
         logger.info(f"Using Optimistix Jacobian mode: {jac_mode}")
+
+    # Optional: capture jaxpr for the residuals function before running the solver.
+    if jaxpr_out_dir is not None:
+        from pathlib import Path as _Path
+        from phoscrosstalk.jaxpr_reporter import capture_and_save_jaxpr
+        capture_and_save_jaxpr(
+            fn=residuals_fn,
+            example_args=(jnp.asarray(theta0, dtype=jnp.float64), None),
+            step_label="multistart_residuals_fn",
+            module_label="phoscrosstalk.optimization",
+            out_dir=_Path(jaxpr_out_dir),
+        )
 
     sol = optx.least_squares(
         residuals_fn,

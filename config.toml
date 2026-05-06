@@ -1043,3 +1043,72 @@ enabled                 = false
 method                  = "linear"   # options: "linear" | "cubic_hermite"
 fill_forward_nans_at_end = false
 replace_nans_at_start   = "first_valid"   # null | "zero" | "first_valid"
+
+
+# =============================================================================
+# [neural_ode] – post-fit neural latent-rate refinement (optional)
+# =============================================================================
+#
+# After the main mechanistic fit, an optional neural refinement stage can be
+# enabled to learn improved latent rate functions k_hat_act(t) and
+# s_hat_prod(t), regularised toward the mechanistic priors k_act_init(t) and
+# s_prod_init(t).
+#
+# The mechanistic ODE equations and theta_best are kept fixed.
+# Only the neural rate generator parameters (two small MLPs) are optimised.
+#
+# enabled:
+#   false (default) – skip neural refinement entirely.  Normal flow unchanged.
+#   true            – run post-fit refinement after mechanistic analysis.
+#
+# width:
+#   MLP hidden layer width (number of units per hidden layer).
+#
+# depth:
+#   Number of hidden layers in each MLP.
+#
+# steps:
+#   Number of Optimistix GradientDescent training steps.
+#
+# learning_rate:
+#   Gradient-descent step size.
+#
+# prior_weight_k_act / prior_weight_s_prod:
+#   Regularisation weights anchoring learned rates to mechanistic priors.
+#   Higher values = learned rates stay closer to mechanistic priors.
+#
+# data_weight_phospho / data_weight_abundance / data_weight_mrna:
+#   Relative weights for each data modality in the neural training loss.
+#
+# seed:
+#   JAX random seed for neural network weight initialisation.
+#
+# rtol / atol / dt0 / max_steps:
+#   Diffrax ODE tolerances and step limits used during neural training.
+#   These do NOT affect the mechanistic fitting solver.
+#
+# save_dense:
+#   true  – write neural_fit_timeseries_dense.tsv for dashboard visualisation.
+#   false – skip dense output.
+#
+# dense_n_points:
+#   Number of time points in the dense neural output grid.
+# =============================================================================
+[neural_ode]
+enabled                 = false
+width                   = 32
+depth                   = 2
+steps                   = 500
+learning_rate           = 1e-3
+prior_weight_k_act      = 1.0
+prior_weight_s_prod     = 1.0
+data_weight_phospho     = 1.0
+data_weight_abundance   = 1.0
+data_weight_mrna        = 1.0
+seed                    = 0
+rtol                    = 1e-5
+atol                    = 1e-7
+dt0                     = 0.01
+max_steps               = 65536
+save_dense              = true
+dense_n_points          = 200

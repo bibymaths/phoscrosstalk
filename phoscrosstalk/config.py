@@ -222,8 +222,54 @@ _DEFAULTS = {
         # Write fit_timeseries_dense.tsv to the output directory.
         "save_dense": True,
     },
-    # Continuous interpolation of observed data for diagnostics/visualisation.
-    # This is NOT used in the loss function and does NOT expand training targets.
+    # Post-fit neural latent-rate refinement (optional).
+    # Only active when enabled = true.  Old configs without this section
+    # default to enabled = false and are entirely unaffected.
+    "neural_ode": {
+        # Set to true to run the neural latent-rate refinement stage.
+        "enabled": False,
+        # MLP hidden layer width.
+        "width": 32,
+        # MLP depth (number of hidden layers).
+        "depth": 2,
+        # Number of Optimistix GradientDescent training steps.
+        "steps": 500,
+        # Gradient-descent learning rate.
+        "learning_rate": 1e-3,
+        # Regularisation weight toward mechanistic k_act prior.
+        "prior_weight_k_act": 1.0,
+        # Regularisation weight toward mechanistic s_prod prior.
+        "prior_weight_s_prod": 1.0,
+        # Phosphosite data loss weight.
+        "data_weight_phospho": 1.0,
+        # Protein abundance data loss weight.
+        "data_weight_abundance": 1.0,
+        # mRNA data loss weight.
+        "data_weight_mrna": 1.0,
+        # JAX random seed for neural parameter initialisation.
+        "seed": 0,
+        # Diffrax ODE relative tolerance used during neural training.
+        "rtol": 1e-5,
+        # Diffrax ODE absolute tolerance used during neural training.
+        "atol": 1e-7,
+        # Diffrax ODE initial step size.
+        "dt0": 0.01,
+        # Maximum Diffrax ODE internal steps during neural training.
+        "max_steps": 65536,
+        # Write dense neural-refined timeseries for dashboard visualisation.
+        "save_dense": True,
+        # Number of time points in the dense neural output grid.
+        "dense_n_points": 200,
+    },
+    # Diagnostic / developer flags.  All default to False so production runs
+    # are completely unaffected.
+    "debug": {
+        # When True, capture jaxpr (JAX computation graph) for each major
+        # flow step and save HTML + PDF reports under <output_dir>/jaxpr_reports/.
+        # Requires WeasyPrint for PDF output; HTML is always saved.
+        "save_jaxpr_reports": False,
+    },
+    # Continuous interpolation of observed data for diagnostics/visualisation.    # This is NOT used in the loss function and does NOT expand training targets.
     # Interpolated observed curves are exported to fit_timeseries_dense.tsv with
     # series_type = "observed_interpolated_dense" so they cannot be confused with
     # measured data.
