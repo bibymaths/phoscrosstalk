@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Optional
 
 import diffrax
@@ -789,27 +790,52 @@ def run_neural_latent_rate_refinement(
     )
 
     # ------------------------------------------------------------------
-    # 7. Train with Optimistix GradientDescent
+    # 7. Train with gradient descent — Python loop for per-step logging
     # ------------------------------------------------------------------
-    logger.info("[neural_ode] Training neural rate generator for %d steps...", neural_cfg.steps)
-
+    # Using jax.value_and_grad for a JIT-compiled gradient step (equivalent to
+    # optx.GradientDescent) wrapped in a Python for-loop to enable per-step
+    # logger.info output without entering JAX's compiled while_loop.
+    n_steps = int(neural_cfg.steps)
     lr = float(neural_cfg.learning_rate)
-    solver = optx.GradientDescent(
-        learning_rate=lr,
-        rtol=1e-100,  # Very tight — rely on max_steps for termination
-        atol=1e-100,
-    )
+    log_every = max(1, n_steps // 20)  # log ~20 times across the run
 
-    train_result = optx.minimise(
-        neural_loss_fn,
-        solver,
-        params,
-        args=None,
-        has_aux=True,
-        max_steps=int(neural_cfg.steps),
-        throw=False,
+    @jax.jit
+    def _grad_step(p):
+        """One gradient-descent step; returns (updated_params, loss, aux)."""
+        (loss, aux), grads = jax.value_and_grad(neural_loss_fn, has_aux=True)(p, None)
+        p_new = jax.tree_util.tree_map(lambda w, g: w - lr * g, p, grads)
+        return p_new, loss, aux
+
+    logger.info(
+        "[neural_ode]  training  steps=%d  lr=%.2e  log_every=%d",
+        n_steps, lr, log_every,
     )
-    params_opt = train_result.value
+    t_total = time.perf_counter()
+    _loss_val = float(loss_init)
+    _aux_val = (f_p0, f_a0, f_r0, f_k0, f_s0)
+
+    for step in range(n_steps):
+        t0 = time.perf_counter()
+        params, _loss_j, _aux_val = _grad_step(params)
+        elapsed = time.perf_counter() - t0
+        _loss_val = float(_loss_j)
+
+        if step % log_every == 0 or step == n_steps - 1:
+            f_p, f_a, f_r, f_k, f_s = [float(x) for x in _aux_val]
+            logger.info(
+                "[neural_ode]  step=%04d/%04d  loss_total=%.4e"
+                "  loss_phospho=%.4e  loss_k_prior=%.4e  loss_s_prior=%.4e  dt=%.3fs",
+                step, n_steps,
+                _loss_val, f_p, f_k, f_s,
+                elapsed,
+            )
+
+    total_elapsed = time.perf_counter() - t_total
+    logger.info(
+        "[neural_ode]  refinement complete  final_loss=%.4e  total_t=%.1fs",
+        _loss_val, total_elapsed,
+    )
+    params_opt = params
 
     # ------------------------------------------------------------------
     # 8. Compute final loss after training
