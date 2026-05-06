@@ -12,6 +12,7 @@ Provides:
   * EPS                – small constant for numerical stability.
 """
 
+import logging
 import os
 import threading
 from types import SimpleNamespace
@@ -22,6 +23,8 @@ try:
     import tomllib  # stdlib Python ≥ 3.11
 except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib  # fallback for older environments
+
+_logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -771,14 +774,14 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
     # -------------------------------------------------------------------
     if warnings:
         for w in warnings:
-            print(f"WARNING:{w}", flush=True)
+            _logger.warning("config validation warning: %s", w)
 
     if errors:
-        print(
-            f"\nERROR: Configuration validation failed ({len(errors)} error(s)):\n"
-            + "\n".join(errors)
-            + f"\n\nFix the above errors in {cfg_label} and re-run.\n",
-            flush=True,
+        _logger.error(
+            "\nConfiguration validation failed (%d error(s)):\n%s\n\nFix the above errors in %s and re-run.\n",
+            len(errors),
+            "\n".join(errors),
+            cfg_label,
         )
         raise SystemExit(1)
 

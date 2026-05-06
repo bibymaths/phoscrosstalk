@@ -441,7 +441,7 @@ def _save_dense_simulation(
                         }
                     )
         except Exception as exc:
-            logger.warning(f"[!] mRNA interpolated dense rows skipped: {exc}")
+            logger.warning("[!] mRNA interpolated dense rows skipped: %s", exc)
 
     df_dense = pd.DataFrame(rows)
     df_dense.to_csv(
@@ -721,9 +721,9 @@ def save_fitted_simulation(
                     )
                     _data_interp_R = _rna_interp_result.get("rna_interp")
                     for msg in _rna_interp_result.get("nan_fill_log", []):
-                        logger.info(f"[data_interp/rna] {msg}")
+                        logger.info("[data_interp/rna] %s", msg)
                 except Exception as exc:
-                    logger.warning(f"[!] RNA data interpolation build failed: {exc}")
+                    logger.warning("[!] RNA data interpolation build failed: %s", exc)
 
         try:
             _save_dense_simulation(

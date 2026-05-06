@@ -273,7 +273,7 @@ def _print_config_summary(cfg, config_path: str) -> None:
             f"knockouts={an.run_knockouts}  sensitivity={an.run_sensitivity}",
             "",
         ]
-    print("\n".join(lines), flush=True)
+    logger.info("\n".join(lines))
 
 
 def main():
@@ -313,11 +313,11 @@ def main():
     # LOAD AND VALIDATE CONFIG
     # ------------------------------------------------------------------
     if not os.path.exists(config_path):
-        print(
-            f"ERROR: Config file not found: {config_path!r}\n"
+        logger.error(
+            "Config file not found: %r\n"
             "Create a config.toml file or pass --config <path>.\n"
             "See docs/running.md for a complete example.",
-            flush=True,
+            config_path,
         )
         raise SystemExit(1)
 
@@ -1132,13 +1132,13 @@ def main():
     # 13. Optional post-fit neural latent-rate refinement
     _neural_cfg = getattr(cfg, "neural_ode", None)
     if _neural_cfg is not None and getattr(_neural_cfg, "enabled", False):
-        from phoscrosstalk.neural_ode import run_neural_latent_rate_refinement  # noqa: PLC0415
+        from phoscrosstalk.neural_ode import run_neural_latent_rate_refinement, save_neural_ode_plots  # noqa: PLC0415
 
         jaxpr_out_dir = None
         if getattr(cfg.debug, "save_jaxpr_reports", False):
             jaxpr_out_dir = str(pathlib.Path(outdir) / "jaxpr_reports")
 
-        run_neural_latent_rate_refinement(
+        _neural_ts, _neural_ys, _neural_model, _neural_loss_hist, _neural_time_hist = run_neural_latent_rate_refinement(
             problem=problem,
             theta_best=theta_best,
             k_act_fn=k_act_fn,
@@ -1164,6 +1164,15 @@ def main():
             R_data0=R_data0,
             jaxpr_out_dir=jaxpr_out_dir,
         )
+        save_neural_ode_plots(
+            outdir=os.path.join(outdir, "neural_ode"),
+            ts=_neural_ts,
+            ys=_neural_ys,
+            model=_neural_model,
+            loss_history=_neural_loss_hist,
+            time_history=_neural_time_hist,
+        )
+        logger.info("[*] Neural ODE visualisations saved to %s/neural_ode", outdir)
 
     logger.success("[*] Done.")
 
