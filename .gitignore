@@ -265,4 +265,4 @@ celerybeat-schedule
 celerybeat.pid
 marimo/_static/
 marimo/_lsp/
-__marimo__/
+__marimo__/Write results folder path here.
