@@ -100,6 +100,16 @@ class RichLogger:
         file_handler.setFormatter(formatter)
         self.logger.addHandler(file_handler)
 
+    def debug(self, msg, *args, **kwargs):
+        """
+        Log a debug message.
+
+        Args:
+            msg (str): The message string.
+            *args, **kwargs: Arguments passed to the standard logger.
+        """
+        self.logger.debug(msg, *args, **kwargs)
+
     def info(self, msg, *args, **kwargs):
         """
         Log an informational message.
