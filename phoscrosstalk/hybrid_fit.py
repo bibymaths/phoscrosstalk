@@ -163,6 +163,107 @@ def _validate_bounds(xl: np.ndarray, xu: np.ndarray, n_var: int) -> tuple[np.nda
     return xl, xu
 
 
+def _resolve_mutax_workers(workers: int, updating: str) -> tuple[int, str, int]:
+    """
+    Resolve effective Mutax worker count and updating mode from JAX device budget.
+
+    Must be called after JAX has been imported (inspects runtime state only).
+    Do NOT call ``jax.config.update("jax_num_cpu_devices", ...)`` here — that
+    must happen in main.py/runtime_env *before* any JAX import.  If only one
+    device is available, log a warning and fall back to serial execution.
+
+    Parameters
+    ----------
+    workers:
+        Requested worker count.  ``-1`` means "use all available devices".
+    updating:
+        Requested Mutax updating mode (``"immediate"`` or ``"deferred"``).
+
+    Returns
+    -------
+    effective_workers : int
+        Adjusted worker count safe to pass to Mutax.
+    effective_updating : str
+        Adjusted updating mode safe to pass to Mutax.
+    n_devices : int
+        Number of JAX CPU devices visible at runtime.
+    """
+    import jax as _jax  # already imported at module level; this is just for clarity
+
+    n_devices = int(_jax.local_device_count())
+    try:
+        devices = _jax.local_devices()
+    except Exception:
+        devices = []
+
+    requested_workers = int(workers)
+    effective_workers = requested_workers
+    effective_updating = updating
+
+    if requested_workers == -1:
+        if n_devices > 1:
+            # Let Mutax/parajax use all visible devices.
+            effective_workers = -1
+            effective_updating = "deferred"
+        else:
+            # Only one JAX device — cannot parallelise.
+            # Fix: set jax_num_cpu_devices in main.py/runtime_env before JAX import.
+            effective_workers = 1
+            effective_updating = "immediate"
+            logger.warning(
+                "[fit]  hybrid_fit  _resolve_mutax_workers  "
+                "Hybrid DE requested parallel workers (workers=-1), but JAX exposes "
+                "only 1 CPU device. Configure jax_num_cpu_devices before importing "
+                "JAX in main.py/runtime_env (e.g. via configure_jax_cpu_devices()). "
+                "Falling back to workers=1, updating='immediate' (serial execution)."
+            )
+    elif requested_workers > 1:
+        if n_devices <= 1:
+            # Only one JAX device — cannot parallelise.
+            effective_workers = 1
+            effective_updating = "immediate"
+            logger.warning(
+                "[fit]  hybrid_fit  _resolve_mutax_workers  "
+                "Hybrid DE requested workers=%d, but JAX exposes only 1 CPU device. "
+                "Configure jax_num_cpu_devices before importing JAX in main.py/runtime_env. "
+                "Falling back to workers=1, updating='immediate' (serial execution).",
+                requested_workers,
+            )
+        elif requested_workers > n_devices:
+            # Cap to available device count.
+            effective_workers = n_devices
+            effective_updating = "deferred"
+            logger.warning(
+                "[fit]  hybrid_fit  _resolve_mutax_workers  "
+                "Requested workers=%d > jax.local_device_count()=%d; "
+                "capping to %d devices.",
+                requested_workers,
+                n_devices,
+                n_devices,
+            )
+        else:
+            effective_workers = requested_workers
+            effective_updating = "deferred"
+    else:
+        # workers == 1: serial mode regardless of device count.
+        effective_workers = 1
+        effective_updating = "immediate"
+
+    logger.info(
+        "[fit]  hybrid_fit  _resolve_mutax_workers  "
+        "n_devices=%d  devices=%s  requested_workers=%s  effective_workers=%s  "
+        "requested_updating=%s  effective_updating=%s",
+        n_devices,
+        [str(d) for d in devices],
+        str(requested_workers),
+        str(effective_workers),
+        updating,
+        effective_updating,
+    )
+
+    return effective_workers, effective_updating, n_devices
+
+
 def _loss_scalar_from_loss_fn(loss_fn, penalty: float = 1e12):
     """
     Build a JAX-compatible scalar objective for global search.
@@ -380,31 +481,36 @@ def run_mutax_de(
         strategy = "best1bin"
 
     # ------------------------------------------------------------------
-    # Resolve worker count from JAX device budget.
-    # "auto" / None → use all visible JAX CPU devices (workers = -1).
-    # An explicit integer is respected as-is.
+    # Resolve worker count and updating mode from the JAX device budget.
+    #
+    # "auto" / None → treat as -1 (use all available JAX CPU devices).
+    # The helper caps workers to the actual device count and switches
+    # updating to "immediate" when only one device is visible, avoiding
+    # the parajax parallelisation warning.
+    #
+    # NOTE: if jax.local_device_count() == 1 here, the correct fix is to
+    # call configure_jax_cpu_devices() in main.py/runtime_env *before* any
+    # JAX import (e.g. via runtime_env.configure_jax_cpu_devices()).
     # ------------------------------------------------------------------
-    n_jax_devices = len(jax.devices("cpu"))
-
     if workers is None or str(workers).lower() in ("auto",):
         workers = -1
 
-    # When running with multiple workers Mutax requires deferred updating so
-    # that the full population is evaluated before each mutation step.
-    if workers != 1 and updating != "deferred":
-        logger.warning(
-            "[fit]  hybrid_fit  mutax_de  workers=%s requires updating='deferred'; "
-            "switching from %r to 'deferred'.",
-            workers,
-            updating,
-        )
-        updating = "deferred"
+    requested_workers = workers
+    requested_updating = updating
+
+    effective_workers, effective_updating, n_jax_devices = _resolve_mutax_workers(
+        int(workers), updating
+    )
 
     logger.info(
-        "[fit]  hybrid_fit  mutax_de  jax_cpu_devices=%d  de_workers=%s  updating=%s",
+        "[fit]  hybrid_fit  mutax_de  jax_cpu_devices=%d  "
+        "requested_workers=%s  effective_workers=%s  "
+        "requested_updating=%s  effective_updating=%s",
         n_jax_devices,
-        str(workers),
-        updating,
+        str(requested_workers),
+        str(effective_workers),
+        requested_updating,
+        effective_updating,
     )
 
     xl_j = jnp.asarray(xl, dtype=jnp.float64)
@@ -422,12 +528,12 @@ def run_mutax_de(
 
     logger.info(
         "[fit]  hybrid_fit  mutax_de  strategy=%s  maxiter=%d  popsize=%d  "
-        "workers=%s  updating=%s",
+        "effective_workers=%s  effective_updating=%s",
         strategy,
         int(maxiter),
         int(popsize),
-        str(workers),
-        updating,
+        str(effective_workers),
+        effective_updating,
     )
 
     t0 = time.perf_counter()
@@ -444,8 +550,8 @@ def run_mutax_de(
         recombination=float(recombination),
         disp=bool(disp),
         polish=bool(polish),
-        updating=updating,
-        workers=workers,
+        updating=effective_updating,
+        workers=effective_workers,
         x0=x0_j,
         vectorized=False,
     )
