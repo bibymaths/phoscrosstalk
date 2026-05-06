@@ -1127,8 +1127,6 @@ def main():
             rna_data_scaled=rna_obs_matched,
             w_mrna=args.loss_weight_mrna,
             rna_model_prot_idx=rna_model_prot_idx,
-            rna_obs_idx=rna_obs_idx,
-            rna_fit_genes=rna_fit_genes,
             R_data0=R_data0,
             rna_relax=cfg.derived_rates.rna_relax,
             ode_solver_kind=args.ode_solver,
@@ -1353,6 +1351,10 @@ def main():
     if _neural_cfg is not None and getattr(_neural_cfg, "enabled", False):
         from phoscrosstalk.neural_ode import run_neural_latent_rate_refinement  # noqa: PLC0415
 
+        jaxpr_out_dir = None
+        if getattr(cfg.debug, "save_jaxpr_reports", False):
+            jaxpr_out_dir = str(pathlib.Path(outdir) / "jaxpr_reports")
+
         run_neural_latent_rate_refinement(
             problem=problem,
             theta_best=theta_best,
@@ -1377,11 +1379,7 @@ def main():
             rna_relax=cfg.derived_rates.rna_relax,
             abundance_max=getattr(getattr(cfg, "bounds", None), "abundance_max", 5.0),
             R_data0=R_data0,
-            jaxpr_out_dir=(
-                str(pathlib.Path(outdir) / "jaxpr_reports")
-                if getattr(getattr(cfg, "debug", None), "save_jaxpr_reports", False)
-                else None
-            ),
+            jaxpr_out_dir=jaxpr_out_dir,
         )
 
     logger.success("[*] Done.")
