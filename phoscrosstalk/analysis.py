@@ -249,6 +249,7 @@ def _save_dense_simulation(
     interpolation_label: str = "diffrax_dense",
     data_interp_P=None,
     data_interp_A=None,
+    data_interp_R=None,
     prot_idx_for_A_full=None,
 ):
     """Run a dense-grid simulation and save long-format output for visualisation.
@@ -261,11 +262,14 @@ def _save_dense_simulation(
     the optimisation objective or loss values.  It is best-effort; failures are
     caught and warned rather than propagated.
 
-    When *data_interp_P* or *data_interp_A* are provided (callables built by
+    When *data_interp_P*, *data_interp_A*, or *data_interp_R* are provided
+    (callables built by
     :func:`~phoscrosstalk.derived_rates.build_data_interpolations`), the dense
     output also includes ``series_type = "observed_interpolated_dense"`` rows for
     diagnostic comparison.  These rows are clearly labelled and must not be
-    confused with measured data.
+    confused with measured data.  *data_interp_R* is built from the RNA-specific
+    time axis (``t_rna``) and must not be confused with the phospho/protein time
+    axis.
 
     Output columns: entity_type, entity, site, protein, time, value, series_type,
                     source, interpolation_method
@@ -413,6 +417,32 @@ def _save_dense_simulation(
         except Exception:
             pass
 
+    # Interpolated mRNA (observed) — diagnostic only. NOT training data.
+    # series_type is clearly labelled to avoid confusion with simulated_dense rows.
+    if data_interp_R is not None:
+        try:
+            interp_R_vals = np.asarray(data_interp_R(t_dense), dtype=float)
+            # data_interp_R(t_dense) returns shape (K, n_dense) for array input
+            for p_idx in range(K):
+                prot = proteins[p_idx]
+                row_vals = interp_R_vals[p_idx, :] if interp_R_vals.ndim == 2 else interp_R_vals
+                for j, ti in enumerate(t_dense):
+                    rows.append(
+                        {
+                            "entity_type": "mRNA",
+                            "entity": prot,
+                            "site": "",
+                            "protein": prot,
+                            "time": float(ti),
+                            "value": float(row_vals[j]),
+                            "series_type": "observed_interpolated_dense",
+                            "source": "data_interpolation",
+                            "interpolation_method": "data_interp",
+                        }
+                    )
+        except Exception as exc:
+            logger.warning("[!] mRNA interpolated dense rows skipped: %s", exc)
+
     df_dense = pd.DataFrame(rows)
     df_dense.to_csv(
         os.path.join(outdir, "fit_timeseries_dense.tsv"), sep="\t", index=False
@@ -479,6 +509,7 @@ def save_fitted_simulation(
     kinases=None,
     simulation_cfg=None,
     data_interpolation_cfg=None,
+    t_rna=None,
 ):
     """
     Run a simulation with optimized parameters,
@@ -522,6 +553,10 @@ def save_fitted_simulation(
             ``data_interpolation_cfg.enabled`` is True, diagnostic interpolated
             observed curves are added to ``fit_timeseries_dense.tsv``.  The
             original sparse observed arrays in the loss are never modified.
+        t_rna (np.ndarray | None): RNA-specific time vector.  Must be provided
+            when *R_data0* is not None and RNA data uses a different time axis
+            than the phospho/protein observations (*t*).  Used exclusively for
+            the diagnostic mRNA interpolation; never conflated with *t*.
 
     Returns:
         None: Saves 'fitted_params.npz' and 'fit_timeseries.tsv' to `outdir`.
@@ -667,6 +702,29 @@ def save_fitted_simulation(
             except Exception as exc:
                 logger.warning(f"[!] Data interpolation build failed: {exc}")
 
+        # Separately build RNA interpolation using the RNA-specific time axis.
+        # This must NOT reuse t (phospho time axis) — t_rna may differ.
+        _data_interp_R = None
+        if _di_cfg is not None and getattr(_di_cfg, "enabled", False):
+            if R_data0 is not None and t_rna is not None:
+                try:
+                    from phoscrosstalk.derived_rates import build_data_interpolations as _bdi
+                    _di_method = getattr(_di_cfg, "method", "linear")
+                    _di_fwd = getattr(_di_cfg, "fill_forward_nans_at_end", False)
+                    _di_start = getattr(_di_cfg, "replace_nans_at_start", None)
+                    _rna_interp_result = _bdi(
+                        t_obs=t_rna,
+                        rna_data=R_data0,
+                        method=_di_method,
+                        fill_forward_nans_at_end=_di_fwd,
+                        replace_nans_at_start=_di_start,
+                    )
+                    _data_interp_R = _rna_interp_result.get("rna_interp")
+                    for msg in _rna_interp_result.get("nan_fill_log", []):
+                        logger.info("[data_interp/rna] %s", msg)
+                except Exception as exc:
+                    logger.warning("[!] RNA data interpolation build failed: %s", exc)
+
         try:
             _save_dense_simulation(
                 outdir=outdir,
@@ -694,6 +752,7 @@ def save_fitted_simulation(
                 interpolation_label=_dense_label,
                 data_interp_P=_data_interp_P,
                 data_interp_A=_data_interp_A,
+                data_interp_R=_data_interp_R,
                 prot_idx_for_A_full=prot_idx_for_A,
             )
         except Exception as exc:  # pragma: no cover – dense output is best-effort

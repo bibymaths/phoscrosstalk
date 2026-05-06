@@ -234,3 +234,100 @@ n_starts = 0
     with pytest.raises(SystemExit) as exc_info:
         validate_config(cfg, str(cfg_path))
     assert exc_info.value.code == 1
+
+
+# ---------------------------------------------------------------------------
+# ModelDims tests (Task 5 from ModelDims refactor)
+# ---------------------------------------------------------------------------
+
+def test_model_dims_set_dims_valid():
+    """set_dims with valid positive ints should set class attributes."""
+    from phoscrosstalk.config import ModelDims
+
+    ModelDims.set_dims(3, 2, 5)
+    assert ModelDims.K == 3
+    assert ModelDims.M == 2
+    assert ModelDims.N == 5
+
+
+def test_model_dims_validation_zero():
+    """set_dims must raise ValueError for K=0."""
+    from phoscrosstalk.config import ModelDims
+
+    with pytest.raises(ValueError, match="K"):
+        ModelDims.set_dims(0, 2, 5)
+
+
+def test_model_dims_validation_negative():
+    """set_dims must raise ValueError for M=-1."""
+    from phoscrosstalk.config import ModelDims
+
+    with pytest.raises(ValueError, match="M"):
+        ModelDims.set_dims(3, -1, 5)
+
+
+def test_model_dims_validation_zero_n():
+    """set_dims must raise ValueError for N=0."""
+    from phoscrosstalk.config import ModelDims
+
+    with pytest.raises(ValueError, match="N"):
+        ModelDims.set_dims(3, 2, 0)
+
+
+def test_model_dims_from_data_basic():
+    """from_data infers K, M, N correctly from data arrays."""
+    import numpy as np
+    from phoscrosstalk.config import ModelDims
+
+    P_data = np.ones((5, 8))          # N=5 sites, T=8 timepoints
+    A_data = np.ones((3, 8))          # K=3 proteins
+    kin_to_prot_idx = np.array([0, 1])  # M=2 kinases
+
+    ModelDims.from_data(P_data, A_data, kin_to_prot_idx)
+    assert ModelDims.N == 5
+    assert ModelDims.K == 3
+    assert ModelDims.M == 2
+
+
+def test_model_dims_from_data_no_A():
+    """from_data falls back to K=N when A_data is None."""
+    import numpy as np
+    from phoscrosstalk.config import ModelDims
+
+    P_data = np.ones((4, 6))
+    kin_to_prot_idx = np.array([0, 1, 2])
+
+    ModelDims.from_data(P_data, None, kin_to_prot_idx)
+    assert ModelDims.N == 4
+    assert ModelDims.K == 4  # falls back to N
+    assert ModelDims.M == 3
+
+
+def test_model_dims_from_data_empty_A():
+    """from_data falls back to K=N when A_data has size 0."""
+    import numpy as np
+    from phoscrosstalk.config import ModelDims
+
+    P_data = np.ones((4, 6))
+    A_data = np.zeros((0, 6))  # empty
+    kin_to_prot_idx = np.array([0])
+
+    ModelDims.from_data(P_data, A_data, kin_to_prot_idx)
+    assert ModelDims.K == 4
+
+
+def test_two_runs_different_dims_set_dims():
+    """Regression: sequential set_dims with different values must be independent."""
+    from phoscrosstalk.config import ModelDims
+
+    # Run 1
+    ModelDims.set_dims(3, 2, 5)
+    assert ModelDims.K == 3
+    assert ModelDims.M == 2
+    assert ModelDims.N == 5
+
+    # Run 2 — different dims must completely replace Run 1
+    ModelDims.set_dims(6, 4, 10)
+    assert ModelDims.K == 6
+    assert ModelDims.M == 4
+    assert ModelDims.N == 10
