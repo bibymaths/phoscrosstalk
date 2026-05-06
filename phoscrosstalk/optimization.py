@@ -130,7 +130,7 @@ def bio_score_jax(theta, K: int, M: int, N: int):
     return score_kinase + score_protein
 
 
-def bio_score(theta):
+def bio_score(theta, dims: ModelDims):
     """
     NumPy/Python wrapper used by analysis code.
 
@@ -141,9 +141,9 @@ def bio_score(theta):
     return float(
         bio_score_jax(
             theta,
-            K=int(ModelDims.K),
-            M=int(ModelDims.M),
-            N=int(ModelDims.N),
+            K=int(dims.K),
+            M=int(dims.M),
+            N=int(dims.N),
         )
     )
 
@@ -291,6 +291,7 @@ def build_parameter_labels(K: int, M: int, N: int) -> list[str]:
 
 
 def make_loss_fn(
+    dims: ModelDims,
     t,
     P_data,
     A_scaled,
@@ -345,7 +346,7 @@ def make_loss_fn(
 
     State layout: y = [R_rna, S, A, Kdyn, p]  (dim = 3*K + M + N)
     """
-    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+    K, M, N = dims.K, dims.M, dims.N
 
     n_p = max(1, P_data.size)
     n_A = max(1, A_scaled.size)
@@ -555,6 +556,7 @@ def make_loss_fn(
 
 
 def make_residuals_fn(
+    dims: ModelDims,
     t,
     P_data,
     A_scaled,
@@ -625,7 +627,7 @@ def make_residuals_fn(
 
     State layout: y = [R_rna, S, A, Kdyn, p]  (dim = 3*K + M + N)
     """
-    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+    K, M, N = dims.K, dims.M, dims.N
 
     n_p = max(1, P_data.size)
     n_A = max(1, A_scaled.size)
@@ -1016,7 +1018,7 @@ def validate_problem_shapes(problem):
     ----------
     problem : NetworkProblem
     """
-    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+    K, M, N = problem.dims.K, problem.dims.M, problem.dims.N
     problem.P_data.shape[1]
 
     errors = []
@@ -1282,6 +1284,7 @@ class NetworkProblem:
 
     def __init__(
         self,
+        dims: ModelDims,
         t,
         P_data,
         Cg,
@@ -1328,6 +1331,7 @@ class NetworkProblem:
         # If you were relying on a different adjoint, set ode_adjoint_kind explicitly
         # in your config under [solver] ode_adjoint.
         self.t = t
+        self.dims = dims
         self.P_data = P_data
         self.Cg = Cg
         self.Cl = Cl
@@ -1393,10 +1397,11 @@ class NetworkProblem:
             np.ndarray: P_sim (N_sites x T).
         """
         theta = np.asarray(x, dtype=np.float64)
-        K, T = ModelDims.K, self.P_data.shape[1]
+        K, T = self.dims.K, self.P_data.shape[1]
         A0 = build_full_A0(K, T, self.A_scaled, self.prot_idx_for_A)
 
         P_sim, _A_sim = simulate(
+            self.dims,
             self.t,
             self.P_data,
             A0,
@@ -1438,10 +1443,11 @@ class NetworkProblem:
                 solver_times.
         """
         theta = np.asarray(x, dtype=np.float64)
-        K, T = ModelDims.K, self.P_data.shape[1]
+        K, T = self.dims.K, self.P_data.shape[1]
         A0 = build_full_A0(K, T, self.A_scaled, self.prot_idx_for_A)
 
         return simulate(
+            self.dims,
             self.t,
             self.P_data,
             A0,

@@ -3,7 +3,7 @@ config.py
 Global configuration and state management for the Phospho-Network Model.
 
 Provides:
-  * ModelDims  – static dimension holder (K proteins, M kinases, N sites).
+  * ModelDims  – per-run immutable dimension holder (K proteins, M kinases, N sites).
   * load_config(path)  – parse a config.toml file and return a SimpleNamespace
                          with all tuneable parameters.
   * validate_config(cfg, config_path) – validate all required fields and file
@@ -11,13 +11,9 @@ Provides:
   * DEFAULT_TIMEPOINTS – legacy default time-point array.
   * EPS                – small constant for numerical stability.
 """
-# ModelDims refactor status: Case A — class-level mutable attributes set once
-# at startup via set_dims().  from_data() and input validation have been added.
-# Full migration to per-run frozen dataclass (Tasks 2–4) is deferred.
-
 import logging
 import os
-import threading
+from dataclasses import dataclass
 from types import SimpleNamespace
 
 import numpy as np
@@ -35,76 +31,32 @@ _logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
 class ModelDims:
-    """
-    Global container for storing model dimensions (Proteins, Kinases, Sites).
+    """Per-run immutable model dimensions."""
 
-    Acts as a static state holder to avoid passing dimensions recursively
-    through every function in the simulation pipeline.
+    K: int
+    M: int
+    N: int
 
-    Note: class-level mutable state is shared across all instances and is not
-    thread-safe for concurrent writes.  A module-level lock protects
-    ``set_dims`` so that concurrent test runs (pytest-xdist) do not corrupt
-    the global state.  Worker processes that call ``set_dims`` at startup are
-    safe because spawn mode means each worker has its own address space.
-
-    Future direction: migrate to a per-run frozen dataclass passed explicitly
-    through the call chain (see refactor status comment at top of module).
-    """
-
-    K: int = None  # Number of Proteins
-    M: int = None  # Number of Kinases
-    N: int = None  # Number of Phosphosites
-
-    _lock: threading.Lock = threading.Lock()
+    def __post_init__(self):
+        for name, val in [("K", self.K), ("M", self.M), ("N", self.N)]:
+            if not isinstance(val, (int, np.integer)) or int(val) <= 0:
+                raise ValueError(f"ModelDims.{name} must be a positive int; got {val!r}")
+            object.__setattr__(self, name, int(val))
 
     @classmethod
-    def set_dims(cls, k, m, n):
-        """
-        Set the global dimensions for the current model context.
-
-        Args:
-            k (int): Number of unique proteins (K). Must be a positive integer.
-            m (int): Number of kinases (M). Must be a positive integer.
-            n (int): Number of phosphorylation sites (N). Must be a positive integer.
-
-        Raises:
-            ValueError: If any dimension is not a positive integer.
-
-        Returns:
-            None
-        """
-        for name, val in [("K", k), ("M", m), ("N", n)]:
-            if not isinstance(val, (int, np.integer)) or int(val) <= 0:
-                raise ValueError(
-                    f"ModelDims.{name} must be a positive int; got {val!r}"
-                )
-        with cls._lock:
-            cls.K = int(k)
-            cls.M = int(m)
-            cls.N = int(n)
+    def set_dims(cls, k, m, n) -> "ModelDims":
+        """Compatibility constructor for explicit K/M/N values."""
+        return cls(K=k, M=m, N=n)
 
     @classmethod
     def from_data(cls, P_data, A_data, kin_to_prot_idx) -> "ModelDims":
-        """Infer K, M, N directly from loaded data arrays and set the global dims.
-
-        Args:
-            P_data:           (N, T) phosphosite data array.
-            A_data:           (K_obs, T) protein abundance array, or None.
-            kin_to_prot_idx:  (M,) kinase-to-protein index array.
-
-        Returns:
-            The ModelDims class (for call-chain convenience; state is set
-            as class-level attributes for backward compatibility).
-        """
+        """Infer immutable K/M/N directly from loaded data arrays."""
         N = int(np.asarray(P_data).shape[0])
-        if A_data is not None and np.asarray(A_data).size > 0:
-            K = int(np.asarray(A_data).shape[0])
-        else:
-            K = N
+        K = int(np.asarray(A_data).shape[0]) if (A_data is not None and np.asarray(A_data).size > 0) else N
         M = int(len(kin_to_prot_idx))
-        cls.set_dims(K, M, N)
-        return cls
+        return cls(K=K, M=M, N=N)
 
 
 # ---------------------------------------------------------------------------

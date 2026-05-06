@@ -149,7 +149,7 @@ def plot_run_diagnostics(outdir, F, F_best, f1, f2, f3, X, f4=None):
 plot_pareto_diagnostics = plot_run_diagnostics
 
 
-def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
+def print_parameter_summary(outdir, dims: ModelDims, theta_opt, proteins, kinases, sites):
     """
     Decode optimized parameters and export summaries for proteins, kinases, and sites.
 
@@ -163,7 +163,7 @@ def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
     Returns:
         None: Writes summary TSV/TXT files to `outdir` and prints summaries to console.
     """
-    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+    K, M, N = dims.K, dims.M, dims.N
     params_decoded = decode_theta(theta_opt, K, M, N)
 
     # Protein-specific parameters (k_act and s_prod are now derived, not fitted)
@@ -225,6 +225,7 @@ def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
 
 def _save_dense_simulation(
     outdir,
+    dims: ModelDims,
     theta_opt,
     t_obs,
     sites,
@@ -280,7 +281,7 @@ def _save_dense_simulation(
     * ``"observed_interpolated_dense"`` – interpolated from sparse observed data
                                           (diagnostic only, not training data)
     """
-    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+    K, M, N = dims.K, dims.M, dims.N
     t_max = float(np.nanmax(t_obs)) if len(t_obs) > 0 else 1.0
     t_dense = np.linspace(0.0, t_max, n_dense)
 
@@ -294,6 +295,7 @@ def _save_dense_simulation(
     A0_full = build_full_A0(K, 1, A_scaled_initial, prot_idx_for_A)
 
     dense_result = simulate_dense(
+        dims=dims,
         t_dense=t_dense,
         P_data0=P_scaled,
         A_data0=A0_full,
@@ -480,6 +482,7 @@ def _save_dense_simulation(
 
 def save_fitted_simulation(
     outdir,
+    dims: ModelDims,
     theta_opt,
     t,
     sites,
@@ -561,7 +564,7 @@ def save_fitted_simulation(
     Returns:
         None: Saves 'fitted_params.npz' and 'fit_timeseries.tsv' to `outdir`.
     """
-    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+    K, M, N = dims.K, dims.M, dims.N
 
     # Save Params – k_act and s_prod are derived quantities, not fitted
     params_decoded = decode_theta(theta_opt, K, M, N)
@@ -592,6 +595,7 @@ def save_fitted_simulation(
     A0_full = build_full_A0(K, len(t), A_scaled, prot_idx_for_A)
 
     P_sim, A_sim, S_sim, Kdyn_sim = simulate(
+        dims,
         t,
         P_scaled,
         A0_full,
@@ -728,6 +732,7 @@ def save_fitted_simulation(
         try:
             _save_dense_simulation(
                 outdir=outdir,
+                dims=dims,
                 theta_opt=theta_opt,
                 t_obs=t,
                 sites=sites,

@@ -184,7 +184,7 @@ class TestOptimizationFloat64:
         from phoscrosstalk.config import ModelDims
 
         self.K, self.M, self.N = 2, 2, 3
-        ModelDims.set_dims(self.K, self.M, self.N)
+        self.dims = ModelDims.set_dims(self.K, self.M, self.N)
 
     def _make_res_fn(self):
         import jax.numpy as jnp
@@ -208,6 +208,7 @@ class TestOptimizationFloat64:
         rmk = np.zeros(M, dtype=np.float64)
 
         return make_residuals_fn(
+            dims=self.dims,
             t=t,
             P_data=P_data,
             A_scaled=A_scaled,

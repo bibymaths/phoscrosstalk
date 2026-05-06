@@ -35,17 +35,9 @@ from phoscrosstalk.config import ModelDims, load_config
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def reset_model_dims():
-    """Restore ModelDims after each test."""
-    saved = (ModelDims.K, ModelDims.M, ModelDims.N)
-    yield
-    ModelDims.K, ModelDims.M, ModelDims.N = saved
-
-
 def _make_tiny(K=2, M=3, N=4, T=5, seed=0):
     """Build a minimal synthetic model."""
-    ModelDims.set_dims(K, M, N)
+    dims = ModelDims(K=K, M=M, N=N)
     rng = np.random.default_rng(seed)
     dim = 2 * K + 2 + 3 * M + N + 4
     t = np.linspace(0.0, 30.0, T)
@@ -71,6 +63,7 @@ def _make_tiny(K=2, M=3, N=4, T=5, seed=0):
         K=K,
         M=M,
         N=N,
+        dims=dims,
         T=T,
         t=t,
         P_data=P_data,
@@ -284,6 +277,7 @@ def test_simulate_nonneg_outputs():
     m = _make_tiny(K=2, M=3, N=4, T=6)
 
     result = simulate(
+        m["dims"],
         m["t"],
         m["P_data"],
         m["A_data"],
@@ -331,6 +325,7 @@ def test_residuals_no_negative_model_outputs():
     theta_mid = jnp.asarray(0.5 * (xl + xu), dtype=jnp.float64)
 
     residuals_fn = make_residuals_fn(
+        dims=m["dims"],
         t=m["t"],
         P_data=m["P_data"],
         A_scaled=np.zeros((0, m["T"])),
@@ -411,6 +406,7 @@ def test_fit_timeseries_nonneg(tmp_path):
 
     save_fitted_simulation(
         outdir=str(tmp_path),
+        dims=m["dims"],
         theta_opt=m["theta"],
         t=m["t"],
         sites=sites,

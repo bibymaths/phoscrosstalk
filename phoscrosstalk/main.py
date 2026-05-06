@@ -656,9 +656,6 @@ def main():
         K_site_kin = np.eye(len(sites))
         kinases = [f"K_{i}" for i in range(len(sites))]
 
-    # Set the dimensions globally for the model
-    ModelDims.set_dims(len(proteins), len(kinases), len(sites))
-
     # Transpose kinase-site matrix & normalize
     R = np.ascontiguousarray(K_site_kin.T)
     rs = R.sum(axis=1)
@@ -674,6 +671,11 @@ def main():
     # 7. Mappings & Masks
     prot_map_all = {p: i for i, p in enumerate(proteins)}
     kin_to_prot_idx = np.array([prot_map_all.get(k, -1) for k in kinases], dtype=int)
+    dims = ModelDims.from_data(
+        P_data=P_scaled,
+        A_data=A_scaled if A_scaled.size > 0 else None,
+        kin_to_prot_idx=kin_to_prot_idx,
+    )
 
     # receptor_names / receptor_kin_names come from cfg.model (set above in args)
     receptor_mask_prot = np.array(
@@ -763,6 +765,7 @@ def main():
     # --- HYPERPARAMETER TUNING ---
     if args.tune:
         best_params = hyperparam.run_hyperparameter_scan(
+            dims,
             outdir,
             t,
             P_scaled,
@@ -806,9 +809,9 @@ def main():
     Cl = data_loader.row_normalize(Cl)
 
     # 9. Global Setup & Bounds
-    logger.header(f"[*] K={ModelDims.K}, M={ModelDims.M}, N={ModelDims.N}")
+    logger.header(f"[*] K={dims.K}, M={dims.M}, N={dims.N}")
     # H2: Pass cfg.bounds so that config-driven rate limits are respected.
-    xl, xu, dim = create_bounds(ModelDims.K, ModelDims.M, ModelDims.N, bounds=getattr(cfg, "bounds", None))
+    xl, xu, dim = create_bounds(dims.K, dims.M, dims.N, bounds=getattr(cfg, "bounds", None))
 
     logger.info(
         f"[DEBUG] create_bounds → xl type={type(xl)}, xu type={type(xu)}, dim={dim}"
@@ -818,7 +821,7 @@ def main():
     if xl is None or xu is None:
         raise RuntimeError(
             f"create_bounds() returned None for xl={xl} or xu={xu}. "
-            f"ModelDims are K={ModelDims.K}, M={ModelDims.M}, N={ModelDims.N}. "
+            f"ModelDims are K={dims.K}, M={dims.M}, N={dims.N}. "
             "This usually means ModelDims.set_dims() was called with zero dimensions — "
             "check that kinase_tsv/kea_ks_table loaded at least one site and one kinase."
         )
@@ -899,6 +902,7 @@ def main():
     )
 
     problem = NetworkOptimizationProblem(
+        dims,
         t,
         P_scaled,
         Cg,
@@ -1002,6 +1006,7 @@ def main():
 
     analysis.save_fitted_simulation(
         outdir,
+        dims,
         theta_best,
         t,
         sites,
@@ -1050,7 +1055,7 @@ def main():
             )
 
     analysis.plot_fitted_simulation(outdir)
-    analysis.print_parameter_summary(outdir, theta_best, proteins, kinases, sites)
+    analysis.print_parameter_summary(outdir, dims, theta_best, proteins, kinases, sites)
     analysis.print_biological_scores(outdir, X)
     analysis.plot_biological_scores(outdir, X, F)
     analysis.plot_goodness_of_fit(f"{outdir}/fit_timeseries.tsv", outdir)
@@ -1059,6 +1064,7 @@ def main():
         _ss = getattr(cfg, "steadystate", None)
         steadystate.run_steadystate_analysis(
             outdir=outdir,
+            dims=dims,
             problem=problem,
             theta_opt=theta_best,
             sites=sites,
@@ -1083,13 +1089,14 @@ def main():
 
     if args.run_knockouts:
         knockouts.run_knockout_screen(
-            outdir, problem, theta_best, sites, proteins, kinases
+            outdir, dims, problem, theta_best, sites, proteins, kinases
         )
 
     if args.run_sensitivity:
         bounds = (xl, xu)
         run_global_sensitivity(
             outdir,
+            dims,
             problem,
             bounds,
             proteins=proteins,
@@ -1098,17 +1105,15 @@ def main():
         )
 
     # 12. Provenance & exports
-    save_run_metadata(outdir, args)
+    save_run_metadata(outdir, dims, args)
     export_network_for_cytoscape(
-        outdir, theta_best, proteins, kinases, sites, K_site_kin, site_prot_idx
+        outdir, dims, theta_best, proteins, kinases, sites, K_site_kin, site_prot_idx
     )
 
     P_best = problem.simulate(theta_best)
     plot_residual_heatmap(outdir, P_scaled, P_best, sites, t)
 
-    p_labels = _generate_param_labels(
-        ModelDims.K, ModelDims.M, ModelDims.N, proteins, kinases, sites
-    )
+    p_labels = _generate_param_labels(dims.K, dims.M, dims.N, proteins, kinases, sites)
     plot_parameter_clustermap(outdir, X, p_labels, top_n=50)
 
     generate_equations_report(
@@ -1139,6 +1144,7 @@ def main():
             jaxpr_out_dir = str(pathlib.Path(outdir) / "jaxpr_reports")
 
         _neural_ts, _neural_ys, _neural_model, _neural_loss_hist, _neural_time_hist = run_neural_latent_rate_refinement(
+            dims=dims,
             problem=problem,
             theta_best=theta_best,
             k_act_fn=k_act_fn,

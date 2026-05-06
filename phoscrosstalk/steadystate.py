@@ -262,6 +262,7 @@ def _save_metadata_json(
 
 
 def _run_steadystate_solve(
+    dims: ModelDims,
     t_long: np.ndarray,
     P_data: np.ndarray,
     A0_initial: np.ndarray,
@@ -307,7 +308,7 @@ def _run_steadystate_solve(
     t_final_actual : float
         Last time point with at least one finite value.
     """
-    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+    K, M, N = dims.K, dims.M, dims.N
     T = len(t_long)
     N_sites = P_data.shape[0]
 
@@ -459,6 +460,7 @@ def _run_steadystate_solve(
 
 
 def run_steadystate_analysis(
+    dims: ModelDims,
     outdir: str,
     problem,
     theta_opt: np.ndarray,
@@ -558,7 +560,7 @@ def run_steadystate_analysis(
     )
 
     # 2. Build initial conditions
-    K = ModelDims.K
+    K = dims.K
     A_scaled = problem.A_scaled
     prot_idx_for_A = problem.prot_idx_for_A
     if A_scaled.size > 0:
@@ -593,6 +595,7 @@ def run_steadystate_analysis(
         try:
             P_ss, A_ss, S_ss, Kdyn_ss, t_out, solve_status, t_final_actual = (
                 _run_steadystate_solve(
+                    dims,
                     t_long,
                     problem.P_data,
                     A0_initial,
@@ -632,6 +635,7 @@ def run_steadystate_analysis(
         # Legacy path: plain simulate() over full long-horizon grid
         try:
             result = simulate(
+                dims,
                 t_long,
                 problem.P_data,
                 A0_initial,
