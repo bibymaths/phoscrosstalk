@@ -18,6 +18,7 @@ Entry point for the Global Phospho-Network Model orchestration.
 # ---------------------------------------------------------------------------
 
 import os
+import pathlib
 import sys
 
 from phoscrosstalk.data_loader import (
@@ -528,6 +529,13 @@ def main():
         reserve_cores=getattr(getattr(cfg, "runtime", None), "reserve_cores", 0),
         parallel_frechet=getattr(
             getattr(cfg, "runtime", None), "parallel_frechet", "auto"
+        ),
+        # Debug: when cfg.debug.save_jaxpr_reports is True, this path is set
+        # so that multistarts.py and optimization.py can capture jaxpr reports.
+        _jaxpr_out_dir=(
+            str(pathlib.Path(outdir) / "jaxpr_reports")
+            if getattr(getattr(cfg, "debug", None), "save_jaxpr_reports", False)
+            else None
         ),
     )
 
@@ -1369,6 +1377,11 @@ def main():
             rna_relax=cfg.derived_rates.rna_relax,
             abundance_max=getattr(getattr(cfg, "bounds", None), "abundance_max", 5.0),
             R_data0=R_data0,
+            jaxpr_out_dir=(
+                str(pathlib.Path(outdir) / "jaxpr_reports")
+                if getattr(getattr(cfg, "debug", None), "save_jaxpr_reports", False)
+                else None
+            ),
         )
 
     logger.success("[*] Done.")
