@@ -145,7 +145,7 @@ def _run_simulation(results_dir: str, t_max: float, num_points: int, mechanism: 
     K = len(snap_labels["proteins"])
     M = len(snap_labels["kinases"])
     N = len(snap_labels["sites"])
-    ModelDims.set_dims(K, M, N)
+    dims = ModelDims.set_dims(K, M, N)
 
     theta = params["theta"]
     t_fine = np.linspace(0.0, t_max, num_points)
@@ -175,6 +175,7 @@ def _run_simulation(results_dir: str, t_max: float, num_points: int, mechanism: 
         snap["receptor_mask_kin"],
         mechanism,
         full_output=True,
+        dims=dims,
     )
     return {
         "t": t_fine,

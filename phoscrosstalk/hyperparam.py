@@ -40,6 +40,7 @@ BOUNDS_CONFIG = {
 
 
 def run_hyperparameter_scan(
+    dims: ModelDims,
     outdir,
     t,
     P_scaled,
@@ -92,7 +93,7 @@ def run_hyperparameter_scan(
     best_params = None
     results_log = []
 
-    xl, xu, _ = create_bounds(ModelDims.K, ModelDims.M, ModelDims.N)
+    xl, xu, _ = create_bounds(dims.K, dims.M, dims.N)
     dim = len(xl)
 
     for i, combo in enumerate(combinations):
@@ -119,6 +120,7 @@ def run_hyperparameter_scan(
         # Build objective functions for this combo
         try:
             residuals_fn = make_residuals_fn(
+                dims=dims,
                 t=t,
                 P_data=P_scaled,
                 A_scaled=A_scaled,
@@ -154,6 +156,7 @@ def run_hyperparameter_scan(
 
         # Evaluate Fréchet distance
         problem_tmp = NetworkProblem(
+            dims=dims,
             t=t,
             P_data=P_scaled,
             Cg=Cg,

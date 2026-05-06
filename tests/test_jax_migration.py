@@ -36,17 +36,9 @@ from phoscrosstalk.config import ModelDims
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def reset_model_dims():
-    """Restore ModelDims after each test."""
-    saved = (ModelDims.K, ModelDims.M, ModelDims.N)
-    yield
-    ModelDims.K, ModelDims.M, ModelDims.N = saved
-
-
 def _make_tiny_model(K=2, M=3, N=4, T=6, seed=42):
     """Build a small synthetic model for testing."""
-    ModelDims.set_dims(K, M, N)
+    dims = ModelDims(K=K, M=M, N=N)
     rng = np.random.default_rng(seed)
 
     # New dim: 2*K + 2 + 3*M + N + 4  (k_act and s_prod removed from theta)
@@ -72,6 +64,7 @@ def _make_tiny_model(K=2, M=3, N=4, T=6, seed=42):
         K=K,
         M=M,
         N=N,
+        dims=dims,
         T=T,
         t=t,
         P_data=P_data,
@@ -219,31 +212,28 @@ class TestDiffraxSimulation:
         )
         assert np.all(np.isfinite(P_sim)), f"NaN in P_sim for mechanism={mech}"
 
-    def test_requires_modeldims(self):
+    def test_requires_explicit_dims(self):
         from phoscrosstalk.simulation import simulate
 
-        saved = (ModelDims.K, ModelDims.M, ModelDims.N)
-        ModelDims.K = ModelDims.M = ModelDims.N = None
-        try:
-            with pytest.raises(RuntimeError, match="ModelDims have not been set"):
-                simulate(
-                    np.array([0.0, 1.0]),
-                    np.zeros((2, 2)),
-                    np.zeros((2, 2)),
-                    np.zeros(10),
-                    np.zeros((2, 2)),
-                    np.zeros((2, 2)),
-                    np.array([0, 0], dtype=int),
-                    np.eye(2),
-                    np.eye(2),
-                    np.zeros((2, 2)),
-                    np.array([0, 0], dtype=int),
-                    np.array([0, 0], dtype=int),
-                    np.array([0, 0], dtype=int),
-                    "dist",
-                )
-        finally:
-            ModelDims.K, ModelDims.M, ModelDims.N = saved
+        dims = ModelDims(K=2, M=2, N=2)
+        P_sim, _ = simulate(
+            np.array([0.0, 1.0]),
+            np.zeros((2, 2)),
+            np.zeros((2, 2)),
+            np.zeros(2 * dims.K + 2 + 3 * dims.M + dims.N + 4),
+            np.zeros((2, 2)),
+            np.zeros((2, 2)),
+            np.array([0, 0], dtype=int),
+            np.eye(2),
+            np.eye(2),
+            np.zeros((2, 2)),
+            np.array([0, 0], dtype=int),
+            np.array([0, 0], dtype=int),
+            np.array([0, 0], dtype=int),
+            "dist",
+            dims=dims,
+        )
+        assert P_sim.shape == (2, 2)
 
     def test_p_sim_clipped(self):
         """P_sim (relative phosphosite signal) must be nonnegative (≥ 0)."""
@@ -283,6 +273,7 @@ class TestOptimistixOptimisation:
         K, M, N = m["K"], m["M"], m["N"]
         xl, xu, _ = create_bounds(K, M, N)
         residuals_fn = make_residuals_fn(
+            dims=m["dims"],
             t=m["t"],
             P_data=m["P_data"],
             A_scaled=np.zeros((0, m["T"])),
@@ -357,6 +348,7 @@ class TestOptimistixOptimisation:
         xl, xu, _ = create_bounds(K, M, N)
 
         residuals_fn = make_residuals_fn(
+            dims=m["dims"],
             t=m["t"],
             P_data=m["P_data"],
             A_scaled=np.zeros((0, m["T"])),

@@ -107,15 +107,6 @@ def _run_single_start_worker(task):
         threads_per_run,
     ) = task
 
-    # Restore ModelDims in this spawned process before any JAX/model code runs.
-    from phoscrosstalk.config import ModelDims  # noqa: PLC0415
-
-    _K = residual_kwargs.get("_model_K")
-    _M = residual_kwargs.get("_model_M")
-    _N = residual_kwargs.get("_model_N")
-    if _K is not None and _M is not None and _N is not None:
-        ModelDims.set_dims(_K, _M, _N)
-
     # Cap BLAS/OMP/XLA threads per worker BEFORE any JAX import.
     # The import is deferred intentionally: in spawn-based subprocesses the
     # env vars must be set *before* any JAX/XLA initialisation; importing
@@ -139,11 +130,6 @@ def _run_single_start_worker(task):
         # Build a clean kwargs dict for make_residuals_fn, reconstructing
         # k_act_fn and s_prod_fn from their picklable rebuild kwargs if present.
         mkwargs = dict(residual_kwargs)
-
-        # Strip worker-private keys before forwarding to make_residuals_fn.
-        mkwargs.pop("_model_K", None)
-        mkwargs.pop("_model_M", None)
-        mkwargs.pop("_model_N", None)
 
         if "_k_act_rebuild_kwargs" in mkwargs:
             k_act_rebuild = mkwargs.pop("_k_act_rebuild_kwargs")
@@ -271,6 +257,7 @@ def _build_residual_kwargs(
         special keys and replacing them with the built callables.
     """
     kwargs: dict = {
+        "dims": problem.dims,
         "t": problem.t,
         "P_data": problem.P_data,
         "A_scaled": problem.A_scaled,
@@ -312,13 +299,6 @@ def _build_residual_kwargs(
         "xu": problem.xu,
     }
 
-    # Pass ModelDims explicitly so spawned workers don't need to call set_dims().
-    from phoscrosstalk.config import ModelDims  # noqa: PLC0415
-
-    kwargs["_model_K"] = ModelDims.K
-    kwargs["_model_M"] = ModelDims.M
-    kwargs["_model_N"] = ModelDims.N
-
     # k_act_fn: prefer picklable rebuild kwargs stored on problem; fall back
     # to the callable (which will fail the pickle check → serial fallback).
     k_act_rebuild = getattr(problem, "_k_act_rebuild_kwargs", None)
@@ -335,14 +315,6 @@ def _build_residual_kwargs(
         # s_prod_fn will be built inside the worker from these raw kwargs
     else:
         kwargs["s_prod_fn"] = getattr(problem, "s_prod_fn", None)
-
-    # Pass ModelDims so spawned workers can call set_dims() before JAX runs.
-    # Spawned processes start with a blank interpreter; ModelDims is not set.
-    from phoscrosstalk.config import ModelDims as _MD  # noqa: PLC0415
-
-    kwargs["_model_K"] = int(_MD.K)
-    kwargs["_model_M"] = int(_MD.M)
-    kwargs["_model_N"] = int(_MD.N)
 
     return kwargs
 

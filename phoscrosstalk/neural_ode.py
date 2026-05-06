@@ -1309,6 +1309,7 @@ def save_neural_ode_plots(
 
 def run_neural_latent_rate_refinement(
     *,
+    dims: ModelDims | None = None,
     problem,
     theta_best: np.ndarray,
     k_act_fn,
@@ -1347,9 +1348,11 @@ def run_neural_latent_rate_refinement(
                                  Only populated for the Optax Python loop; empty for
                                  scan/Optimistix paths.
     """
-    K = ModelDims.K
-    M = ModelDims.M
-    N = ModelDims.N
+    if dims is None:
+        dims = ModelDims.set_dims(len(proteins), len(kinases), len(sites))
+    K = dims.K
+    M = dims.M
+    N = dims.N
 
     neural_outdir = os.path.join(outdir, "neural_ode")
     os.makedirs(neural_outdir, exist_ok=True)

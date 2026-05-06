@@ -287,6 +287,7 @@ def _run_steadystate_solve(
     use_event: bool = True,
     event_rtol: float | None = None,
     event_atol: float | None = None,
+    dims: ModelDims | None = None,
 ):
     """Run the steady-state ODE solve with optional Diffrax steady_state_event.
 
@@ -307,7 +308,9 @@ def _run_steadystate_solve(
     t_final_actual : float
         Last time point with at least one finite value.
     """
-    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+    if dims is None:
+        dims = ModelDims.set_dims(A0_initial.shape[0], len(kin_to_prot_idx), P_data.shape[0])
+    K, M, N = dims.K, dims.M, dims.N
     T = len(t_long)
     N_sites = P_data.shape[0]
 
@@ -480,6 +483,7 @@ def run_steadystate_analysis(
     use_event: bool = True,
     event_rtol: float | None = None,
     event_atol: float | None = None,
+    dims: ModelDims | None = None,
 ) -> None:
     """Simulate the network over a long time horizon (terminal-input relaxation).
 
@@ -558,7 +562,9 @@ def run_steadystate_analysis(
     )
 
     # 2. Build initial conditions
-    K = ModelDims.K
+    if dims is None:
+        dims = ModelDims.set_dims(len(proteins), len(kinases), len(sites))
+    K = dims.K
     A_scaled = problem.A_scaled
     prot_idx_for_A = problem.prot_idx_for_A
     if A_scaled.size > 0:
@@ -618,6 +624,7 @@ def run_steadystate_analysis(
                     use_event=True,
                     event_rtol=event_rtol,
                     event_atol=event_atol,
+                    dims=dims,
                 )
             )
         except Exception as exc:
@@ -655,6 +662,7 @@ def run_steadystate_analysis(
                 s_prod_fn=s_prod_fn,
                 R_data0=R_data0,
                 rna_relax=rna_relax,
+                dims=dims,
             )
         except RuntimeError as exc:
             logger.warning(f"[!] Long-horizon simulation failed with RuntimeError: {exc}")

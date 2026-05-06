@@ -23,7 +23,7 @@ THETA_DIM = 2 * K + 2 + 3 * M + N + 4  # 19
 
 
 def _set_dims():
-    ModelDims.set_dims(K, M, N)
+    return ModelDims.set_dims(K, M, N)
 
 
 def _theta():
@@ -345,7 +345,7 @@ class TestSaveDenseSimulation:
 # ---------------------------------------------------------------------------
 
 def _fit_common_args(tmp_path, T=5):
-    _set_dims()
+    dims = _set_dims()
     t = np.linspace(0, 60, T)
     sites = ["ProtA_T1", "ProtA_S2", "ProtB_Y3"]
     proteins = ["ProtA", "ProtB"]
@@ -369,6 +369,7 @@ def _fit_common_args(tmp_path, T=5):
     mask_k = np.ones(M)
     return dict(
         outdir=str(tmp_path),
+        dims=dims,
         theta_opt=_theta(),
         t=t,
         sites=sites,

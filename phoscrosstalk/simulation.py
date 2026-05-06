@@ -64,6 +64,7 @@ def simulate(
     R_data0=None,
     rna_relax=0.1,
     ode_adjoint_kind="recursive",
+    dims: ModelDims | None = None,
 ):
     """
     Simulate the phosphoproteomic network dynamics using Diffrax (JAX backend).
@@ -107,12 +108,10 @@ def simulate(
         else: (P_sim, A_sim)  – (N_sites x T, K x T)
         Returns NaN arrays if integration fails.
     """
-    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
-    if K is None or M is None or N is None:
-        raise RuntimeError(
-            "ModelDims have not been set. Call ModelDims.set_dims(K, M, N) before "
-            "running a simulation."
-        )
+    if dims is None:
+        dims = ModelDims.from_data(P_data0, A_data0, kin_to_prot_idx)
+
+    K, M, N = dims.K, dims.M, dims.N
 
     T = len(t_arr)
     N_sites = P_data0.shape[0]
@@ -356,6 +355,7 @@ def simulate_dense(
     R_data0=None,
     rna_relax=0.1,
     ode_adjoint_kind="recursive",
+    dims: ModelDims | None = None,
 ):
     """Run the ODE over a dense time grid for smooth post-fit visualisation.
 
@@ -407,7 +407,11 @@ def simulate_dense(
             ``success``   – True if solve completed without NaN states
         Returns ``success=False`` with NaN-filled arrays if the solve fails.
     """
+    if dims is None:
+        dims = ModelDims.from_data(P_data0, A_data0, kin_to_prot_idx)
+
     result = simulate(
+        dims=dims,
         t_arr=t_dense,
         P_data0=P_data0,
         A_data0=A_data0,

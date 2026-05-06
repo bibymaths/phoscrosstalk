@@ -26,17 +26,9 @@ from phoscrosstalk.config import ModelDims
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def reset_model_dims():
-    """Restore ModelDims after each test."""
-    saved = (ModelDims.K, ModelDims.M, ModelDims.N)
-    yield
-    ModelDims.K, ModelDims.M, ModelDims.N = saved
-
-
 def _make_tiny_model(K=2, M=3, N=4, T=6, seed=11):
     """Build a minimal synthetic model for testing."""
-    ModelDims.set_dims(K, M, N)
+    dims = ModelDims(K=K, M=M, N=N)
     rng = np.random.default_rng(seed)
 
     dim = 2 * K + 2 + 3 * M + N + 4
@@ -61,6 +53,7 @@ def _make_tiny_model(K=2, M=3, N=4, T=6, seed=11):
         K=K,
         M=M,
         N=N,
+        dims=dims,
         T=T,
         dim=dim,
         t=t,
@@ -117,7 +110,7 @@ def _make_residuals_fn(m, *, with_rna=False, lambda_net=1e-4):
             W_data_mrna=W_rna,
         )
 
-    return make_residuals_fn(**kw)
+    return make_residuals_fn(dims=m["dims"], **kw)
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +227,7 @@ def test_rna_residual_block_uses_W_data_mrna():
     def _build(w_scale):
         W_rna = np.ones((K, len(t_rna)), dtype=np.float64) * w_scale
         return make_residuals_fn(
+            dims=m["dims"],
             t=m["t"],
             P_data=m["P_data"],
             A_scaled=np.zeros((0, T)),

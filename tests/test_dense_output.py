@@ -559,7 +559,7 @@ class TestOptimizationUsesSparseObservedTimes:
         from phoscrosstalk.optimization import make_residuals_fn
 
         K, M, N = 2, 2, 3
-        ModelDims.set_dims(K, M, N)
+        dims = ModelDims.set_dims(K, M, N)
 
         t_obs = np.array([0.0, 1.0, 2.0])
         P_data = np.ones((N, 3)) * 0.3
@@ -591,6 +591,7 @@ class TestOptimizationUsesSparseObservedTimes:
         monkeypatch.setattr(diffrax, "diffeqsolve", mock_diffeqsolve)
 
         res_fn = make_residuals_fn(
+            dims=dims,
             t=t_obs,
             P_data=P_data,
             A_scaled=A_scaled,

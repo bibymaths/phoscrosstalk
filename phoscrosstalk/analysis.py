@@ -19,7 +19,7 @@ from phoscrosstalk.simulation import simulate, simulate_dense
 logger = get_logger(__name__)
 
 
-def save_run_results(outdir, F, X, f1, f2, f3, J, F_best, f4=None):
+def save_run_results(outdir, F, X, f1, f2, f3, J, F_best, f4=None, dims: ModelDims | None = None):
     """
     Save multi-start optimization results, including loss component statistics and
     total loss scores, to disk.
@@ -70,7 +70,10 @@ def save_run_results(outdir, F, X, f1, f2, f3, J, F_best, f4=None):
         os.path.join(outdir, "pareto_front_with_J.tsv"), sep="\t", index=False
     )
 
-    bio_scores = np.array([bio_score(theta) for theta in X])
+    if dims is not None:
+        bio_scores = np.array([bio_score(theta, dims) for theta in X])
+    else:
+        bio_scores = np.full(len(X), np.nan, dtype=float)
     df_front["bio_score"] = bio_scores
     df_front.to_csv(os.path.join(outdir, "pareto_points.tsv"), sep="\t", index=False)
 
@@ -149,7 +152,7 @@ def plot_run_diagnostics(outdir, F, F_best, f1, f2, f3, X, f4=None):
 plot_pareto_diagnostics = plot_run_diagnostics
 
 
-def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
+def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites, dims: ModelDims | None = None):
     """
     Decode optimized parameters and export summaries for proteins, kinases, and sites.
 
@@ -163,7 +166,9 @@ def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites):
     Returns:
         None: Writes summary TSV/TXT files to `outdir` and prints summaries to console.
     """
-    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+    if dims is None:
+        dims = ModelDims.set_dims(len(proteins), len(kinases), len(sites))
+    K, M, N = dims.K, dims.M, dims.N
     params_decoded = decode_theta(theta_opt, K, M, N)
 
     # Protein-specific parameters (k_act and s_prod are now derived, not fitted)
@@ -242,6 +247,7 @@ def _save_dense_simulation(
     mask_p,
     mask_k,
     mechanism,
+    dims: ModelDims | None = None,
     k_act_fn=None,
     s_prod_fn=None,
     R_data0=None,
@@ -280,7 +286,9 @@ def _save_dense_simulation(
     * ``"observed_interpolated_dense"`` – interpolated from sparse observed data
                                           (diagnostic only, not training data)
     """
-    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+    if dims is None:
+        dims = ModelDims.set_dims(len(proteins), len(kin_to_prot_idx), len(sites))
+    K, M, N = dims.K, dims.M, dims.N
     t_max = float(np.nanmax(t_obs)) if len(t_obs) > 0 else 1.0
     t_dense = np.linspace(0.0, t_max, n_dense)
 
@@ -294,6 +302,7 @@ def _save_dense_simulation(
     A0_full = build_full_A0(K, 1, A_scaled_initial, prot_idx_for_A)
 
     dense_result = simulate_dense(
+        dims=dims,
         t_dense=t_dense,
         P_data0=P_scaled,
         A_data0=A0_full,
@@ -503,6 +512,7 @@ def save_fitted_simulation(
     kin_to_prot_idx,
     mask_p,
     mask_k,
+    dims: ModelDims | None = None,
     k_act_fn=None,
     s_prod_fn=None,
     R_data0=None,
@@ -561,7 +571,9 @@ def save_fitted_simulation(
     Returns:
         None: Saves 'fitted_params.npz' and 'fit_timeseries.tsv' to `outdir`.
     """
-    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+    if dims is None:
+        dims = ModelDims.set_dims(len(proteins), len(kin_to_prot_idx), len(sites))
+    K, M, N = dims.K, dims.M, dims.N
 
     # Save Params – k_act and s_prod are derived quantities, not fitted
     params_decoded = decode_theta(theta_opt, K, M, N)
@@ -610,6 +622,7 @@ def save_fitted_simulation(
         k_act_fn=k_act_fn,
         s_prod_fn=s_prod_fn,
         R_data0=R_data0,
+        dims=dims,
     )
 
     # Rescale Sites (model)
@@ -728,6 +741,7 @@ def save_fitted_simulation(
         try:
             _save_dense_simulation(
                 outdir=outdir,
+                dims=dims,
                 theta_opt=theta_opt,
                 t_obs=t,
                 sites=sites,
