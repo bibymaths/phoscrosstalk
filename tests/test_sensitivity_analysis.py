@@ -33,16 +33,6 @@ import pytest
 K, M, N = 2, 3, 4
 
 
-@pytest.fixture(autouse=True)
-def reset_model_dims():
-    """Restore ModelDims after each test."""
-    from phoscrosstalk.config import ModelDims
-
-    saved = (ModelDims.K, ModelDims.M, ModelDims.N)
-    yield
-    ModelDims.K, ModelDims.M, ModelDims.N = saved
-
-
 # ---------------------------------------------------------------------------
 # A. build_parameter_labels
 # ---------------------------------------------------------------------------
@@ -285,7 +275,7 @@ def _make_tiny_model_for_loss(K=2, M=3, N=4, T=6, seed=7):
     """Build a tiny synthetic model for loss_fn smoke test."""
     from phoscrosstalk.config import ModelDims
 
-    ModelDims.set_dims(K, M, N)
+    dims = ModelDims(K=K, M=M, N=N)
     rng = np.random.default_rng(seed)
 
     t = np.linspace(0.0, 60.0, T)
@@ -309,6 +299,7 @@ def _make_tiny_model_for_loss(K=2, M=3, N=4, T=6, seed=7):
         K=K,
         M=M,
         N=N,
+        dims=dims,
         T=T,
         t=t,
         P_data=P_data,
@@ -339,6 +330,7 @@ def test_make_loss_fn_scan_kind_bounded_produces_finite_output():
     _, _, N2, T2 = m["K"], m["M"], m["N"], m["T"]
 
     loss_fn = make_loss_fn(
+        dims=m["dims"],
         t=m["t"],
         P_data=m["P_data"],
         A_scaled=m["A_data"],

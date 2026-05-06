@@ -30,17 +30,9 @@ from phoscrosstalk.config import ModelDims
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def reset_model_dims():
-    """Restore ModelDims after each test."""
-    saved = (ModelDims.K, ModelDims.M, ModelDims.N)
-    yield
-    ModelDims.K, ModelDims.M, ModelDims.N = saved
-
-
 def _make_tiny_model(K=2, M=3, N=4, T=6, seed=0):
     """Build small synthetic model arrays for testing."""
-    ModelDims.set_dims(K, M, N)
+    dims = ModelDims(K=K, M=M, N=N)
     rng = np.random.default_rng(seed)
 
     dim = 2 * K + 2 + 3 * M + N + 4
@@ -65,6 +57,7 @@ def _make_tiny_model(K=2, M=3, N=4, T=6, seed=0):
         K=K,
         M=M,
         N=N,
+        dims=dims,
         T=T,
         t=t,
         P_data=P_data,
@@ -179,6 +172,7 @@ def test_simulate_returns_R_state():
     t_rna = np.array([4.0, 8.0, 30.0, 60.0])
 
     result = simulate(
+        m["dims"],
         m["t"],
         m["P_data"],
         m["A_data"],
@@ -335,6 +329,7 @@ def test_network_problem_loss_includes_rna():
     rna_prot_idx = np.array([0], dtype=int)  # maps to protein 0
 
     loss_no_rna = make_loss_fn(
+        dims=m["dims"],
         t=m["t"],
         P_data=m["P_data"],
         A_scaled=np.zeros((0, m["T"])),
@@ -356,6 +351,7 @@ def test_network_problem_loss_includes_rna():
     )
 
     loss_with_rna = make_loss_fn(
+        dims=m["dims"],
         t=m["t"],
         P_data=m["P_data"],
         A_scaled=np.zeros((0, m["T"])),
@@ -598,7 +594,7 @@ def test_kdyn_labels_use_kinase_names(tmp_path):
     from phoscrosstalk.analysis import save_fitted_simulation
 
     K, M, N = 2, 3, 4
-    ModelDims.set_dims(K, M, N)
+    dims = ModelDims(K=K, M=M, N=N)
     rng = np.random.default_rng(99)
     T = 5
     dim = 2 * K + 2 + 3 * M + N + 4
@@ -629,6 +625,7 @@ def test_kdyn_labels_use_kinase_names(tmp_path):
 
     save_fitted_simulation(
         outdir=str(tmp_path),
+        dims=dims,
         theta_opt=theta,
         t=t,
         sites=sites,

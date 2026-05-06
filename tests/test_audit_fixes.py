@@ -185,22 +185,23 @@ def test_create_bounds_from_config():
 
 
 # ---------------------------------------------------------------------------
-# H6 – ModelDims.set_dims is protected by threading.Lock
+# H6 – ModelDims.set_dims returns consistent immutable dims
 # ---------------------------------------------------------------------------
 
 
-def test_model_dims_has_lock():
-    """H6: ModelDims must have a thread lock."""
-    import threading
+def test_model_dims_is_frozen_dataclass():
+    """H6: ModelDims instances are immutable."""
+    from dataclasses import FrozenInstanceError
 
     from phoscrosstalk.config import ModelDims
 
-    assert hasattr(ModelDims, "_lock"), "ModelDims must have a _lock attribute"
-    assert isinstance(ModelDims._lock, type(threading.Lock()))
+    dims = ModelDims.set_dims(3, 4, 5)
+    with pytest.raises(FrozenInstanceError):
+        dims.K = 9
 
 
 def test_model_dims_concurrent_set():
-    """H6: concurrent set_dims calls must not corrupt state."""
+    """H6: concurrent set_dims calls must return consistent values."""
     import threading
 
     from phoscrosstalk.config import ModelDims
@@ -210,8 +211,8 @@ def test_model_dims_concurrent_set():
 
     def worker(k, m, n):
         barrier.wait()
-        ModelDims.set_dims(k, m, n)
-        results.append((ModelDims.K, ModelDims.M, ModelDims.N))
+        dims = ModelDims.set_dims(k, m, n)
+        results.append((dims.K, dims.M, dims.N))
 
     t1 = threading.Thread(target=worker, args=(3, 4, 5))
     t2 = threading.Thread(target=worker, args=(6, 7, 8))

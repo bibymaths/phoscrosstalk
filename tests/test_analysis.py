@@ -23,7 +23,7 @@ THETA_DIM = 2 * K + 2 + 3 * M + N + 4  # 19
 
 
 def _set_dims():
-    ModelDims.set_dims(K, M, N)
+    return ModelDims.set_dims(K, M, N)
 
 
 def _theta():
@@ -197,7 +197,7 @@ class TestPrintParameterSummary:
         proteins = ["ProtA", "ProtB"]
         kinases = ["KinX", "KinY"]
         sites = ["ProtA_T1", "ProtA_S2", "ProtB_Y3"]
-        print_parameter_summary(str(tmp_path), _theta(), proteins, kinases, sites)
+        print_parameter_summary(str(tmp_path), _set_dims(), _theta(), proteins, kinases, sites)
         assert (tmp_path / "parameter_summary_proteins.tsv").exists()
         assert (tmp_path / "parameter_summary_kinases.tsv").exists()
         assert (tmp_path / "parameter_summary_sites.tsv").exists()
@@ -209,7 +209,7 @@ class TestPrintParameterSummary:
         proteins = ["ProtA", "ProtB"]
         kinases = ["KinX", "KinY"]
         sites = ["ProtA_T1", "ProtA_S2", "ProtB_Y3"]
-        print_parameter_summary(str(tmp_path), _theta(), proteins, kinases, sites)
+        print_parameter_summary(str(tmp_path), _set_dims(), _theta(), proteins, kinases, sites)
         df = pd.read_csv(tmp_path / "parameter_summary_proteins.tsv", sep="\t")
         assert "Protein" in df.columns
         assert len(df) == K
@@ -220,7 +220,7 @@ class TestPrintParameterSummary:
         proteins = ["ProtA", "ProtB"]
         kinases = ["KinX", "KinY"]
         sites = ["ProtA_T1", "ProtA_S2", "ProtB_Y3"]
-        print_parameter_summary(str(tmp_path), _theta(), proteins, kinases, sites)
+        print_parameter_summary(str(tmp_path), _set_dims(), _theta(), proteins, kinases, sites)
         txt = (tmp_path / "parameter_summary_global.txt").read_text()
         assert "beta_g" in txt
         assert "beta_l" in txt
@@ -345,7 +345,7 @@ class TestSaveDenseSimulation:
 # ---------------------------------------------------------------------------
 
 def _fit_common_args(tmp_path, T=5):
-    _set_dims()
+    dims = _set_dims()
     t = np.linspace(0, 60, T)
     sites = ["ProtA_T1", "ProtA_S2", "ProtB_Y3"]
     proteins = ["ProtA", "ProtB"]
@@ -369,6 +369,7 @@ def _fit_common_args(tmp_path, T=5):
     mask_k = np.ones(M)
     return dict(
         outdir=str(tmp_path),
+        dims=dims,
         theta_opt=_theta(),
         t=t,
         sites=sites,

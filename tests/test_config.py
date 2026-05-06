@@ -1,46 +1,29 @@
-"""
-Tests for config.py ModelDims singleton.
-"""
+"""Tests for config.py ModelDims behavior."""
 
 import pytest
 
 from phoscrosstalk.config import ModelDims
 
 
-def test_modeldims_defaults_are_none():
-    # Save and restore current state to avoid polluting other tests
-    original_k = ModelDims.K
-    original_m = ModelDims.M
-    original_n = ModelDims.N
-
-    # Reset to None for this test
-    ModelDims.K = None
-    ModelDims.M = None
-    ModelDims.N = None
-
-    assert ModelDims.K is None
-    assert ModelDims.M is None
-    assert ModelDims.N is None
-
-    # Restore
-    ModelDims.K = original_k
-    ModelDims.M = original_m
-    ModelDims.N = original_n
+def test_modeldims_constructs_explicit_values():
+    dims = ModelDims(K=5, M=10, N=20)
+    assert dims.K == 5
+    assert dims.M == 10
+    assert dims.N == 20
 
 
 def test_modeldims_set_dims():
-    ModelDims.set_dims(5, 10, 20)
-    assert ModelDims.K == 5
-    assert ModelDims.M == 10
-    assert ModelDims.N == 20
+    dims = ModelDims.set_dims(5, 10, 20)
+    assert dims.K == 5
+    assert dims.M == 10
+    assert dims.N == 20
 
 
 def test_modeldims_overwrite():
-    ModelDims.set_dims(1, 2, 3)
-    ModelDims.set_dims(7, 8, 9)
-    assert ModelDims.K == 7
-    assert ModelDims.M == 8
-    assert ModelDims.N == 9
+    dims1 = ModelDims.set_dims(1, 2, 3)
+    dims2 = ModelDims.set_dims(7, 8, 9)
+    assert (dims1.K, dims1.M, dims1.N) == (1, 2, 3)
+    assert (dims2.K, dims2.M, dims2.N) == (7, 8, 9)
 
 
 # ---------------------------------------------------------------------------
@@ -241,13 +224,13 @@ n_starts = 0
 # ---------------------------------------------------------------------------
 
 def test_model_dims_set_dims_valid():
-    """set_dims with valid positive ints should set class attributes."""
+    """set_dims with valid positive ints should return immutable dims."""
     from phoscrosstalk.config import ModelDims
 
-    ModelDims.set_dims(3, 2, 5)
-    assert ModelDims.K == 3
-    assert ModelDims.M == 2
-    assert ModelDims.N == 5
+    dims = ModelDims.set_dims(3, 2, 5)
+    assert dims.K == 3
+    assert dims.M == 2
+    assert dims.N == 5
 
 
 def test_model_dims_validation_zero():
@@ -283,10 +266,10 @@ def test_model_dims_from_data_basic():
     A_data = np.ones((3, 8))          # K=3 proteins
     kin_to_prot_idx = np.array([0, 1])  # M=2 kinases
 
-    ModelDims.from_data(P_data, A_data, kin_to_prot_idx)
-    assert ModelDims.N == 5
-    assert ModelDims.K == 3
-    assert ModelDims.M == 2
+    dims = ModelDims.from_data(P_data, A_data, kin_to_prot_idx)
+    assert dims.N == 5
+    assert dims.K == 3
+    assert dims.M == 2
 
 
 def test_model_dims_from_data_no_A():
@@ -297,10 +280,10 @@ def test_model_dims_from_data_no_A():
     P_data = np.ones((4, 6))
     kin_to_prot_idx = np.array([0, 1, 2])
 
-    ModelDims.from_data(P_data, None, kin_to_prot_idx)
-    assert ModelDims.N == 4
-    assert ModelDims.K == 4  # falls back to N
-    assert ModelDims.M == 3
+    dims = ModelDims.from_data(P_data, None, kin_to_prot_idx)
+    assert dims.N == 4
+    assert dims.K == 4  # falls back to N
+    assert dims.M == 3
 
 
 def test_model_dims_from_data_empty_A():
@@ -312,8 +295,8 @@ def test_model_dims_from_data_empty_A():
     A_data = np.zeros((0, 6))  # empty
     kin_to_prot_idx = np.array([0])
 
-    ModelDims.from_data(P_data, A_data, kin_to_prot_idx)
-    assert ModelDims.K == 4
+    dims = ModelDims.from_data(P_data, A_data, kin_to_prot_idx)
+    assert dims.K == 4
 
 
 def test_two_runs_different_dims_set_dims():
@@ -321,13 +304,13 @@ def test_two_runs_different_dims_set_dims():
     from phoscrosstalk.config import ModelDims
 
     # Run 1
-    ModelDims.set_dims(3, 2, 5)
-    assert ModelDims.K == 3
-    assert ModelDims.M == 2
-    assert ModelDims.N == 5
+    dims1 = ModelDims.set_dims(3, 2, 5)
+    assert dims1.K == 3
+    assert dims1.M == 2
+    assert dims1.N == 5
 
     # Run 2 — different dims must completely replace Run 1
-    ModelDims.set_dims(6, 4, 10)
-    assert ModelDims.K == 6
-    assert ModelDims.M == 4
-    assert ModelDims.N == 10
+    dims2 = ModelDims.set_dims(6, 4, 10)
+    assert dims2.K == 6
+    assert dims2.M == 4
+    assert dims2.N == 10

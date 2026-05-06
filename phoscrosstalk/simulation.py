@@ -35,6 +35,7 @@ from phoscrosstalk.solver_config import (
 
 
 def simulate(
+    dims,
     t_arr,
     P_data0,
     A_data0,
@@ -107,12 +108,26 @@ def simulate(
         else: (P_sim, A_sim)  – (N_sites x T, K x T)
         Returns NaN arrays if integration fails.
     """
-    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
-    if K is None or M is None or N is None:
-        raise RuntimeError(
-            "ModelDims have not been set. Call ModelDims.set_dims(K, M, N) before "
-            "running a simulation."
+    if not isinstance(dims, ModelDims):
+        t_arr, P_data0, A_data0, theta, Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha, kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin, mechanism = (  # noqa: E501
+            dims,
+            t_arr,
+            P_data0,
+            A_data0,
+            theta,
+            Cg,
+            Cl,
+            site_prot_idx,
+            K_site_kin,
+            R,
+            L_alpha,
+            kin_to_prot_idx,
+            receptor_mask_prot,
+            receptor_mask_kin,
         )
+        dims = ModelDims.from_data(P_data0, A_data0, kin_to_prot_idx)
+
+    K, M, N = dims.K, dims.M, dims.N
 
     T = len(t_arr)
     N_sites = P_data0.shape[0]
@@ -330,6 +345,7 @@ def build_full_A0(K, T, A_scaled, prot_idx_for_A):
 
 
 def simulate_dense(
+    dims,
     t_dense,
     P_data0,
     A_data0,
@@ -407,7 +423,27 @@ def simulate_dense(
             ``success``   – True if solve completed without NaN states
         Returns ``success=False`` with NaN-filled arrays if the solve fails.
     """
+    if not isinstance(dims, ModelDims):
+        t_dense, P_data0, A_data0, theta, Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha, kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin, mechanism = (  # noqa: E501
+            dims,
+            t_dense,
+            P_data0,
+            A_data0,
+            theta,
+            Cg,
+            Cl,
+            site_prot_idx,
+            K_site_kin,
+            R,
+            L_alpha,
+            kin_to_prot_idx,
+            receptor_mask_prot,
+            receptor_mask_kin,
+        )
+        dims = ModelDims.from_data(P_data0, A_data0, kin_to_prot_idx)
+
     result = simulate(
+        dims=dims,
         t_arr=t_dense,
         P_data0=P_data0,
         A_data0=A_data0,

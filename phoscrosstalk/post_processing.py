@@ -18,7 +18,7 @@ from phoscrosstalk.logger import get_logger
 logger = get_logger(__name__)
 
 
-def save_run_metadata(outdir, args, execution_time=None):
+def save_run_metadata(outdir, dims: ModelDims, args, execution_time=None):
     """
     Saves a JSON file containing all configuration arguments and model dimensions.
     Crucial for reproducibility.
@@ -30,9 +30,9 @@ def save_run_metadata(outdir, args, execution_time=None):
 
     # Add model dimensions
     config_dict["ModelDims"] = {
-        "K (Proteins)": ModelDims.K,
-        "M (Kinases)": ModelDims.M,
-        "N (Sites)": ModelDims.N,
+        "K (Proteins)": dims.K,
+        "M (Kinases)": dims.M,
+        "N (Sites)": dims.N,
     }
 
     if execution_time:
@@ -45,7 +45,7 @@ def save_run_metadata(outdir, args, execution_time=None):
 
 
 def export_network_for_cytoscape(
-    outdir, theta_opt, proteins, kinases, sites, K_site_kin, site_prot_idx
+    outdir, dims: ModelDims, theta_opt, proteins, kinases, sites, K_site_kin, site_prot_idx
 ):
     """
     Exports the fitted network topology as a Cytoscape-compatible Edge List (SIF/CSV).
@@ -58,7 +58,7 @@ def export_network_for_cytoscape(
 
     # Decode parameters to get alpha (Kinase strength)
     # theta structure: [Prot params]...[Beta]...[Alpha]...
-    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+    K, M, N = dims.K, dims.M, dims.N
     (_, _, _, _, alpha, kK_act, _, _, _, _, _, _) = decode_theta(theta_opt, K, M, N)
 
     edges = []

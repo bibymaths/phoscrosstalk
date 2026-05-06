@@ -69,13 +69,14 @@ def run_live_knockout(
     K = len(proteins)
     M = len(kinases)
     N = len(sites)
-    ModelDims.set_dims(K, M, N)
+    dims = ModelDims.set_dims(K, M, N)
 
     A_scaled = snap.get("A_scaled", np.empty((0, 0)))
     prot_idx_for_A = _prot_idx_for_A(A_scaled, proteins, a_proteins)
     A0 = _build_A0(K, t_eval, A_scaled, prot_idx_for_A)
 
     common_kwargs = dict(
+        dims=dims,
         t_arr=t_eval,
         P_data0=snap["P_scaled"],
         A_data0=A0,
@@ -179,7 +180,7 @@ def _build_A0(K, t_eval, A_scaled, prot_idx_for_A):
     return A0
 
 
-def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
+def run_knockout_screen(outdir, dims: ModelDims, problem, theta_opt, sites, proteins, kinases):
     """
     Perform a systematic in-silico knockout screen for kinases, proteins, and phosphosites.
 
@@ -208,7 +209,7 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
     ko_dir = os.path.join(outdir, "knockouts")
     os.makedirs(ko_dir, exist_ok=True)
 
-    K = ModelDims.K
+    K = dims.K
 
     # 1. Establish Wild Type (WT) Baseline
     t_eval = np.array([0, 240.0])
@@ -225,6 +226,7 @@ def run_knockout_screen(outdir, problem, theta_opt, sites, proteins, kinases):
         )
 
         P, _, S, Kdyn = simulate(
+            dims,
             t_eval,
             problem.P_data,
             A0,

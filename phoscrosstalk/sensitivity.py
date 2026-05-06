@@ -130,13 +130,14 @@ def _evaluate_single_sample(i, theta, problem, K, M, N, sites, proteins, kinases
     """
     # CRITICAL FIX: Re-initialize global dimensions inside the worker process
     # because static class variables like ModelDims are lost (None) in new processes.
-    ModelDims.set_dims(K, M, N)
+    dims = ModelDims.set_dims(K, M, N)
 
     # Reconstruct A0 (needed for simulation wrapper)
     # Note: problem object usually handles this inside _evaluate, we replicate here.
     A0_full = build_full_A0(K, len(problem.t), problem.A_scaled, problem.prot_idx_for_A)
 
     P_sim, A_sim, S_sim, Kdyn_sim = simulate(
+        dims,
         problem.t,
         problem.P_data,
         A0_full,
@@ -194,7 +195,7 @@ def _evaluate_single_sample(i, theta, problem, K, M, N, sites, proteins, kinases
 
 
 def run_global_sensitivity(
-    outdir, problem, param_bounds, proteins, kinases, sites, samples=64
+    outdir, dims: ModelDims, problem, param_bounds, proteins, kinases, sites, samples=64
 ):
     """
     Performs Sobol GSA using SALib, plots labeled sensitivities, and exports
@@ -216,7 +217,7 @@ def run_global_sensitivity(
 
     xl, xu = param_bounds
     dim = len(xl)
-    K, M, N = ModelDims.K, ModelDims.M, ModelDims.N
+    K, M, N = dims.K, dims.M, dims.N
 
     # 1. Generate Labeled Problem Spec
     param_names = _generate_param_labels(K, M, N, proteins, kinases, sites)
