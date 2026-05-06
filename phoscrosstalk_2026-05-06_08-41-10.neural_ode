@@ -1,0 +1,16 @@
+2026-05-06 08:41:10 - PhosCrosstalk - INFO - [neural_ode] Saved /tmp/pytest-of-runner/pytest-1/test_creates_training_loss_png0/neural_ode_training_loss.png
+2026-05-06 08:41:11 - PhosCrosstalk - INFO - [neural_ode] Saved /tmp/pytest-of-runner/pytest-1/test_creates_step_time_png_whe0/neural_ode_step_time.png
+2026-05-06 08:41:11 - PhosCrosstalk - INFO - [neural_ode] Saved /tmp/pytest-of-runner/pytest-1/test_creates_trajectories_png_0/neural_ode_trajectories.png
+2026-05-06 08:41:11 - PhosCrosstalk - INFO - [neural_ode] Saved /tmp/pytest-of-runner/pytest-1/test_creates_trajectories_png_1/neural_ode_trajectories.png
+2026-05-06 08:41:12 - PhosCrosstalk - INFO - [neural_ode] Saved /tmp/pytest-of-runner/pytest-1/test_creates_trajectories_png_2/neural_ode_trajectories.png
+2026-05-06 08:41:12 - PhosCrosstalk - INFO - [neural_ode] Saved /tmp/pytest-of-runner/pytest-1/test_curriculum_boundary_line_0/neural_ode_training_loss.png
+2026-05-06 08:41:13 - PhosCrosstalk - INFO - [neural_ode] Saved /tmp/pytest-of-runner/pytest-1/test_exactly_4_steps_no_curric0/neural_ode_training_loss.png
+2026-05-06 08:41:13 - PhosCrosstalk - INFO - [neural_ode] Saved /tmp/pytest-of-runner/pytest-1/test_model_none_does_not_crash0/neural_ode_training_loss.png
+2026-05-06 08:41:13 - PhosCrosstalk - INFO - [neural_ode] Saved /tmp/pytest-of-runner/pytest-1/test_model_none_does_not_crash0/neural_ode_step_time.png
+2026-05-06 08:41:13 - PhosCrosstalk - INFO - [neural_ode] Saved /tmp/pytest-of-runner/pytest-1/test_model_none_does_not_crash0/neural_ode_trajectories.png
+2026-05-06 08:41:14 - PhosCrosstalk - INFO - [neural_ode] Saved /tmp/pytest-of-runner/pytest-1/test_outdir_created_if_absent0/new_subdir/neural_ode_training_loss.png
+2026-05-06 08:41:14 - PhosCrosstalk - INFO - [neural_ode] Saved /tmp/pytest-of-runner/pytest-1/test_rolling_mean_overlay_with0/neural_ode_step_time.png
+2026-05-06 08:41:14 - PhosCrosstalk - INFO - [neural_ode] Saved /tmp/pytest-of-runner/pytest-1/test_P_sim_with_more_than_5_ch0/neural_ode_trajectories.png
+2026-05-06 08:41:15 - PhosCrosstalk - INFO - [neural_ode] Saved /tmp/pytest-of-runner/pytest-1/test_all_three_pngs_created0/neural_ode_training_loss.png
+2026-05-06 08:41:15 - PhosCrosstalk - INFO - [neural_ode] Saved /tmp/pytest-of-runner/pytest-1/test_all_three_pngs_created0/neural_ode_step_time.png
+2026-05-06 08:41:16 - PhosCrosstalk - INFO - [neural_ode] Saved /tmp/pytest-of-runner/pytest-1/test_all_three_pngs_created0/neural_ode_trajectories.png

@@ -360,7 +360,7 @@ class TestMakeSProdFnExtended:
         t_query = jnp.asarray(10.0)
         r_sp = np.array(fn_softplus(t_query))
         r_lin = np.array(fn_linear(t_query))
-        # softplus(x) > x for x > 0 is not always true, but shapes must differ
+        # Verify that both modes produce the same output shape (K,)
         assert r_sp.shape == r_lin.shape == (K,)
 
 

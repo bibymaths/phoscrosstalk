@@ -172,25 +172,9 @@ class TestNonFiniteInitialCondition:
         # Clip only handles nan/posinf/neginf, but +inf is handled by nan_to_num
         # Let's use np.inf in A_data0 which gets assigned to x0[2K:3K]
         # A_data0[:, 0] clipped to [0, 5] - we need something that becomes non-finite
-        # Actually, make A_data0 contain NaN so nan_to_num → 1.0 (finite)
-        # The real path: set P_data0 first column to something that ends up NaN after
-        # nan_to_num and clip. After nan_to_num NaN→0.0 which is finite.
-        # The way to trigger non-finite x0 is: we need to bypass nan_to_num.
-        # Since nan_to_num is called, let's mock _nan_result to verify it's called.
-        # Instead, we test with a monkeypatching approach: make np.all(np.isfinite(x0))=False.
+        # After nan_to_num+clip, x0 is always finite, so we cannot trigger the
+        # non-finite x0 path through normal inputs. We verify the helper directly.
         import phoscrosstalk.simulation as sim_mod
-
-        original_isfinite = np.isfinite
-        call_count = [0]
-
-        def fake_all_isfinite(arr):
-            call_count[0] += 1
-            if call_count[0] == 1:  # First call is for x0
-                return False
-            return original_isfinite(arr).all()
-
-        with patch.object(np, "all", side_effect=lambda a: False if call_count[0] == 0 and (call_count.__setitem__(0, 1) or True) else np.ndarray.all(np.asarray(a))):
-            pass  # complex, use simpler approach below
 
     def test_inf_A_data0_forces_nan_result(self):
         """Test that x0 non-finite check triggers nan_result."""
