@@ -60,26 +60,49 @@ _EPS: float = 1e-8
 # Penalty value for non-finite ODE results during neural training.
 _NEURAL_PENALTY: float = 1e6
 
-# Module-level loss history collector.
-# Populated by jax.debug.callback during optx.minimise.
 _neural_loss_history: list[dict] = []
 
+# Runtime-controlled logging cadence for neural ODE training.
+# Set inside run_neural_latent_rate_refinement().
+_neural_log_every: int = 1
+
 def _log_neural_loss_step(loss, f_phospho, f_abund, f_mrna, f_k_prior, f_s_prior):
-    """Plain Python callback — runs every solver step via jax.debug.callback."""
-    _neural_loss_history.append({
-        "step":                    len(_neural_loss_history),
-        "neural_loss_total":       float(loss),
-        "neural_loss_phospho":     float(f_phospho),
-        "neural_loss_abundance":   float(f_abund),
-        "neural_loss_mrna":        float(f_mrna),
+    """
+    Plain Python callback executed from jax.debug.callback.
+
+    Do not rely only on logging.getLogger(...).info here. Depending on the
+    logging setup, that logger may not have an INFO handler attached. Use
+    print(..., flush=True) for guaranteed console visibility, while also
+    storing the full loss history for TSV export.
+    """
+    step = len(_neural_loss_history)
+
+    row = {
+        "step": step,
+        "neural_loss_total": float(loss),
+        "neural_loss_phospho": float(f_phospho),
+        "neural_loss_abundance": float(f_abund),
+        "neural_loss_mrna": float(f_mrna),
         "neural_loss_k_act_prior": float(f_k_prior),
-        "neural_loss_s_prod_prior":float(f_s_prior),
-    })
-    _debug_logger.info(
-        "[neural_ode]  step=%04d  loss=%.4e  k_prior=%.4e  s_prior=%.4e",
-        len(_neural_loss_history) - 1,
-        float(loss), float(f_k_prior), float(f_s_prior),
-    )
+        "neural_loss_s_prod_prior": float(f_s_prior),
+    }
+    _neural_loss_history.append(row)
+
+    if step % max(1, int(_neural_log_every)) == 0:
+        msg = (
+            f"[neural_ode]  step={step:04d}  "
+            f"loss={float(loss):.4e}  "
+            f"phospho={float(f_phospho):.4e}  "
+            f"abund={float(f_abund):.4e}  "
+            f"mrna={float(f_mrna):.4e}  "
+            f"k_prior={float(f_k_prior):.4e}  "
+            f"s_prior={float(f_s_prior):.4e}"
+        )
+
+        print(msg, flush=True)
+
+        # Also send to standard logging if configured.
+        _debug_logger.info(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -847,8 +870,9 @@ def run_neural_latent_rate_refinement(
         rtol=1e-100,  # Very tight — rely on max_steps for termination
         atol=1e-100,
     )
-
     # Clear collector before each training run
+    global _neural_log_every
+    _neural_log_every = int(getattr(neural_cfg, "print_every", 1))
     _neural_loss_history.clear()
 
     t_total = time.perf_counter()
@@ -861,6 +885,13 @@ def run_neural_latent_rate_refinement(
         max_steps=int(neural_cfg.steps),
         throw=False,
     )
+    # Force JAX computation and callbacks to complete before reading history/logging.
+    train_result_value_leaves = jax.tree_util.tree_leaves(train_result.value)
+    for leaf in train_result_value_leaves:
+        if hasattr(leaf, "block_until_ready"):
+            leaf.block_until_ready()
+
+    jax.effects_barrier()
     total_elapsed = time.perf_counter() - t_total
 
     params_opt = train_result.value
