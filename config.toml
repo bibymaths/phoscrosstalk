@@ -1093,6 +1093,10 @@ replace_nans_at_start   = "first_valid"   # null | "zero" | "first_valid"
 #   Number of time points in the dense neural output grid.
 # =============================================================================
 [neural_ode]
+use_optax               = true
+optimizer               = "adabelief"
+optax_loop              = "scan"
+print_every             = 10
 enabled                 = true
 width                   = 32
 depth                   = 2

@@ -21,13 +21,6 @@ import os
 import pathlib
 import sys
 
-from phoscrosstalk.data_loader import (
-    _build_network_allow_sets,
-    _prefilter_phospho_csv,
-    _prefilter_rna_csv,
-)
-
-
 def _read_runtime_config():
     """
     Pre-parse the ``[runtime]`` section and the ``n_starts`` value from the
@@ -149,6 +142,13 @@ from phoscrosstalk.post_processing import (
     plot_residual_heatmap,
     save_run_metadata,
 )
+from phoscrosstalk.data_loader import (
+    _build_network_allow_sets,
+    _prefilter_phospho_csv,
+    _prefilter_rna_csv,
+)
+
+
 from phoscrosstalk.sensitivity import _generate_param_labels, run_global_sensitivity
 from phoscrosstalk.weighting import build_weight_matrices
 
