@@ -30,6 +30,14 @@ except ImportError:  # pragma: no cover
     _HAS_NX = False
     _nx = None
 
+try:
+    import gravis as _gv
+
+    _HAS_GRAVIS = True
+except ImportError:  # pragma: no cover
+    _HAS_GRAVIS = False
+    _gv = None
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from phoscrosstalk.config import ModelDims
@@ -46,6 +54,7 @@ from phoscrosstalk.dashboard import (
     load_fitted_params,
     load_internal_states,
     load_knockout_outputs,
+    load_mrna_dense_timeseries,
     load_preopt_snapshot,
     load_run_config,
     load_sensitivity_outputs,
@@ -104,6 +113,11 @@ def _load_fit_ts(results_dir: str):
 @st.cache_data(show_spinner="Loading dense timeseries…")
 def _load_dense_ts(results_dir: str):
     return load_dense_timeseries(results_dir)
+
+
+@st.cache_data(show_spinner="Loading dense mRNA timeseries…")
+def _load_mrna_dense_ts(results_dir: str):
+    return load_mrna_dense_timeseries(results_dir)
 
 
 @st.cache_data(show_spinner="Loading internal states…")
@@ -297,6 +311,95 @@ def _render_plotly_network(df_net: pd.DataFrame, src_col: str, tgt_col: str) -> 
     )
 
     st.plotly_chart(fig_net, use_container_width=True)
+
+
+def _render_gravis_network(
+    df_net: pd.DataFrame,
+    src_col: str,
+    tgt_col: str,
+    height: int = 650,
+    ko_node: str | None = None,
+) -> None:
+    """Render a directed network using Gravis (interactive, HTML-based).
+
+    Falls back to :func:`_render_plotly_network` if Gravis is not installed.
+
+    Args:
+        df_net: Edge DataFrame with at least source/target columns.
+        src_col: Name of the source column.
+        tgt_col: Name of the target column.
+        height: Height of the Gravis viewport in pixels.
+        ko_node: When provided, the named node is highlighted as a knocked-out
+            node (red border, reduced opacity) to reflect the KO topology.
+    """
+    if not _HAS_GRAVIS:
+        st.info(
+            "Gravis is not installed. Falling back to Plotly/NetworkX rendering. "
+            "Install gravis (`pip install gravis`) for interactive network views."
+        )
+        _render_plotly_network(df_net, src_col, tgt_col)
+        return
+
+    if not _HAS_NX:
+        st.info("networkx is not installed; cannot build graph for Gravis rendering.")
+        return
+
+    if df_net is None or df_net.empty:
+        st.info("No network edges available for rendering.")
+        return
+
+    weight_col = (
+        "Weight_Fitted"
+        if "Weight_Fitted" in df_net.columns
+        else (df_net.columns[2] if df_net.shape[1] > 2 else None)
+    )
+
+    G = _nx.DiGraph()
+    for _, row in df_net.iterrows():
+        src = str(row[src_col])
+        tgt = str(row[tgt_col])
+        if not src or not tgt or src.lower() == "nan" or tgt.lower() == "nan":
+            continue
+        weight = 1.0
+        if weight_col is not None:
+            try:
+                w = float(row[weight_col])
+                weight = w if np.isfinite(w) else 1.0
+            except Exception:
+                weight = 1.0
+        G.add_edge(src, tgt, weight=weight)
+
+    if G.number_of_nodes() == 0:
+        st.info("No valid nodes after filtering.")
+        return
+
+    # Annotate node metadata for Gravis
+    for node in G.nodes():
+        degree = G.degree(node)
+        is_ko = ko_node is not None and str(node) == str(ko_node)
+        G.nodes[node]["label"] = str(node)
+        G.nodes[node]["size"] = max(6, min(30, degree * 2 + 6))
+        G.nodes[node]["color"] = "#e63946" if is_ko else "#4a90d9"
+        G.nodes[node]["opacity"] = 0.4 if is_ko else 1.0
+        G.nodes[node]["title"] = (
+            f"{node} (KNOCKED OUT)" if is_ko else f"{node} (degree={degree})"
+        )
+
+    try:
+        import streamlit.components.v1 as _components
+
+        fig = _gv.d3(
+            G,
+            graph_height=height,
+            show_details=True,
+            show_menu=True,
+            details_height=100,
+        )
+        html_str = fig.to_html_standalone()
+        _components.html(html_str, height=height + 120, scrolling=True)
+    except Exception as exc:
+        st.warning(f"Gravis rendering failed ({exc}); falling back to Plotly.")
+        _render_plotly_network(df_net, src_col, tgt_col)
 
 
 def _pseudo_log_time_axis(
@@ -1245,7 +1348,7 @@ with tab_rates:
                 st.info("k_act not available.")
 
         with col_sp:
-            st.subheader("s_prod(t) — kinase-signal synthesis rate")
+            st.subheader("s_prod(t) — protein-level aggregated phosphorylation drive")
             if "s_prod" in dr and "t_s_prod" in dr:
                 t_sp = np.asarray(dr["t_s_prod"]).ravel()
                 s_prod_mat = np.asarray(dr["s_prod"])
@@ -1263,7 +1366,12 @@ with tab_rates:
                     template="plotly_white",
                     xaxis_title="Time (min)",
                     yaxis_title="s_prod(t)",
-                    title="Kinase-signal-driven synthesis rate s_prod(t)",
+                    title="s_prod(t) — phosphorylation drive (protein-level aggregated)",
+                )
+                st.caption(
+                    "s_prod(t) is a protein-level aggregated phosphorylation drive "
+                    "computed from kinase-signal data. It drives the protein abundance "
+                    "ODE (dA/dt) at the protein level (shape K)."
                 )
                 st.plotly_chart(fig_sp, use_container_width=True)
             else:
@@ -1403,6 +1511,68 @@ with tab_sim:
                         if use_logx:
                             fig_esim.update_xaxes(type="log")
                         st.plotly_chart(fig_esim, use_container_width=True)
+
+                        # Derived rates overlay for selected protein
+                        dr_sim = _load_dr(results_dir)
+                        if dr_sim is not None and (
+                            "k_act" in dr_sim or "s_prod" in dr_sim
+                        ):
+                            st.subheader("Derived rate drives")
+                            dr_prots = list(dr_sim.get("proteins", []))
+                            pidx_dr = (
+                                dr_prots.index(selected_protein)
+                                if selected_protein in dr_prots
+                                else -1
+                            )
+                            col_dr1, col_dr2 = st.columns(2)
+
+                            with col_dr1:
+                                if "k_act" in dr_sim and "t_k_act" in dr_sim and pidx_dr >= 0:
+                                    t_kd = np.asarray(dr_sim["t_k_act"]).ravel()
+                                    k_act_row = np.asarray(dr_sim["k_act"])[pidx_dr]
+                                    fig_kd = go.Figure(
+                                        go.Scatter(
+                                            x=t_kd,
+                                            y=k_act_row,
+                                            mode="lines",
+                                            name=selected_protein,
+                                            line=dict(color="royalblue", width=2),
+                                        )
+                                    )
+                                    fig_kd.update_layout(
+                                        height=260,
+                                        template="plotly_white",
+                                        xaxis_title="Time (min)",
+                                        yaxis_title="k_act(t)",
+                                        title="k_act(t) \u2014 transcriptional drive",
+                                    )
+                                    st.plotly_chart(fig_kd, use_container_width=True)
+                                else:
+                                    st.info("k_act(t) not available.")
+
+                            with col_dr2:
+                                if "s_prod" in dr_sim and "t_s_prod" in dr_sim and pidx_dr >= 0:
+                                    t_sd = np.asarray(dr_sim["t_s_prod"]).ravel()
+                                    s_prod_row = np.asarray(dr_sim["s_prod"])[pidx_dr]
+                                    fig_sd = go.Figure(
+                                        go.Scatter(
+                                            x=t_sd,
+                                            y=s_prod_row,
+                                            mode="lines",
+                                            name=selected_protein,
+                                            line=dict(color="darkorange", width=2),
+                                        )
+                                    )
+                                    fig_sd.update_layout(
+                                        height=260,
+                                        template="plotly_white",
+                                        xaxis_title="Time (min)",
+                                        yaxis_title="s_prod(t)",
+                                        title="s_prod(t) \u2014 phosphorylation drive",
+                                    )
+                                    st.plotly_chart(fig_sd, use_container_width=True)
+                                else:
+                                    st.info("s_prod(t) not available.")
             else:
                 st.info("Configure parameters and press **\u25b6 Run simulation**.")
 
@@ -1496,13 +1666,17 @@ with tab_ko:
                     obs_prot_idx = proteins.index(observe_ko_prot)
                     spi = np.asarray(snap.get("site_prot_idx", []))
                     site_idxs_ko = list(np.where(spi == obs_prot_idx)[0])
+                    kin_to_prot = np.asarray(snap.get("kin_to_prot_idx", []))
+                    rel_kins_ko = list(np.where(kin_to_prot == obs_prot_idx)[0])
 
                     fig_ko_traj = make_subplots(
-                        rows=1,
+                        rows=2,
                         cols=2,
                         subplot_titles=(
                             "Relative phosphosite signal (WT vs KO)",
+                            "Protein abundance (WT vs KO)",
                             "S \u2013 activity fraction (WT vs KO)",
+                            "Kdyn \u2013 kinase activity fraction (WT vs KO)",
                         ),
                     )
                     colors = px.colors.qualitative.Bold
@@ -1534,6 +1708,30 @@ with tab_ko:
                             col=1,
                         )
 
+                    # Protein abundance WT vs KO
+                    fig_ko_traj.add_trace(
+                        go.Scatter(
+                            x=t_ko_eval,
+                            y=ko_result["wt"]["A_sim"][obs_prot_idx],
+                            mode="lines",
+                            name="WT A",
+                            line=dict(color="royalblue", width=2),
+                        ),
+                        row=1,
+                        col=2,
+                    )
+                    fig_ko_traj.add_trace(
+                        go.Scatter(
+                            x=t_ko_eval,
+                            y=ko_result["ko"]["A_sim"][obs_prot_idx],
+                            mode="lines",
+                            name="KO A",
+                            line=dict(color="royalblue", width=2, dash="dot"),
+                        ),
+                        row=1,
+                        col=2,
+                    )
+
                     fig_ko_traj.add_trace(
                         go.Scatter(
                             x=t_ko_eval,
@@ -1542,8 +1740,8 @@ with tab_ko:
                             name="WT S",
                             line=dict(color="purple", width=2),
                         ),
-                        row=1,
-                        col=2,
+                        row=2,
+                        col=1,
                     )
                     fig_ko_traj.add_trace(
                         go.Scatter(
@@ -1553,26 +1751,67 @@ with tab_ko:
                             name="KO S",
                             line=dict(color="purple", width=2, dash="dot"),
                         ),
-                        row=1,
-                        col=2,
+                        row=2,
+                        col=1,
                     )
+
+                    # Kinase activity Kdyn WT vs KO
+                    for ri, ki in enumerate(rel_kins_ko[:5]):
+                        kname = kinases[ki] if ki < len(kinases) else str(ki)
+                        c_k = colors[(ri + 3) % len(colors)]
+                        fig_ko_traj.add_trace(
+                            go.Scatter(
+                                x=t_ko_eval,
+                                y=ko_result["wt"]["Kdyn_sim"][ki],
+                                mode="lines",
+                                name=f"WT Kdyn {kname}",
+                                line=dict(color=c_k, width=2),
+                            ),
+                            row=2,
+                            col=2,
+                        )
+                        fig_ko_traj.add_trace(
+                            go.Scatter(
+                                x=t_ko_eval,
+                                y=ko_result["ko"]["Kdyn_sim"][ki],
+                                mode="lines",
+                                name=f"KO Kdyn {kname}",
+                                line=dict(color=c_k, width=2, dash="dot"),
+                                showlegend=False,
+                            ),
+                            row=2,
+                            col=2,
+                        )
 
                     fig_ko_traj.update_xaxes(title_text="Time (min)")
                     fig_ko_traj.update_yaxes(
                         title_text="Relative phosphosite signal", row=1, col=1
                     )
                     fig_ko_traj.update_yaxes(
+                        title_text="Protein abundance", row=1, col=2
+                    )
+                    fig_ko_traj.update_yaxes(
                         title_text="Activity fraction [0-1]",
-                        row=1,
+                        row=2,
+                        col=1,
+                        range=[0, 1.05],
+                    )
+                    fig_ko_traj.update_yaxes(
+                        title_text="Activity fraction [0-1]",
+                        row=2,
                         col=2,
                         range=[0, 1.05],
                     )
                     fig_ko_traj.update_layout(
-                        height=450,
+                        height=700,
                         template="plotly_white",
-                        title=f"WT vs {ko_target} ({ko_type} KO) \u2192 {observe_ko_prot}",  # noqa: E501
+                        title=f"WT vs {ko_target} ({ko_type} KO) \u2192 {observe_ko_prot}",
                     )
                     st.plotly_chart(fig_ko_traj, use_container_width=True)
+                    st.caption(
+                        "Solid lines = WT &nbsp;|&nbsp; Dotted lines = KO. "
+                        "Line styles are identical per entity; colour indicates entity."
+                    )
 
                     # Fold-change ranking
                     eps = 1e-9
@@ -1618,6 +1857,63 @@ with tab_ko:
                         df_fc.to_csv(index=False).encode(),
                         file_name=f"ko_fc_{ko_target}.csv",
                     )
+
+                    # Post-KO network topology visualization
+                    st.divider()
+                    st.subheader(f"Network topology after {ko_target} ({ko_type}) KO")
+                    net_path = os.path.join(results_dir, "network_cytoscape_edges.csv")
+                    if os.path.exists(net_path):
+                        try:
+                            df_net_ko = pd.read_csv(net_path)
+                            src_col_ko = (
+                                "source"
+                                if "source" in df_net_ko.columns
+                                else df_net_ko.columns[0]
+                            )
+                            tgt_col_ko = (
+                                "target"
+                                if "target" in df_net_ko.columns
+                                else df_net_ko.columns[1]
+                            )
+                            # Remove rows involving the knocked-out target
+                            mask_keep = ~(
+                                (df_net_ko[src_col_ko].astype(str) == str(ko_target))
+                                | (df_net_ko[tgt_col_ko].astype(str) == str(ko_target))
+                            )
+                            df_net_ko_filtered = df_net_ko[mask_keep].copy()
+                            n_removed = int((~mask_keep).sum())
+                            if n_removed > 0:
+                                st.caption(
+                                    f"Removed {n_removed} edges involving **{ko_target}**. "
+                                    "The knocked-out node is highlighted in red."
+                                )
+                            # Add back ko_target node without edges so it shows red
+                            if df_net_ko.shape[1] >= 2:
+                                ko_row = {
+                                    col: ko_target if col in (src_col_ko, tgt_col_ko) else ""
+                                    for col in df_net_ko.columns
+                                }
+                                df_net_ko_vis = pd.concat(
+                                    [df_net_ko_filtered,
+                                     pd.DataFrame([ko_row])],
+                                    ignore_index=True,
+                                )
+                            else:
+                                df_net_ko_vis = df_net_ko_filtered
+                            _render_gravis_network(
+                                df_net_ko_vis,
+                                src_col_ko,
+                                tgt_col_ko,
+                                height=550,
+                                ko_node=ko_target,
+                            )
+                        except Exception as _e:
+                            st.warning(f"Could not render KO network topology: {_e}")
+                    else:
+                        st.info(
+                            "Network edges file (`network_cytoscape_edges.csv`) not found. "
+                            "Run the model pipeline to generate it."
+                        )
 
                 except Exception as exc:
                     st.error(f"Knockout simulation failed: {exc}")
@@ -1805,8 +2101,16 @@ with tab_ss:
             css1, css2 = st.columns([1, 3])
 
             with css1:
-                ss_t_end = st.slider(
-                    "End time (min)", 1000, 50000, 10000, 1000, key="ss_t_end"
+                ss_t_end = st.number_input(
+                    "End time (min)",
+                    min_value=float(max(t_max_data, 1.0)),
+                    max_value=float(max(t_max_data * 100, 1_000_000.0)),
+                    value=float(max(t_max_data * 10, 10000.0)),
+                    step=float(max(t_max_data, 1000.0)),
+                    key="ss_t_end",
+                )
+                ss_n_pts = st.slider(
+                    "Grid points", 100, 2000, 300, key="ss_n_pts"
                 )
                 run_ss_btn = st.button(
                     "\u25b6 Run steady-state sim", type="primary", key="run_ss"
@@ -1819,8 +2123,8 @@ with tab_ss:
                     t_ss_grid = build_long_horizon_time_grid(
                         t_end=float(ss_t_end),
                         early_end=t_max_data,
-                        n_early=100,
-                        n_late=200,
+                        n_early=min(100, ss_n_pts // 3),
+                        n_late=max(200, ss_n_pts - ss_n_pts // 3),
                     )
 
                     with st.spinner("Simulating long horizon…"):
@@ -2011,6 +2315,62 @@ with tab_ss:
                                 "System may not be fully converged "
                                 f"(Δ relative phosphosite signal: {delta:.2e})"
                             )
+
+        # Allow live long-horizon simulation even when saved SS files exist
+        if snap is not None and params is not None:
+            st.divider()
+            with st.expander("▶ Run custom forward simulation", expanded=False):
+                css1b, css2b = st.columns([1, 3])
+                with css1b:
+                    ss_t_end_live = st.number_input(
+                        "End time (min)",
+                        min_value=float(max(t_max_data, 1.0)),
+                        max_value=float(max(t_max_data * 100, 1_000_000.0)),
+                        value=float(max(t_max_data * 10, 10000.0)),
+                        step=float(max(t_max_data, 1000.0)),
+                        key="ss_t_end_live",
+                    )
+                    ss_n_pts_live = st.slider(
+                        "Grid points", 100, 2000, 300, key="ss_n_pts_live"
+                    )
+                    run_ss_live_btn = st.button(
+                        "\u25b6 Run", type="primary", key="run_ss_live"
+                    )
+                with css2b:
+                    if run_ss_live_btn:
+                        from phoscrosstalk.steadystate import (
+                            build_long_horizon_time_grid,
+                        )
+
+                        t_ss_grid_live = build_long_horizon_time_grid(
+                            t_end=float(ss_t_end_live),
+                            early_end=t_max_data,
+                            n_early=min(100, ss_n_pts_live // 3),
+                            n_late=max(200, ss_n_pts_live - ss_n_pts_live // 3),
+                        )
+                        with st.spinner("Simulating long horizon…"):
+                            ss_r_live = _run_simulation(
+                                results_dir,
+                                t_max=float(t_ss_grid_live[-1]),
+                                num_points=len(t_ss_grid_live),
+                                mechanism=mechanism,
+                            )
+                        if ss_r_live:
+                            _plot_ss_results(
+                                ss_r_live["t"],
+                                ss_r_live["P_sim"],
+                                ss_r_live["A_sim"],
+                                ss_r_live["S_sim"],
+                                ss_r_live["Kdyn_sim"],
+                                proteins,
+                                sites,
+                                kinases,
+                                snap,
+                                selected_protein,
+                                use_logx,
+                            )
+                        else:
+                            st.error("Live simulation failed.")
 # ══════════════════════════════════════════════════════════════════════════
 # I · NETWORK
 # ══════════════════════════════════════════════════════════════════════════
@@ -2109,13 +2469,24 @@ with tab_net:
         fig_deg.update_layout(height=350, template="plotly_white")
         st.plotly_chart(fig_deg, use_container_width=True)
 
-        if len(df_net) <= 500:
-            st.subheader("Interactive network (Plotly/networkx)")
-            _render_plotly_network(df_net, source_col, target_col)
+        if len(df_net) <= 800:
+            st.subheader("Interactive network (Gravis)")
+            _render_gravis_network(df_net, source_col, target_col, height=650)
         else:
             st.info(
-                f"Network has {len(df_net):,} edges — too large for Plotly rendering."
+                f"Network has {len(df_net):,} edges — rendering filtered subgraph "
+                f"(top 800 edges by weight)."
             )
+            weight_col_net = (
+                "Weight_Fitted"
+                if "Weight_Fitted" in df_net.columns
+                else None
+            )
+            if weight_col_net:
+                df_net_sub = df_net.nlargest(800, weight_col_net)
+            else:
+                df_net_sub = df_net.head(800)
+            _render_gravis_network(df_net_sub, source_col, target_col, height=650)
 
 
 # ──────────────────────────────────────────────────────────────────────────
