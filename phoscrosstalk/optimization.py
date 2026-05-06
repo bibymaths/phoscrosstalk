@@ -130,13 +130,17 @@ def bio_score_jax(theta, K: int, M: int, N: int):
     return score_kinase + score_protein
 
 
-def bio_score(theta, dims: ModelDims):
+def bio_score(theta, dims: ModelDims | None = None):
     """
     NumPy/Python wrapper used by analysis code.
 
     Keep this non-jitted wrapper so callers can pass NumPy arrays and receive
     a normal Python float.
     """
+    if dims is None:
+        dims = ModelDims.current()
+        if dims is None:
+            return float("nan")
     theta = jnp.asarray(theta)
     return float(
         bio_score_jax(
@@ -1018,7 +1022,15 @@ def validate_problem_shapes(problem):
     ----------
     problem : NetworkProblem
     """
-    K, M, N = problem.dims.K, problem.dims.M, problem.dims.N
+    if hasattr(problem, "dims") and problem.dims is not None:
+        K, M, N = problem.dims.K, problem.dims.M, problem.dims.N
+    else:
+        N = int(problem.P_data.shape[0])
+        M = int(problem.R.shape[0])
+        if getattr(problem, "A_scaled", None) is not None and np.asarray(problem.A_scaled).size > 0:
+            K = int(np.asarray(problem.A_scaled).shape[0])
+        else:
+            K = N
     problem.P_data.shape[1]
 
     errors = []
@@ -1401,7 +1413,6 @@ class NetworkProblem:
         A0 = build_full_A0(K, T, self.A_scaled, self.prot_idx_for_A)
 
         P_sim, _A_sim = simulate(
-            self.dims,
             self.t,
             self.P_data,
             A0,
@@ -1428,6 +1439,7 @@ class NetworkProblem:
             rtol=self.rtol,
             atol=self.atol,
             max_steps=self.max_steps,
+            dims=self.dims,
         )
         return P_sim
 
@@ -1447,7 +1459,6 @@ class NetworkProblem:
         A0 = build_full_A0(K, T, self.A_scaled, self.prot_idx_for_A)
 
         return simulate(
-            self.dims,
             self.t,
             self.P_data,
             A0,
@@ -1474,6 +1485,7 @@ class NetworkProblem:
             ode_adjoint_kind=self.ode_adjoint_kind,
             rtol=self.rtol,
             atol=self.atol,
+            dims=self.dims,
             max_steps=self.max_steps,
         )
 

@@ -172,7 +172,6 @@ def test_simulate_returns_R_state():
     t_rna = np.array([4.0, 8.0, 30.0, 60.0])
 
     result = simulate(
-        m["dims"],
         m["t"],
         m["P_data"],
         m["A_data"],

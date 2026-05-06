@@ -226,7 +226,6 @@ def run_knockout_screen(outdir, dims: ModelDims, problem, theta_opt, sites, prot
         )
 
         P, _, S, Kdyn = simulate(
-            dims,
             t_eval,
             problem.P_data,
             A0,
@@ -242,6 +241,7 @@ def run_knockout_screen(outdir, dims: ModelDims, problem, theta_opt, sites, prot
             problem.receptor_mask_kin,
             problem.mechanism,
             full_output=True,
+            dims=dims,
         )
         return P[:, -1], S[:, -1], Kdyn[:, -1]
 

@@ -38,6 +38,7 @@ class ModelDims:
     K: int
     M: int
     N: int
+    _current = None
 
     def __post_init__(self):
         for name, val in [("K", self.K), ("M", self.M), ("N", self.N)]:
@@ -48,7 +49,9 @@ class ModelDims:
     @classmethod
     def set_dims(cls, k, m, n) -> "ModelDims":
         """Compatibility constructor for explicit K/M/N values."""
-        return cls(K=k, M=m, N=n)
+        dims = cls(K=k, M=m, N=n)
+        cls._current = dims
+        return dims
 
     @classmethod
     def from_data(cls, P_data, A_data, kin_to_prot_idx) -> "ModelDims":
@@ -56,7 +59,14 @@ class ModelDims:
         N = int(np.asarray(P_data).shape[0])
         K = int(np.asarray(A_data).shape[0]) if (A_data is not None and np.asarray(A_data).size > 0) else N
         M = int(len(kin_to_prot_idx))
-        return cls(K=K, M=M, N=N)
+        dims = cls(K=K, M=M, N=N)
+        cls._current = dims
+        return dims
+
+    @classmethod
+    def current(cls) -> "ModelDims | None":
+        """Return the latest constructed dims for compatibility paths."""
+        return cls._current
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +98,7 @@ _DEFAULTS = {
     "optimisation": {
         "n_starts": 3,
         "max_steps": 500,
+        "solver": "levenberg_marquardt",
         "ls_solver": "lm",
         "optx_adjoint": "implicit",
         "jac_mode": "fwd",

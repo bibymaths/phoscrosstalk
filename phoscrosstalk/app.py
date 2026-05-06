@@ -160,7 +160,6 @@ def _run_simulation(results_dir: str, t_max: float, num_points: int, mechanism: 
                 A0[prot_map[aname], 0] = A_scaled[k, 0]
 
     P_sim, A_sim, S_sim, Kdyn_sim = simulate(
-        dims,
         t_fine,
         snap["P_scaled"],
         A0,
@@ -176,6 +175,7 @@ def _run_simulation(results_dir: str, t_max: float, num_points: int, mechanism: 
         snap["receptor_mask_kin"],
         mechanism,
         full_output=True,
+        dims=dims,
     )
     return {
         "t": t_fine,

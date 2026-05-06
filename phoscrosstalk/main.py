@@ -1006,7 +1006,6 @@ def main():
 
     analysis.save_fitted_simulation(
         outdir,
-        dims,
         theta_best,
         t,
         sites,
@@ -1030,6 +1029,7 @@ def main():
         kin_to_prot_idx,
         receptor_mask_prot,
         receptor_mask_kin,
+        dims=dims,
         k_act_fn=k_act_fn,
         s_prod_fn=s_prod_fn,
         R_data0=R_data0,
@@ -1055,7 +1055,7 @@ def main():
             )
 
     analysis.plot_fitted_simulation(outdir)
-    analysis.print_parameter_summary(outdir, dims, theta_best, proteins, kinases, sites)
+    analysis.print_parameter_summary(outdir, theta_best, proteins, kinases, sites, dims=dims)
     analysis.print_biological_scores(outdir, X)
     analysis.plot_biological_scores(outdir, X, F)
     analysis.plot_goodness_of_fit(f"{outdir}/fit_timeseries.tsv", outdir)

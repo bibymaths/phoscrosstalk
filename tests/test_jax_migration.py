@@ -93,7 +93,6 @@ class TestDiffraxSimulation:
         from phoscrosstalk.simulation import simulate
 
         P_sim, A_sim = simulate(
-            m["dims"],
             m["t"],
             m["P_data"],
             m["A_data"],
@@ -117,7 +116,6 @@ class TestDiffraxSimulation:
         from phoscrosstalk.simulation import simulate
 
         P_sim, A_sim = simulate(
-            m["dims"],
             m["t"],
             m["P_data"],
             m["A_data"],
@@ -142,7 +140,6 @@ class TestDiffraxSimulation:
 
         def run():
             return simulate(
-                m["dims"],
                 m["t"],
                 m["P_data"],
                 m["A_data"],
@@ -169,7 +166,6 @@ class TestDiffraxSimulation:
         from phoscrosstalk.simulation import simulate
 
         result = simulate(
-            m["dims"],
             m["t"],
             m["P_data"],
             m["A_data"],
@@ -199,7 +195,6 @@ class TestDiffraxSimulation:
         from phoscrosstalk.simulation import simulate
 
         P_sim, A_sim = simulate(
-            m["dims"],
             m["t"],
             m["P_data"],
             m["A_data"],
@@ -222,7 +217,6 @@ class TestDiffraxSimulation:
 
         dims = ModelDims(K=2, M=2, N=2)
         P_sim, _ = simulate(
-            dims,
             np.array([0.0, 1.0]),
             np.zeros((2, 2)),
             np.zeros((2, 2)),
@@ -237,6 +231,7 @@ class TestDiffraxSimulation:
             np.array([0, 0], dtype=int),
             np.array([0, 0], dtype=int),
             "dist",
+            dims=dims,
         )
         assert P_sim.shape == (2, 2)
 
@@ -246,7 +241,6 @@ class TestDiffraxSimulation:
         from phoscrosstalk.simulation import simulate
 
         P_sim, _ = simulate(
-            m["dims"],
             m["t"],
             m["P_data"],
             m["A_data"],

@@ -137,7 +137,6 @@ def _evaluate_single_sample(i, theta, problem, K, M, N, sites, proteins, kinases
     A0_full = build_full_A0(K, len(problem.t), problem.A_scaled, problem.prot_idx_for_A)
 
     P_sim, A_sim, S_sim, Kdyn_sim = simulate(
-        dims,
         problem.t,
         problem.P_data,
         A0_full,
@@ -153,6 +152,7 @@ def _evaluate_single_sample(i, theta, problem, K, M, N, sites, proteins, kinases
         problem.receptor_mask_kin,
         problem.mechanism,
         full_output=True,
+        dims=dims,
     )
 
     # B. Calculate Metric for Sobol (MSE on Phosphosites)

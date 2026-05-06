@@ -35,7 +35,6 @@ from phoscrosstalk.solver_config import (
 
 
 def simulate(
-    dims,
     t_arr,
     P_data0,
     A_data0,
@@ -65,6 +64,7 @@ def simulate(
     R_data0=None,
     rna_relax=0.1,
     ode_adjoint_kind="recursive",
+    dims: ModelDims | None = None,
 ):
     """
     Simulate the phosphoproteomic network dynamics using Diffrax (JAX backend).
@@ -108,23 +108,7 @@ def simulate(
         else: (P_sim, A_sim)  – (N_sites x T, K x T)
         Returns NaN arrays if integration fails.
     """
-    if not isinstance(dims, ModelDims):
-        t_arr, P_data0, A_data0, theta, Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha, kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin, mechanism = (  # noqa: E501
-            dims,
-            t_arr,
-            P_data0,
-            A_data0,
-            theta,
-            Cg,
-            Cl,
-            site_prot_idx,
-            K_site_kin,
-            R,
-            L_alpha,
-            kin_to_prot_idx,
-            receptor_mask_prot,
-            receptor_mask_kin,
-        )
+    if dims is None:
         dims = ModelDims.from_data(P_data0, A_data0, kin_to_prot_idx)
 
     K, M, N = dims.K, dims.M, dims.N
@@ -345,7 +329,6 @@ def build_full_A0(K, T, A_scaled, prot_idx_for_A):
 
 
 def simulate_dense(
-    dims,
     t_dense,
     P_data0,
     A_data0,
@@ -372,6 +355,7 @@ def simulate_dense(
     R_data0=None,
     rna_relax=0.1,
     ode_adjoint_kind="recursive",
+    dims: ModelDims | None = None,
 ):
     """Run the ODE over a dense time grid for smooth post-fit visualisation.
 
@@ -423,23 +407,7 @@ def simulate_dense(
             ``success``   – True if solve completed without NaN states
         Returns ``success=False`` with NaN-filled arrays if the solve fails.
     """
-    if not isinstance(dims, ModelDims):
-        t_dense, P_data0, A_data0, theta, Cg, Cl, site_prot_idx, K_site_kin, R, L_alpha, kin_to_prot_idx, receptor_mask_prot, receptor_mask_kin, mechanism = (  # noqa: E501
-            dims,
-            t_dense,
-            P_data0,
-            A_data0,
-            theta,
-            Cg,
-            Cl,
-            site_prot_idx,
-            K_site_kin,
-            R,
-            L_alpha,
-            kin_to_prot_idx,
-            receptor_mask_prot,
-            receptor_mask_kin,
-        )
+    if dims is None:
         dims = ModelDims.from_data(P_data0, A_data0, kin_to_prot_idx)
 
     result = simulate(
