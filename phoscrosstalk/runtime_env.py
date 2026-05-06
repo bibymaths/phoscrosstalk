@@ -556,7 +556,6 @@ def log_env_summary(logger=None, plan=None) -> None:
             f"  threads per run          = {plan.threads_per_run}",
             f"  XLA intra-op threads     = {plan.xla_threads}",
             f"  BLAS/OpenMP threads      = {plan.blas_threads}",
-            f"  JAX host CPU devices     = {_jax_cpu_devices}",
         ]
 
     message = "\n".join(lines)
