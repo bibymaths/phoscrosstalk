@@ -453,6 +453,59 @@ def enable_x64() -> None:
     os.environ.setdefault("JAX_ENABLE_X64", "true")
 
 
+def configure_jax_cpu_devices(n_devices="auto") -> int:
+    """
+    Configure the number of JAX CPU host devices via ``XLA_FLAGS``.
+
+    Sets ``--xla_force_host_platform_device_count=<n>`` in ``XLA_FLAGS`` so
+    that JAX's CPU backend exposes *n* virtual devices.  This is the correct
+    pre-import mechanism: it must be called **before** any JAX/jaxlib import.
+
+    Mutax Differential Evolution distributes population evaluations across JAX
+    devices when ``workers=-1``; configuring more devices here allows Mutax to
+    parallelise across all available CPU cores.
+
+    For multi-start mode the device count is left at the XLA default (1),
+    because each parallel worker process has its own XLA runtime and receives
+    per-worker thread caps via ``apply_cpu_env``.
+
+    Parameters
+    ----------
+    n_devices : int | str
+        Number of JAX CPU devices to expose.
+        ``"auto"`` (or ``None``) → auto-detect total available CPUs from the
+        same priority chain used by ``detect_cpu_topology()``.
+
+    Returns
+    -------
+    int
+        The device count that was configured.
+
+    Side effects
+    ------------
+    Merges ``--xla_force_host_platform_device_count=<n>`` into ``XLA_FLAGS``
+    (preserving any pre-existing flags).
+
+    Notes
+    -----
+    This function is stdlib-only and does **not** import JAX.
+    """
+    if n_devices is None or str(n_devices).lower() in ("auto", "", "0"):
+        topo = detect_cpu_topology()
+        n = topo.total_available
+    else:
+        try:
+            n = max(1, int(n_devices))
+        except (ValueError, TypeError):
+            topo = detect_cpu_topology()
+            n = topo.total_available
+
+    additions = {"--xla_force_host_platform_device_count": str(n)}
+    existing_xla = os.environ.get("XLA_FLAGS", "")
+    os.environ["XLA_FLAGS"] = _merge_xla_flags(existing_xla, additions)
+    return n
+
+
 def log_env_summary(logger=None, plan=None) -> None:
     """
     Log a summary of the active CPU/XLA environment variables.
@@ -465,11 +518,21 @@ def log_env_summary(logger=None, plan=None) -> None:
         Optional result from ``plan_cpu_runtime()``.  When provided, the
         runtime CPU plan is included in the summary.
     """
+    # Extract xla_force_host_platform_device_count from XLA_FLAGS if present
+    _xla_flags_str = os.environ.get("XLA_FLAGS", "")
+    _jax_cpu_devices = "(not configured)"
+    for _tok in _xla_flags_str.split():
+        _norm = _tok.lstrip("-")
+        if _norm.startswith("xla_force_host_platform_device_count="):
+            _jax_cpu_devices = _norm.split("=", 1)[1]
+            break
+
     lines = [
         "[runtime_env] Active CPU/XLA environment:",
         f"  JAX_ENABLE_X64           = {os.environ.get('JAX_ENABLE_X64', '(not set)')}",
         f"  JAX_PLATFORMS            = {os.environ.get('JAX_PLATFORMS', '(not set)')}",
-        f"  XLA_FLAGS                = {os.environ.get('XLA_FLAGS', '(not set)')}",
+        f"  XLA_FLAGS                = {_xla_flags_str or '(not set)'}",
+        f"  JAX host CPU devices     = {_jax_cpu_devices}",
         f"  OMP_NUM_THREADS          = {os.environ.get('OMP_NUM_THREADS', '(not set)')}",
         f"  OPENBLAS_NUM_THREADS     = {os.environ.get('OPENBLAS_NUM_THREADS', '(not set)')}",
         f"  MKL_NUM_THREADS          = {os.environ.get('MKL_NUM_THREADS', '(not set)')}",
@@ -486,13 +549,14 @@ def log_env_summary(logger=None, plan=None) -> None:
             f"  logical CPUs             = {topo.logical_cpus}",
             f"  physical cores           = {topo.physical_cores if topo.physical_cores is not None else 'unknown'}",
             f"  affinity CPUs            = {topo.affinity_cpus if topo.affinity_cpus is not None else 'n/a'}",
-            f"  usable CPUs (budget)     = {plan.total_available_cpus}",
+            f"  total available CPUs     = {plan.total_available_cpus}",
             f"  CPU source               = {topo.source}",
             "  n_starts                 = (see optimisation config)",
             f"  parallel starts          = {plan.n_parallel_runs}",
-            f"  threads per start        = {plan.threads_per_run}",
+            f"  threads per run          = {plan.threads_per_run}",
             f"  XLA intra-op threads     = {plan.xla_threads}",
             f"  BLAS/OpenMP threads      = {plan.blas_threads}",
+            f"  JAX host CPU devices     = {_jax_cpu_devices}",
         ]
 
     message = "\n".join(lines)

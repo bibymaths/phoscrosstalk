@@ -44,6 +44,8 @@ def _read_runtime_config():
         "use_physical_cores": True,
         "reserve_cores": 0,
         "n_starts": 1,
+        "solver": "lm",
+        "de_workers": 1,
     }
     try:
         try:
@@ -70,12 +72,15 @@ def _read_runtime_config():
             "use_physical_cores": rt.get("use_physical_cores", True),
             "reserve_cores": rt.get("reserve_cores", 0),
             "n_starts": opt.get("n_starts", 1),
+            "solver": opt.get("solver", "lm"),
+            "de_workers": raw.get("hybrid", {}).get("de_workers", 1),
         }
     except Exception:
         return _defaults
 
 
 from phoscrosstalk.runtime_env import (  # noqa: E402
+    configure_jax_cpu_devices,
     enable_x64,
     log_env_summary,
     plan_cpu_runtime,
@@ -93,6 +98,22 @@ _cpu_plan = plan_cpu_runtime(
 )
 _n_cpu_threads = setup_cpu_env(n_threads=_cpu_plan.threads_per_run)
 enable_x64()  # Must be before any JAX import
+
+# ---------------------------------------------------------------------------
+# Configure JAX CPU device count (must happen before any JAX import).
+#
+# Hybrid mode runs a single Mutax Differential Evolution search and needs JAX
+# to expose ALL available CPU cores as virtual devices so Mutax can distribute
+# population evaluations across them (workers=-1).
+#
+# Multi-start mode spawns separate worker processes (each with its own XLA
+# runtime), so a single JAX device per process is the correct default; the
+# per-worker thread cap is handled by apply_cpu_env() inside each worker.
+# ---------------------------------------------------------------------------
+if _runtime_cfg.get("solver") == "hybrid":
+    _n_jax_devices = configure_jax_cpu_devices(_cpu_plan.total_available_cpus)
+else:
+    _n_jax_devices = 1  # single-device default; workers configure themselves
 
 # ---------------------------------------------------------------------------
 # Standard library and third-party imports (JAX enters here via phoscrosstalk
@@ -574,6 +595,13 @@ def main():
         _cpu_plan.n_parallel_runs,
         os.environ.get("SLURM_CPUS_PER_TASK", "unset"),
         getattr(getattr(cfg, "runtime", None), "cpu_threads", "auto"),
+    )
+    logger.info(
+        "[runtime_env] JAX host CPU devices configured: %d  (solver=%s, total_available=%d, threads_per_run=%d)",
+        _n_jax_devices,
+        _runtime_cfg.get("solver", "lm"),
+        _cpu_plan.total_available_cpus,
+        _cpu_plan.threads_per_run,
     )
 
     # Create output directory
