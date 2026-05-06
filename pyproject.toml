@@ -31,7 +31,6 @@ dependencies = [
   "pyfiglet>=1.0.4",
   "evosax==0.2.0",
   "weasyprint>=68.1",
-  "mutax>=0.4.5",
   "optax>=0.2.8",
   "ipykernel>=7.2.0",
 ]

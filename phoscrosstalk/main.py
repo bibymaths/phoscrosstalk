@@ -37,8 +37,6 @@ def _read_runtime_config():
         "use_physical_cores": True,
         "reserve_cores": 0,
         "n_starts": 1,
-        "solver": "lm",
-        "de_workers": 1,
     }
     try:
         try:
@@ -48,28 +46,16 @@ def _read_runtime_config():
 
         argv = sys.argv[1:]
         config_path = "./config.toml"
-        solver_cli = None
         for i, arg in enumerate(argv):
             if arg == "--config" and i + 1 < len(argv):
                 config_path = argv[i + 1]
             elif arg.startswith("--config="):
                 config_path = arg.split("=", 1)[1]
-            elif arg == "--solver" and i + 1 < len(argv):
-                solver_cli = argv[i + 1]
-            elif arg.startswith("--solver="):
-                solver_cli = arg.split("=", 1)[1]
 
         with open(config_path, "rb") as _f:
             raw = tomllib.load(_f)
         rt = raw.get("runtime", {})
         opt = raw.get("optimisation", {})
-        config_solver = opt.get("solver", "lm")
-        # CLI --solver overrides the config file for early runtime setup.
-        effective_solver = (
-            solver_cli
-            if solver_cli in ("lm", "hybrid")
-            else config_solver
-        )
         return {
             "cpu_threads": rt.get("cpu_threads", "auto"),
             "parallel_starts": rt.get("parallel_starts", "auto"),
@@ -77,15 +63,12 @@ def _read_runtime_config():
             "use_physical_cores": rt.get("use_physical_cores", True),
             "reserve_cores": rt.get("reserve_cores", 0),
             "n_starts": opt.get("n_starts", 1),
-            "solver": effective_solver,
-            "de_workers": raw.get("hybrid", {}).get("de_workers", 1),
         }
     except Exception:
         return _defaults
 
 
 from phoscrosstalk.runtime_env import (  # noqa: E402
-    configure_jax_cpu_devices,
     enable_x64,
     log_env_summary,
     plan_cpu_runtime,
@@ -102,23 +85,6 @@ _cpu_plan = plan_cpu_runtime(
     reserve_cores=_runtime_cfg["reserve_cores"],
 )
 _n_cpu_threads = setup_cpu_env(n_threads=_cpu_plan.threads_per_run)
-
-# ---------------------------------------------------------------------------
-# Configure JAX CPU device count (must happen before any JAX import).
-#
-# Hybrid mode runs a single Mutax Differential Evolution search and needs JAX
-# to expose ALL available CPU cores as virtual devices so Mutax can distribute
-# population evaluations across them (workers=-1).
-#
-# Multi-start mode spawns separate worker processes (each with its own XLA
-# runtime), so a single JAX device per process is the correct default; the
-# per-worker thread cap is handled by apply_cpu_env() inside each worker.
-# ---------------------------------------------------------------------------
-if _runtime_cfg.get("solver") == "hybrid":
-    _n_jax_devices = configure_jax_cpu_devices(_cpu_plan.total_available_cpus)
-else:
-    _n_jax_devices = 1  # single-device default; workers configure themselves
-
 
 enable_x64()  # Must be before any JAX import
 
@@ -146,7 +112,6 @@ from phoscrosstalk.optimization import (
 )
 from phoscrosstalk.optimization import (
     create_bounds,
-    make_loss_fn,
     make_residuals_fn,
     validate_problem_shapes,
 )
@@ -315,9 +280,8 @@ def main():
     """
     Entry point for PhosCrosstalk.
 
-    The CLI accepts ``--config <path>`` (plus ``--help`` and ``--version``)
-    as well as optional ``--solver`` flags to select the hybrid fitting backend.
-    All other runtime options are read from the TOML configuration file.
+    The CLI accepts ``--config <path>`` (plus ``--help`` and ``--version``).
+    All runtime options are read from the TOML configuration file.
     """
 
     parser = argparse.ArgumentParser(
@@ -342,85 +306,8 @@ def main():
         version="Phospho-Network Model Fitting 2.0",
     )
 
-    # ------------------------------------------------------------------
-    # Hybrid solver flags (additive – existing --config path is unchanged)
-    # ------------------------------------------------------------------
-    parser.add_argument(
-        "--solver",
-        choices=["lm", "hybrid"],
-        default=None,
-        help=(
-            "Solver backend.  "
-            "lm: existing run_single_optimisation (default).  "
-            "hybrid: run_hybrid_fit from hybrid_fit.py."
-        ),
-    )
-    parser.add_argument(
-        "--de-strategy",
-        choices=["best1bin", "rand1bin"],
-        default="best1bin",
-        dest="de_strategy",
-        help="Mutax Differential Evolution strategy.",
-    )
-    parser.add_argument(
-        "--de-popsize",
-        type=int,
-        default=15,
-        dest="de_popsize",
-        help="Mutax Differential Evolution population multiplier.",
-    )
-
-    parser.add_argument(
-        "--de-maxiter",
-        type=int,
-        default=200,
-        dest="de_maxiter",
-        help="Mutax Differential Evolution maximum generations.",
-    )
-
-    parser.add_argument(
-        "--de-workers",
-        type=int,
-        default=None,
-        dest="de_workers",
-        help="Number of JAX devices used by Mutax. Use -1 for all available devices.",
-    )
-
-    parser.add_argument(
-        "--polish-top-k",
-        type=int,
-        default=5,
-        dest="polish_top_k",
-        help="Number of best global-search candidates to polish with Optimistix.",
-    )
-    parser.add_argument(
-        "--skip-lhs",
-        action="store_true",
-        default=False,
-        dest="skip_lhs",
-        help="Skip Phase 0 LHS screen.",
-    )
-    parser.add_argument(
-        "--hybrid-seed",
-        type=int,
-        default=0,
-        dest="hybrid_seed",
-        help="Random seed for the hybrid solver.",
-    )
-    parser.add_argument(
-        "--hybrid-verbose",
-        action="store_true",
-        default=False,
-        dest="hybrid_verbose",
-        help="Enable verbose output for the hybrid solver.",
-    )
-
     args = parser.parse_args()
     config_path = args.config
-    # Save the raw CLI values before they are overwritten by the SimpleNamespace
-    # built from the config file below.  We need them to apply CLI overrides.
-    _cli_solver = args.solver  # None if not passed on CLI, "lm"/"hybrid" if passed
-    _cli_de_workers = args.de_workers  # None if not passed on CLI, int if passed
 
     # ------------------------------------------------------------------
     # LOAD AND VALIDATE CONFIG
@@ -488,60 +375,6 @@ def main():
         ode_adjoint=getattr(cfg.solver, "ode_adjoint", "forward"),
         ode_dt0=getattr(cfg.solver, "dt0", 0.01),
         ode_root_find_max_steps=getattr(cfg.solver, "root_find_max_steps", 10),
-        # solver backend + hybrid settings
-        # CLI --solver overrides the config file solver choice.
-        solver=(
-            _cli_solver
-            if _cli_solver is not None
-            else getattr(cfg.optimisation, "solver", "lm")
-        ),
-        de_strategy=getattr(
-            getattr(cfg, "hybrid", SimpleNamespace()), "de_strategy", "best1bin"
-        ),
-        de_popsize=getattr(
-            getattr(cfg, "hybrid", SimpleNamespace()), "de_popsize", 15
-        ),
-        de_maxiter=getattr(
-            getattr(cfg, "hybrid", SimpleNamespace()), "de_maxiter", 200
-        ),
-        de_tol=getattr(
-            getattr(cfg, "hybrid", SimpleNamespace()), "de_tol", 0.01
-        ),
-        de_atol=getattr(
-            getattr(cfg, "hybrid", SimpleNamespace()), "de_atol", 0.0
-        ),
-        de_recombination=getattr(
-            getattr(cfg, "hybrid", SimpleNamespace()), "de_recombination", 0.8
-        ),
-        de_workers=(
-            # CLI --de-workers takes precedence when explicitly provided (not None).
-            _cli_de_workers
-            if _cli_de_workers is not None
-            else getattr(
-                getattr(cfg, "hybrid", SimpleNamespace()), "de_workers", 1
-            )
-        ),
-        de_updating=getattr(
-            getattr(cfg, "hybrid", SimpleNamespace()), "de_updating", "immediate"
-        ),
-        polish_top_k=getattr(
-            getattr(cfg, "hybrid", SimpleNamespace()), "polish_top_k", 5
-        ),
-        lhs_samples=getattr(
-            getattr(cfg, "hybrid", SimpleNamespace()), "lhs_n_samples", 512
-        ),
-        lhs_top_p=getattr(
-            getattr(cfg, "hybrid", SimpleNamespace()), "lhs_top_p", 16
-        ),
-        skip_lhs=getattr(
-            getattr(cfg, "hybrid", SimpleNamespace()), "skip_lhs", False
-        ),
-        hybrid_seed=getattr(
-            getattr(cfg, "hybrid", SimpleNamespace()), "seed", 0
-        ),
-        hybrid_verbose=getattr(
-            getattr(cfg, "hybrid", SimpleNamespace()), "verbose", False
-        ),
         # Optimistix solver settings (separate from ODE solver tolerances)
         opt_rtol=getattr(cfg.optimisation, "rtol", 1e-8),
         opt_atol=getattr(cfg.optimisation, "atol", 1e-8),
@@ -623,13 +456,6 @@ def main():
         _cpu_plan.n_parallel_runs,
         os.environ.get("SLURM_CPUS_PER_TASK", "unset"),
         getattr(getattr(cfg, "runtime", None), "cpu_threads", "auto"),
-    )
-    logger.info(
-        "[runtime_env] JAX host CPU devices configured: %d  (solver=%s, total_available=%d, threads_per_run=%d)",
-        _n_jax_devices,
-        _runtime_cfg.get("solver", "lm"),
-        _cpu_plan.total_available_cpus,
-        _cpu_plan.threads_per_run,
     )
 
     # Create output directory
@@ -1146,109 +972,14 @@ def main():
         logger.warning(f"[!] Problem shape validation warnings:\n{e}")
 
     # ------------------------------------------------------------------
-    # Choose solver backend
+    # Optimisation: multi-start LM via run_multi_start_optimization
     # ------------------------------------------------------------------
-    solver_choice = getattr(args, "solver", "lm")
+    res, best_idx, total_losses = run_multi_start_optimization(
+        problem, args, P_scaled
+    )
 
-    if solver_choice == "hybrid":
-        # Build shared kwargs used by both make_loss_fn and make_residuals_fn
-        _common_fn_kwargs = dict(
-            t=t,
-            P_data=P_scaled,
-            A_scaled=A_scaled,
-            prot_idx_for_A=prot_idx_for_A,
-            W_data=W_data,
-            W_data_prot=W_data_prot,
-            Cg=Cg,
-            Cl=Cl,
-            site_prot_idx=site_prot_idx,
-            K_site_kin=K_site_kin,
-            R=R,
-            L_alpha=L_alpha,
-            kin_to_prot_idx=kin_to_prot_idx,
-            receptor_mask_prot=receptor_mask_prot,
-            receptor_mask_kin=receptor_mask_kin,
-            mechanism=mechanism,
-            lambda_net=args.lambda_net,
-            reg_lambda=args.reg_lambda,
-            w_phospho=args.loss_weight_phospho,
-            w_abundance=args.loss_weight_abundance,
-            w_reg=args.loss_weight_reg,
-            rtol=args.rtol,
-            atol=args.atol,
-            max_steps=args.solver_max_steps,
-            k_act_fn=k_act_fn,
-            s_prod_fn=s_prod_fn,
-            t_mrna=t_rna if rna_matrix is not None else None,
-            rna_data_scaled=rna_obs_matched,
-            w_mrna=args.loss_weight_mrna,
-            rna_model_prot_idx=rna_model_prot_idx,
-            R_data0=R_data0,
-            rna_relax=cfg.derived_rates.rna_relax,
-            ode_solver_kind=args.ode_solver,
-            ode_adjoint_kind=args.ode_adjoint,
-            dt0=args.ode_dt0,
-            root_find_max_steps=args.ode_root_find_max_steps,
-        )
-
-        _hybrid_loss_fn = make_loss_fn(
-            **_common_fn_kwargs,
-            W_data_rna=W_data_mrna_matched if len(rna_fit_genes) > 0 else None,
-        )
-        _hybrid_residuals_fn = make_residuals_fn(
-            **_common_fn_kwargs,
-            W_data_mrna=W_data_mrna_matched if len(rna_fit_genes) > 0 else None,
-        )
-
-        from phoscrosstalk.hybrid_fit import run_hybrid_fit
-
-        hybrid_result = run_hybrid_fit(
-            problem=problem,
-            loss_fn=_hybrid_loss_fn,
-            residuals_fn=_hybrid_residuals_fn,
-            n_var=dim,
-            xl=xl,
-            xu=xu,
-            lhs_n_samples=getattr(args, "lhs_samples", 512),
-            lhs_top_p=getattr(args, "lhs_top_p", 16),
-            skip_lhs=getattr(args, "skip_lhs", False),
-            de_strategy=getattr(args, "de_strategy", "best1bin"),
-            de_popsize=getattr(args, "de_popsize", getattr(args, "es_popsize", 15)),
-            de_maxiter=getattr(args, "de_maxiter", getattr(args, "es_generations", 200)),
-            de_tol=getattr(args, "de_tol", 0.01),
-            de_atol=getattr(args, "de_atol", 0.0),
-            de_mutation=getattr(args, "de_mutation", (0.5, 1.0)),
-            de_recombination=getattr(args, "de_recombination", 0.8),
-            de_workers=getattr(args, "de_workers", 1),
-            de_updating=getattr(args, "de_updating", "immediate"),
-            polish_top_k=getattr(args, "polish_top_k", getattr(args, "es_top_k", 5)),
-            lm_max_steps=args.max_steps,
-            lm_rtol=args.opt_rtol,
-            lm_atol=args.opt_atol,
-            optx_adjoint=getattr(args, "optx_adjoint", "implicit"),
-            ls_solver=getattr(args, "ls_solver", "lm"),
-            jac_mode=getattr(args, "jac_mode", "fwd"),
-            seed=getattr(args, "hybrid_seed", 0),
-            verbose=getattr(args, "hybrid_verbose", False),
-        )
-
-        theta_best = hybrid_result.theta_opt
-
-        # Build F/X arrays compatible with downstream analysis code.
-        # Use all successful polished candidates, not only the final best one.
-        F = hybrid_result.polish_F
-        X = hybrid_result.polish_X
-        total_losses = hybrid_result.polish_J
-        best_idx = int(np.argmin(total_losses))
-
-    else:
-        # Default: multi-start LM via run_multi_start_optimization
-        res, best_idx, total_losses = run_multi_start_optimization(
-            problem, args, P_scaled
-        )
-
-        F, X = res.F, res.X
-        theta_best = X[best_idx]
+    F, X = res.F, res.X
+    theta_best = X[best_idx]
 
     # 11. Analysis & Saving
     f1 = F[:, 0]
