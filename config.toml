@@ -257,7 +257,7 @@ include_tfs_as_proteins = false
 n_starts      = 5
 max_steps     = 500
 
-solver        = "hybrid"         # options: "lm" | "hybrid"
+solver        = "lm"         # options: "lm" | "hybrid"
 ls_solver     = "lm"         # options: "lm" | "gauss_newton" | "dogleg" | "indirect_lm"
 
 optx_adjoint  = "implicit"   # options: "implicit" | "checkpoint" | "recursive"
