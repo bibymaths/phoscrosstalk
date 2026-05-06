@@ -27,6 +27,7 @@ function is called.
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass, fields, is_dataclass, replace
 from types import SimpleNamespace
 
@@ -520,6 +521,11 @@ def run_lm_polish(
 
     for i, theta0 in enumerate(candidates):
         theta0_clipped = np.clip(np.asarray(theta0, dtype=np.float64), xl, xu)
+        logger.info(
+            "[fit]  hybrid_fit  lm_polish  seed=%02d/%02d  starting",
+            i + 1, len(candidates),
+        )
+        t0 = time.perf_counter()
         theta_opt, total, f1, f2, f3, f4 = run_single_optimisation(
             residuals_fn,
             theta0_clipped,
@@ -528,15 +534,20 @@ def run_lm_polish(
             atol=lm_atol,
             verbose=False,
         )
-        if verbose:
-            logger.info(
-                f"  [LM seed {i}] total={total:.6f} f1={f1:.6f} "
-                f"f2={f2:.6f} f3={f3:.6f} f4={f4:.6f}",
-                flush=True,
-            )
+        elapsed = time.perf_counter() - t0
+        logger.info(
+            "[fit]  hybrid_fit  lm_polish  seed=%02d/%02d"
+            "  loss=%.4e  f1=%.4e  f2=%.4e  f3=%.4e  f4=%.4e  t=%.2fs",
+            i + 1, len(candidates),
+            float(total), float(f1), float(f2), float(f3), float(f4), elapsed,
+        )
         if total < best_loss:
             best_loss = total
             best_result = (theta_opt, total, f1, f2, f3, f4)
+            logger.info(
+                "[fit]  hybrid_fit  lm_polish  new best  seed=%02d  loss=%.4e",
+                i + 1, float(best_loss),
+            )
 
     if best_result is None:
         raise RuntimeError("run_lm_polish received empty candidates array.")
@@ -1009,16 +1020,22 @@ def run_hybrid_fit(
     # ------------------------------------------------------------------ Phase 0
     warm_seeds: np.ndarray | None = None
     if not skip_lhs:
+        logger.info("[fit]  hybrid_fit  phase=0/3  lhs_screen  n_samples=%d  top_p=%d", lhs_n_samples, lhs_top_p)
         if verbose:
             logger.header("[*] Hybrid fitting pipeline: LHS → evosax → LM")
             logger.info("[hybrid_fit] Phase 0: LHS screen …", flush=True)
+        t0 = time.perf_counter()
         warm_seeds = lhs_screen(
             loss_fn, xl, xu, n_samples=lhs_n_samples, top_p=lhs_top_p, seed=seed
         )
+        elapsed = time.perf_counter() - t0
+        logger.info("[fit]  hybrid_fit  phase=0/3  lhs_screen  done  t=%.2fs", elapsed)
 
     # ------------------------------------------------------------------ Phase 1
+    logger.info("[fit]  hybrid_fit  phase=1/3  evosax  algo=%s  n_gen=%d  popsize=%d", es_algo, es_n_generations, es_popsize)
     if verbose:
         logger.info("[hybrid_fit] Phase 1: evosax global search …", flush=True)
+    t0 = time.perf_counter()
     best_theta, final_pop = run_evosax(
         loss_fn,
         xl,
@@ -1032,6 +1049,8 @@ def run_hybrid_fit(
         warm_start_pop=warm_seeds,
         verbose=verbose,
     )
+    elapsed = time.perf_counter() - t0
+    logger.info("[fit]  hybrid_fit  phase=1/3  evosax  done  t=%.2fs", elapsed)
 
     # Rank final population by loss to choose LM seeds
     pop_j = jnp.asarray(final_pop, dtype=jnp.float64)
@@ -1050,8 +1069,10 @@ def run_hybrid_fit(
     lm_seeds = np.concatenate([best_theta_row, unique_top_k], axis=0)
 
     # ------------------------------------------------------------------ Phase 2
+    logger.info("[fit]  hybrid_fit  phase=2/3  lm_polish  n_seeds=%d  max_steps=%d", len(lm_seeds), lm_max_steps)
     if verbose:
         logger.info("[hybrid_fit] Phase 2: LM polish …", flush=True)
+    t0 = time.perf_counter()
     lm_result = run_lm_polish(
         residuals_fn,
         lm_seeds,
@@ -1062,11 +1083,19 @@ def run_hybrid_fit(
         lm_atol=lm_atol,
         verbose=verbose,
     )
+    elapsed = time.perf_counter() - t0
     theta_opt, total_loss, f1, f2, f3, f4 = lm_result
+    logger.info(
+        "[fit]  hybrid_fit  phase=2/3  lm_polish  done"
+        "  loss=%.4e  f1=%.4e  f2=%.4e  f3=%.4e  f4=%.4e  t=%.2fs",
+        float(total_loss), float(f1), float(f2), float(f3), float(f4), elapsed,
+    )
 
     # ------------------------------------------------------------------ QDax
+    logger.info("[fit]  hybrid_fit  qdax  n_centroids=%d  n_iter=%d", qdax_n_centroids, qdax_n_iterations)
     if verbose:
         logger.header("[*] QDax MAP-Elites exploration")
+    t0 = time.perf_counter()
     repertoire = run_qdax_mapelites(
         loss_fn,
         xl,
@@ -1088,6 +1117,8 @@ def run_hybrid_fit(
             "run_qdax_mapelites returned None. "
             "The QDax MAP-Elites loop did not return a valid repertoire."
         )
+    elapsed = time.perf_counter() - t0
+    logger.info("[fit]  hybrid_fit  qdax  done  t=%.2fs", elapsed)
 
     valid_mask = np.asarray(repertoire.fitnesses > -jnp.inf)
 

@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "created_at": "2026-05-06T00:56:35.208447+00:00",
+  "results_dir": "/home/runner/work/phoscrosstalk/phoscrosstalk/Write results folder path here.",
+  "created_files": [],
+  "skipped_files": [
+    "Write results folder path here./preopt_snapshot/preopt_snapshot.npz",
+    "Write results folder path here./preopt_snapshot/entity_labels.npz",
+    "Write results folder path here./dashboard_cache/fitted_timeseries.npz",
+    "Write results folder path here./dashboard_cache/derived_rates.npz",
+    "Write results folder path here./dashboard_cache/knockout_outputs.npz",
+    "Write results folder path here./dashboard_cache/sensitivity_outputs.npz",
+    "Write results folder path here./dashboard_cache/steadystate_outputs.npz"
+  ],
+  "errors": [],
+  "source_info": {}
+}

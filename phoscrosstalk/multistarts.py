@@ -42,6 +42,7 @@ Old pymoo-specific flags (--gen, --pop-size, --algorithm) are mapped:
 
 import multiprocessing as mp
 import pickle
+import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
@@ -504,6 +505,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
         f"\n    XLA intra-op threads = {cpu_plan.xla_threads}"
         f"\n    BLAS/OpenMP threads  = {cpu_plan.blas_threads}"
     )
+    t_multistart_begin = time.perf_counter()
 
     # ------------------------------------------------------------------
     # Decide whether to use ProcessPoolExecutor
@@ -595,7 +597,11 @@ def run_multi_start_optimization(problem, args, P_scaled):
             for i, theta0 in enumerate(starts):
                 if i in results_map:
                     continue
-                logger.info(f"--- Run {i + 1}/{len(starts)} (serial fallback) ---")
+                logger.info(
+                    "[fit]  multistart  start=%02d/%02d  initializing  (serial fallback)",
+                    i + 1, len(starts),
+                )
+                t_start = time.perf_counter()
                 try:
                     theta_opt, total_loss, f1, f2, f3, f4 = run_single_optimisation(
                         residuals_fn,
@@ -608,6 +614,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
                         ls_solver=getattr(args, "ls_solver", "lm"),
                         jac_mode=getattr(args, "jac_mode", "fwd"),
                     )
+                    elapsed = time.perf_counter() - t_start
                     results_map[i] = (
                         i,
                         True,
@@ -619,8 +626,19 @@ def run_multi_start_optimization(problem, args, P_scaled):
                         f4,
                         None,
                     )
+                    logger.info(
+                        "[fit]  multistart  start=%02d/%02d  loss=%.4e"
+                        "  f1=%.4e  f2=%.4e  f3=%.4e  f4=%.4e  t=%.2fs",
+                        i + 1, len(starts),
+                        float(total_loss), float(f1), float(f2), float(f3), float(f4),
+                        elapsed,
+                    )
                 except Exception as inner_exc:
-                    logger.warning(f"    -> Run {i + 1} failed: {inner_exc}")
+                    elapsed = time.perf_counter() - t_start
+                    logger.warning(
+                        "[fit]  multistart  start=%02d/%02d  FAILED  t=%.2fs  error=%s",
+                        i + 1, len(starts), elapsed, inner_exc,
+                    )
                     results_map[i] = (
                         i,
                         False,
@@ -634,6 +652,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
                     )
 
         # Collect results in original start order
+        _best_loss_parallel = float("inf")
         for i in sorted(results_map):
             _, success, theta_opt, total_loss, f1, f2, f3, f4, err = results_map[i]
             if success:
@@ -641,9 +660,17 @@ def run_multi_start_optimization(problem, args, P_scaled):
                 all_F.append([f1, f2, f3, f4])
                 all_total.append(total_loss)
                 logger.info(
-                    f"--- Run {i + 1}/{len(starts)} -> "
-                    f"total={total_loss:.4f}  f1={f1:.4f}  f2={f2:.4f}  f3={f3:.4f}  f4={f4:.4f}"  # noqa: E501
+                    "[fit]  multistart  start=%02d/%02d  loss=%.4e"
+                    "  f1=%.4e  f2=%.4e  f3=%.4e  f4=%.4e",
+                    i + 1, len(starts),
+                    float(total_loss), float(f1), float(f2), float(f3), float(f4),
                 )
+                if float(total_loss) < _best_loss_parallel:
+                    _best_loss_parallel = float(total_loss)
+                    logger.info(
+                        "[fit]  multistart  new best  start=%02d  loss=%.4e",
+                        i + 1, _best_loss_parallel,
+                    )
             else:
                 logger.warning(f"    -> Run {i + 1} failed: {err}")
 
@@ -652,8 +679,13 @@ def run_multi_start_optimization(problem, args, P_scaled):
         residuals_fn = _residuals_fn_from_kwargs(residual_kwargs)
         from phoscrosstalk.optimization import run_single_optimisation  # noqa: PLC0415
 
+        _best_loss_serial = float("inf")
         for i, theta0 in enumerate(starts):
-            logger.info(f"--- Run {i + 1}/{len(starts)} ---")
+            logger.info(
+                "[fit]  multistart  start=%02d/%02d  initializing",
+                i + 1, n_starts,
+            )
+            t_start = time.perf_counter()
             try:
                 theta_opt, total_loss, f1, f2, f3, f4 = run_single_optimisation(
                     residuals_fn,
@@ -666,14 +698,29 @@ def run_multi_start_optimization(problem, args, P_scaled):
                     ls_solver=getattr(args, "ls_solver", "lm"),
                     jac_mode=getattr(args, "jac_mode", "fwd"),
                 )
+                elapsed = time.perf_counter() - t_start
                 all_X.append(theta_opt)
                 all_F.append([f1, f2, f3, f4])
                 all_total.append(total_loss)
                 logger.info(
-                    f"    -> total={total_loss:.4f}  f1={f1:.4f}  f2={f2:.4f}  f3={f3:.4f}  f4={f4:.4f}"  # noqa: E501
+                    "[fit]  multistart  start=%02d/%02d  loss=%.4e"
+                    "  f1=%.4e  f2=%.4e  f3=%.4e  f4=%.4e  t=%.2fs",
+                    i + 1, n_starts,
+                    float(total_loss), float(f1), float(f2), float(f3), float(f4),
+                    elapsed,
                 )
+                if float(total_loss) < _best_loss_serial:
+                    _best_loss_serial = float(total_loss)
+                    logger.info(
+                        "[fit]  multistart  new best  start=%02d  loss=%.4e",
+                        i + 1, _best_loss_serial,
+                    )
             except Exception as exc:
-                logger.warning(f"    -> Run {i + 1} failed: {exc}")
+                elapsed = time.perf_counter() - t_start
+                logger.warning(
+                    "[fit]  multistart  start=%02d/%02d  FAILED  t=%.2fs  error=%s",
+                    i + 1, n_starts, elapsed, exc,
+                )
 
     if not all_X:
         raise RuntimeError(
@@ -684,8 +731,12 @@ def run_multi_start_optimization(problem, args, P_scaled):
     X_combined = np.array(all_X)
     F_combined = np.array(all_F)
     total_losses = np.array(all_total)
+    t_multistart_total = time.perf_counter() - t_multistart_begin
 
-    logger.info(f"[*] Combined: {len(X_combined)} solutions collected.")
+    logger.info(
+        "[fit]  multistart  complete  n_solutions=%d  total_t=%.1fs",
+        len(X_combined), t_multistart_total,
+    )
 
     # Select best solution by minimum total loss (single-objective criterion)
     best_idx = int(np.argmin(total_losses))
