@@ -60,10 +60,26 @@ _EPS: float = 1e-8
 # Penalty value for non-finite ODE results during neural training.
 _NEURAL_PENALTY: float = 1e6
 
+# Module-level loss history collector.
+# Populated by jax.debug.callback during optx.minimise.
+_neural_loss_history: list[dict] = []
 
-def _log_neural_loss_step(loss):
-    """Plain Python callback for jax.debug.callback — logs the scalar total loss."""
-    _debug_logger.info("[neural_ode]  step  loss_total=%.4e", float(loss))
+def _log_neural_loss_step(loss, f_phospho, f_abund, f_mrna, f_k_prior, f_s_prior):
+    """Plain Python callback — runs every solver step via jax.debug.callback."""
+    _neural_loss_history.append({
+        "step":                    len(_neural_loss_history),
+        "neural_loss_total":       float(loss),
+        "neural_loss_phospho":     float(f_phospho),
+        "neural_loss_abundance":   float(f_abund),
+        "neural_loss_mrna":        float(f_mrna),
+        "neural_loss_k_act_prior": float(f_k_prior),
+        "neural_loss_s_prod_prior":float(f_s_prior),
+    })
+    _debug_logger.info(
+        "[neural_ode]  step=%04d  loss=%.4e  k_prior=%.4e  s_prior=%.4e",
+        len(_neural_loss_history) - 1,
+        float(loss), float(f_k_prior), float(f_s_prior),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +434,10 @@ def _make_neural_loss_fn(
         f_k_prior = jnp.where(jnp.isfinite(f_k_prior), f_k_prior, penalty_j)
         f_s_prior = jnp.where(jnp.isfinite(f_s_prior), f_s_prior, penalty_j)
 
-        jax.debug.callback(_log_neural_loss_step, total)
+        jax.debug.callback(
+            _log_neural_loss_step,
+            total, f_phospho, f_abund, f_mrna, f_k_prior, f_s_prior,
+        )
 
         return total, (f_phospho, f_abund, f_mrna, f_k_prior, f_s_prior)
 
@@ -829,6 +848,9 @@ def run_neural_latent_rate_refinement(
         atol=1e-100,
     )
 
+    # Clear collector before each training run
+    _neural_loss_history.clear()
+
     t_total = time.perf_counter()
     train_result = optx.minimise(
         neural_loss_fn,
@@ -840,6 +862,7 @@ def run_neural_latent_rate_refinement(
         throw=False,
     )
     total_elapsed = time.perf_counter() - t_total
+
     params_opt = train_result.value
     logger.info(
         "[neural_ode]  refinement complete  result=%s  total_t=%.1fs",
@@ -1024,26 +1047,29 @@ def run_neural_latent_rate_refinement(
     # ------------------------------------------------------------------
     # 13. Training losses TSV
     # ------------------------------------------------------------------
-    df_losses = pd.DataFrame([
-        {
-            "step": 0,
-            "neural_loss_total": float(loss_init),
-            "neural_loss_phospho": float(f_p0),
-            "neural_loss_abundance": float(f_a0),
-            "neural_loss_mrna": float(f_r0),
-            "neural_loss_k_act_prior": float(f_k0),
-            "neural_loss_s_prod_prior": float(f_s0),
-        },
-        {
-            "step": int(neural_cfg.steps),
-            "neural_loss_total": float(loss_final),
-            "neural_loss_phospho": float(f_p_fin),
-            "neural_loss_abundance": float(f_a_fin),
-            "neural_loss_mrna": float(f_r_fin),
-            "neural_loss_k_act_prior": float(f_k_fin),
-            "neural_loss_s_prod_prior": float(f_s_fin),
-        },
-    ])
+    if _neural_loss_history:
+        df_losses = pd.DataFrame(_neural_loss_history)
+    else:
+        df_losses = pd.DataFrame([
+            {
+                "step": 0,
+                "neural_loss_total": float(loss_init),
+                "neural_loss_phospho": float(f_p0),
+                "neural_loss_abundance": float(f_a0),
+                "neural_loss_mrna": float(f_r0),
+                "neural_loss_k_act_prior": float(f_k0),
+                "neural_loss_s_prod_prior": float(f_s0),
+            },
+            {
+                "step": int(neural_cfg.steps),
+                "neural_loss_total": float(loss_final),
+                "neural_loss_phospho": float(f_p_fin),
+                "neural_loss_abundance": float(f_a_fin),
+                "neural_loss_mrna": float(f_r_fin),
+                "neural_loss_k_act_prior": float(f_k_fin),
+                "neural_loss_s_prod_prior": float(f_s_fin),
+            },
+        ])
     losses_path = os.path.join(neural_outdir, "neural_training_losses.tsv")
     df_losses.to_csv(losses_path, sep="\t", index=False)
     logger.info("[neural_ode] Saved %s", losses_path)
