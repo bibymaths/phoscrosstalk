@@ -1340,6 +1340,37 @@ def main():
         mechanism,
     )
 
+    # 13. Optional post-fit neural latent-rate refinement
+    _neural_cfg = getattr(cfg, "neural_ode", None)
+    if _neural_cfg is not None and getattr(_neural_cfg, "enabled", False):
+        from phoscrosstalk.neural_ode import run_neural_latent_rate_refinement  # noqa: PLC0415
+
+        run_neural_latent_rate_refinement(
+            problem=problem,
+            theta_best=theta_best,
+            k_act_fn=k_act_fn,
+            s_prod_fn=s_prod_fn,
+            t=t,
+            P_scaled=P_scaled,
+            A_scaled=A_scaled,
+            prot_idx_for_A=prot_idx_for_A,
+            W_data=W_data,
+            W_data_prot=W_data_prot,
+            proteins=proteins,
+            sites=sites,
+            kinases=kinases,
+            t_rna=t_rna if rna_matrix is not None else None,
+            rna_obs_matched=rna_obs_matched,
+            rna_model_prot_idx=rna_model_prot_idx,
+            W_data_mrna_matched=W_data_mrna_matched if len(rna_fit_genes) > 0 else None,
+            outdir=outdir,
+            neural_cfg=_neural_cfg,
+            mechanism=mechanism,
+            rna_relax=cfg.derived_rates.rna_relax,
+            abundance_max=getattr(getattr(cfg, "bounds", None), "abundance_max", 5.0),
+            R_data0=R_data0,
+        )
+
     logger.success("[*] Done.")
 
 

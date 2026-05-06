@@ -12,6 +12,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 
@@ -737,6 +738,7 @@ if manifest is None:
     tab_sens,
     tab_ss,
     tab_net,
+    tab_neural,
 ) = st.tabs(
     [
         "A \u00b7 Overview",
@@ -748,6 +750,7 @@ if manifest is None:
         "G \u00b7 Sensitivity",
         "H \u00b7 Steady-State",
         "I \u00b7 Network",
+        "J \u00b7 Neural Refined",
     ]
 )
 
@@ -2487,6 +2490,206 @@ with tab_net:
             else:
                 df_net_sub = df_net.head(800)
             _render_gravis_network(df_net_sub, source_col, target_col, height=650)
+
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# J · NEURAL REFINED (post-fit latent-rate refinement)
+# ══════════════════════════════════════════════════════════════════════════
+with tab_neural:
+    st.header("Neural Latent-Rate Refinement")
+    st.caption(
+        "Post-fit refinement outputs from `neural_ode/`. "
+        "Only visible when `[neural_ode] enabled = true` was set during the run."
+    )
+
+    _neural_dir = os.path.join(results_dir, "neural_ode")
+
+    if not os.path.isdir(_neural_dir):
+        st.info(
+            "No neural ODE outputs found. "
+            "Set `[neural_ode] enabled = true` in `config.toml` to enable the post-fit "
+            "neural latent-rate refinement stage."
+        )
+    else:
+        # ------------------------------------------------------------------
+        # Metadata
+        # ------------------------------------------------------------------
+        _meta_path = os.path.join(_neural_dir, "neural_metadata.json")
+        if os.path.exists(_meta_path):
+            with open(_meta_path) as _fh:
+                _neural_meta = json.load(_fh)
+            st.subheader("Run metadata")
+            col_m1, col_m2 = st.columns(2)
+            with col_m1:
+                st.markdown(
+                    f"- **Width:** {_neural_meta.get('width')}\n"
+                    f"- **Depth:** {_neural_meta.get('depth')}\n"
+                    f"- **Steps:** {_neural_meta.get('steps')}\n"
+                    f"- **Seed:** {_neural_meta.get('seed')}\n"
+                    f"- **Optimizer:** `{_neural_meta.get('optimizer')}`\n"
+                    f"- **theta fixed:** {_neural_meta.get('theta_fixed')}"
+                )
+            with col_m2:
+                _li = _neural_meta.get("initial_loss", float("nan"))
+                _lf = _neural_meta.get("final_loss", float("nan"))
+                st.metric("Initial loss", f"{_li:.4g}")
+                st.metric("Final loss", f"{_lf:.4g}")
+
+        # ------------------------------------------------------------------
+        # Training loss history
+        # ------------------------------------------------------------------
+        _loss_path = os.path.join(_neural_dir, "neural_training_losses.tsv")
+        if os.path.exists(_loss_path):
+            _df_losses = pd.read_csv(_loss_path, sep="\t")
+            st.subheader("Training losses")
+            st.dataframe(_df_losses, use_container_width=True)
+
+        # ------------------------------------------------------------------
+        # Learned vs mechanistic prior rates
+        # ------------------------------------------------------------------
+        _rates_path = os.path.join(_neural_dir, "neural_latent_rates.tsv")
+        if os.path.exists(_rates_path):
+            _df_rates = pd.read_csv(_rates_path, sep="\t")
+            st.subheader("Learned vs mechanistic prior rates")
+
+            _rate_type_sel = st.selectbox(
+                "Rate type",
+                ["k_act", "s_prod"],
+                key="neural_rate_type",
+            )
+            _entity_sel = st.selectbox(
+                "Entity (protein)",
+                sorted(_df_rates["entity"].unique().tolist()),
+                key="neural_entity_sel",
+            )
+
+            _df_sub = _df_rates[
+                (_df_rates["rate_type"] == _rate_type_sel)
+                & (_df_rates["entity"] == _entity_sel)
+            ].sort_values("time")
+
+            if not _df_sub.empty:
+                _fig_rates = go.Figure()
+                _fig_rates.add_trace(
+                    go.Scatter(
+                        x=_df_sub["time"],
+                        y=_df_sub["mechanistic_prior"],
+                        mode="lines+markers",
+                        name="mechanistic prior trajectory",
+                        line=dict(dash="dash", color="royalblue"),
+                    )
+                )
+                _fig_rates.add_trace(
+                    go.Scatter(
+                        x=_df_sub["time"],
+                        y=_df_sub["neural_learned"],
+                        mode="lines+markers",
+                        name="learned latent trajectory",
+                        line=dict(color="firebrick"),
+                    )
+                )
+                _fig_rates.update_layout(
+                    title=f"{_rate_type_sel} — {_entity_sel} : mechanistic vs neural-learned",
+                    xaxis_title="Time",
+                    yaxis_title=_rate_type_sel,
+                    template="plotly_white",
+                    height=400,
+                )
+                st.plotly_chart(_fig_rates, use_container_width=True)
+            else:
+                st.info("No data for selected entity/rate type.")
+
+        # ------------------------------------------------------------------
+        # Neural-refined fit timeseries
+        # ------------------------------------------------------------------
+        _nts_path = os.path.join(_neural_dir, "neural_fit_timeseries.tsv")
+        _nts_dense_path = os.path.join(_neural_dir, "neural_fit_timeseries_dense.tsv")
+
+        _has_obs_ts = os.path.exists(_nts_path)
+        _has_dense_ts = os.path.exists(_nts_dense_path)
+
+        if _has_obs_ts or _has_dense_ts:
+            st.subheader("Neural-refined fit timeseries")
+
+            _ts_choice = st.radio(
+                "Time grid",
+                ["Observed time points", "Dense grid"] if _has_dense_ts else ["Observed time points"],
+                horizontal=True,
+                key="neural_ts_grid",
+            )
+            _ts_source = _nts_dense_path if _ts_choice == "Dense grid" and _has_dense_ts else _nts_path
+
+            try:
+                _df_nts = pd.read_csv(_ts_source, sep="\t")
+
+                # Select entity type and entity
+                _et_options = sorted(_df_nts["entity_type"].unique().tolist()) if "entity_type" in _df_nts.columns else []
+                if _et_options:
+                    _et_sel = st.selectbox("Entity type", _et_options, key="neural_et_sel")
+                    _entity_col = "entity"
+                    _df_nts_et = _df_nts[_df_nts["entity_type"] == _et_sel]
+                    _entities = sorted(_df_nts_et[_entity_col].unique().tolist()) if _entity_col in _df_nts_et.columns else []
+                    if _entities:
+                        _ent_sel = st.selectbox("Entity", _entities, key="neural_ent_sel2")
+                        _df_nts_sub = _df_nts_et[_df_nts_et[_entity_col] == _ent_sel].sort_values("time")
+
+                        _val_col = "value" if "value" in _df_nts_sub.columns else (
+                            "value_neural" if "value_neural" in _df_nts_sub.columns else None
+                        )
+                        if _val_col is not None:
+                            _fig_nts = go.Figure()
+                            _fig_nts.add_trace(
+                                go.Scatter(
+                                    x=_df_nts_sub["time"],
+                                    y=_df_nts_sub[_val_col],
+                                    mode="lines",
+                                    name="neural-refined",
+                                    line=dict(color="firebrick"),
+                                )
+                            )
+                            # Overlay observed if available (observed time points TSV)
+                            if _has_obs_ts and _ts_choice == "Dense grid":
+                                try:
+                                    _df_obs_check = pd.read_csv(_nts_path, sep="\t")
+                                    _obs_sub = _df_obs_check[
+                                        (_df_obs_check.get("entity_type", pd.Series()) == _et_sel)
+                                        & (_df_obs_check.get("entity", pd.Series()) == _ent_sel)
+                                    ]
+                                    if not _obs_sub.empty and "value_observed" in _obs_sub.columns:
+                                        _obs_sub = _obs_sub.dropna(subset=["value_observed"]).sort_values("time")
+                                        if not _obs_sub.empty:
+                                            _fig_nts.add_trace(
+                                                go.Scatter(
+                                                    x=_obs_sub["time"],
+                                                    y=_obs_sub["value_observed"],
+                                                    mode="markers",
+                                                    name="observed",
+                                                    marker=dict(color="black", size=7),
+                                                )
+                                            )
+                                except Exception:
+                                    pass
+
+                            _fig_nts.update_layout(
+                                title=f"Neural-refined: {_et_sel} — {_ent_sel}",
+                                xaxis_title="Time",
+                                yaxis_title="Value",
+                                template="plotly_white",
+                                height=400,
+                            )
+                            st.plotly_chart(_fig_nts, use_container_width=True)
+            except Exception as _e:
+                st.error(f"Could not load neural timeseries: {_e}")
+
+        st.download_button(
+            "Download neural latent rates TSV",
+            data=open(os.path.join(_neural_dir, "neural_latent_rates.tsv")).read().encode()
+            if os.path.exists(os.path.join(_neural_dir, "neural_latent_rates.tsv"))
+            else b"",
+            file_name="neural_latent_rates.tsv",
+            key="download_neural_rates",
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────
