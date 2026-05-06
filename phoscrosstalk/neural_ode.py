@@ -638,8 +638,12 @@ def run_neural_latent_rate_refinement(
     else:
         all_times = np.sort(np.unique(t)).astype(np.float64)
 
+    # Map each observed protein time point to its position in the unified
+    # time grid (all_times) using binary search.  The result is the integer
+    # index array used to extract ODE states at protein observation times.
     prot_time_idx = np.searchsorted(all_times, t)
     if t_rna is not None and len(t_rna) > 0:
+        # Similarly, find mRNA time point indices in the unified grid.
         mrna_time_idx = np.searchsorted(all_times, t_rna)
     else:
         mrna_time_idx = None

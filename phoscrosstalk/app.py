@@ -2682,11 +2682,15 @@ with tab_neural:
             except Exception as _e:
                 st.error(f"Could not load neural timeseries: {_e}")
 
+        _rates_dl_path = os.path.join(_neural_dir, "neural_latent_rates.tsv")
+        if os.path.exists(_rates_dl_path):
+            with open(_rates_dl_path, "rb") as _f:
+                _rates_bytes = _f.read()
+        else:
+            _rates_bytes = b""
         st.download_button(
             "Download neural latent rates TSV",
-            data=open(os.path.join(_neural_dir, "neural_latent_rates.tsv")).read().encode()
-            if os.path.exists(os.path.join(_neural_dir, "neural_latent_rates.tsv"))
-            else b"",
+            data=_rates_bytes,
             file_name="neural_latent_rates.tsv",
             key="download_neural_rates",
         )
