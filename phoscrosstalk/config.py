@@ -11,6 +11,9 @@ Provides:
   * DEFAULT_TIMEPOINTS – legacy default time-point array.
   * EPS                – small constant for numerical stability.
 """
+# ModelDims refactor status: Case A — class-level mutable attributes set once
+# at startup via set_dims().  from_data() and input validation have been added.
+# Full migration to per-run frozen dataclass (Tasks 2–4) is deferred.
 
 import logging
 import os
@@ -44,6 +47,9 @@ class ModelDims:
     ``set_dims`` so that concurrent test runs (pytest-xdist) do not corrupt
     the global state.  Worker processes that call ``set_dims`` at startup are
     safe because spawn mode means each worker has its own address space.
+
+    Future direction: migrate to a per-run frozen dataclass passed explicitly
+    through the call chain (see refactor status comment at top of module).
     """
 
     K: int = None  # Number of Proteins
@@ -58,17 +64,47 @@ class ModelDims:
         Set the global dimensions for the current model context.
 
         Args:
-            k (int): Number of unique proteins (K).
-            m (int): Number of kinases (M).
-            n (int): Number of phosphorylation sites (N).
+            k (int): Number of unique proteins (K). Must be a positive integer.
+            m (int): Number of kinases (M). Must be a positive integer.
+            n (int): Number of phosphorylation sites (N). Must be a positive integer.
+
+        Raises:
+            ValueError: If any dimension is not a positive integer.
 
         Returns:
             None
         """
+        for name, val in [("K", k), ("M", m), ("N", n)]:
+            if not isinstance(val, (int, np.integer)) or int(val) <= 0:
+                raise ValueError(
+                    f"ModelDims.{name} must be a positive int; got {val!r}"
+                )
         with cls._lock:
-            cls.K = k
-            cls.M = m
-            cls.N = n
+            cls.K = int(k)
+            cls.M = int(m)
+            cls.N = int(n)
+
+    @classmethod
+    def from_data(cls, P_data, A_data, kin_to_prot_idx) -> "ModelDims":
+        """Infer K, M, N directly from loaded data arrays and set the global dims.
+
+        Args:
+            P_data:           (N, T) phosphosite data array.
+            A_data:           (K_obs, T) protein abundance array, or None.
+            kin_to_prot_idx:  (M,) kinase-to-protein index array.
+
+        Returns:
+            The ModelDims class (for call-chain convenience; state is set
+            as class-level attributes for backward compatibility).
+        """
+        N = int(np.asarray(P_data).shape[0])
+        if A_data is not None and np.asarray(A_data).size > 0:
+            K = int(np.asarray(A_data).shape[0])
+        else:
+            K = N
+        M = int(len(kin_to_prot_idx))
+        cls.set_dims(K, M, N)
+        return cls
 
 
 # ---------------------------------------------------------------------------
