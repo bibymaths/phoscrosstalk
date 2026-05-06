@@ -1031,6 +1031,7 @@ def main():
         kinases=kinases,
         simulation_cfg=getattr(cfg, "simulation", None),
         data_interpolation_cfg=getattr(cfg, "data_interpolation", None),
+        t_rna=t_rna,
     )
 
     # mRNA outputs (only when RNA data was provided and RNA matched model proteins)
