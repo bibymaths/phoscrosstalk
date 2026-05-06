@@ -102,7 +102,6 @@ _cpu_plan = plan_cpu_runtime(
     reserve_cores=_runtime_cfg["reserve_cores"],
 )
 _n_cpu_threads = setup_cpu_env(n_threads=_cpu_plan.threads_per_run)
-enable_x64()  # Must be before any JAX import
 
 # ---------------------------------------------------------------------------
 # Configure JAX CPU device count (must happen before any JAX import).
@@ -119,6 +118,9 @@ if _runtime_cfg.get("solver") == "hybrid":
     _n_jax_devices = configure_jax_cpu_devices(_cpu_plan.total_available_cpus)
 else:
     _n_jax_devices = 1  # single-device default; workers configure themselves
+
+
+enable_x64()  # Must be before any JAX import
 
 # ---------------------------------------------------------------------------
 # Standard library and third-party imports (JAX enters here via phoscrosstalk

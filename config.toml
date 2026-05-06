@@ -257,7 +257,7 @@ include_tfs_as_proteins = false
 n_starts      = 5
 max_steps     = 500
 
-solver        = "lm"         # options: "lm" | "hybrid"
+solver        = "hybrid"         # options: "lm" | "hybrid"
 ls_solver     = "lm"         # options: "lm" | "gauss_newton" | "dogleg" | "indirect_lm"
 
 optx_adjoint  = "implicit"   # options: "implicit" | "checkpoint" | "recursive"
@@ -553,7 +553,11 @@ reg       = 1.0
 # Do not use hybrid for quick debugging. It is much more expensive.
 # =============================================================================
 [hybrid]
-
+de_workers   = -1          # -1 = use ALL JAX CPU devices
+de_updating  = "deferred"  # mandatory when workers != 1
+de_strategy  = "best1bin"
+de_popsize   = 15
+de_maxiter   = 200
 # ---------------------------------------------------------------------------
 # Phase 0: LHS screen
 # ---------------------------------------------------------------------------
@@ -569,9 +573,9 @@ reg       = 1.0
 #   false – use LHS warm-start screen.
 #   true  – bypass LHS and let Mutax start randomly.
 # ---------------------------------------------------------------------------
-lhs_n_samples = 128
+lhs_n_samples = 64
 lhs_top_p     = 8
-skip_lhs      = false
+skip_lhs      = true
 
 
 # ---------------------------------------------------------------------------
@@ -623,14 +627,9 @@ skip_lhs      = false
 #   "immediate"  (only valid with de_workers = 1)
 #       Each trial is accepted/rejected before the next is generated.
 # ---------------------------------------------------------------------------
-de_strategy     = "best1bin"
-de_popsize      = 15
-de_maxiter      = 200
 de_tol          = 0.01
 de_atol         = 0.0
 de_recombination = 0.8
-de_workers      = -1
-de_updating     = "deferred"
 
 # Backward-compatible evosax aliases (still accepted and mapped to Mutax).
 # These are ignored when the above de_* keys are set explicitly.
@@ -1097,7 +1096,7 @@ use_optax               = true
 optimizer               = "adabelief"
 optax_loop              = "scan"
 print_every             = 10
-enabled                 = true
+enabled                 = false
 width                   = 32
 depth                   = 2
 steps                   = 2000
