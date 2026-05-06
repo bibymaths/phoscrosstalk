@@ -32,6 +32,7 @@ dependencies = [
   "evosax==0.2.0",
   "weasyprint>=68.1",
   "mutax>=0.4.5",
+  "optax>=0.2.8",
 ]
 
 [project.optional-dependencies]

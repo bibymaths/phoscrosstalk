@@ -41,6 +41,7 @@ Old pymoo-specific flags (--gen, --pop-size, --algorithm) are mapped:
 """
 
 import multiprocessing as mp
+import pathlib
 import pickle
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -681,7 +682,9 @@ def run_multi_start_optimization(problem, args, P_scaled):
 
         # Determine jaxpr output directory from args (set by main.py when
         # cfg.debug.save_jaxpr_reports is True; None otherwise).
-        _jaxpr_out_dir = getattr(args, "_jaxpr_out_dir", None)
+        _jaxpr_out_dir = None
+        if getattr(args.debug, "save_jaxpr_reports", False):
+            _jaxpr_out_dir = str(pathlib.Path(args.outdir) / "jaxpr_reports")
 
         _best_loss_serial = float("inf")
         for i, theta0 in enumerate(starts):
@@ -701,7 +704,6 @@ def run_multi_start_optimization(problem, args, P_scaled):
                     optx_adjoint=getattr(args, "optx_adjoint", "implicit"),
                     ls_solver=getattr(args, "ls_solver", "lm"),
                     jac_mode=getattr(args, "jac_mode", "fwd"),
-                    # Only trace jaxpr on the first start to avoid redundant reports.
                     jaxpr_out_dir=_jaxpr_out_dir if i == 0 else None,
                 )
                 elapsed = time.perf_counter() - t_start
