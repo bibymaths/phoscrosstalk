@@ -1830,8 +1830,7 @@ def save_derived_rates(
         s_prod = np.vstack([np.asarray(s_prod_fn(float(ti))) for ti in t_s]).T
         save_dict["s_prod"] = s_prod
         logger.info(
-            f"[*] s_prod(t): protein-level aggregated phosphorylation drive, "
-            f"shape {s_prod.shape}"
+            f"[*] s_prod(t): protein-level aggregated phosphorylation drive, shape {s_prod.shape}"
         )
 
         for i, protein in enumerate(proteins):

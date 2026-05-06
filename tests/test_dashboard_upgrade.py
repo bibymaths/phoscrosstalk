@@ -248,12 +248,13 @@ class TestSaveDerivedRates:
     def _skip_if_heavy_deps_missing(self):
         pytest.importorskip("seaborn", reason="seaborn required for analysis module")
         pytest.importorskip("diffrax", reason="diffrax required for derived_rates")
+
     def _make_fn(self, K, val):
         """Return a constant function returning a (K,) JAX array."""
-        import jax.numpy as jnp
+        import jax.numpy as jnp_local  # deferred to avoid import at test-collection time
 
         def fn(t):
-            return jnp.ones(K, dtype=jnp.float64) * val
+            return jnp_local.ones(K, dtype=jnp_local.float64) * val
 
         return fn
 
