@@ -30,6 +30,8 @@ dependencies = [
   "rich>=14.3.2",
   "pyfiglet>=1.0.4",
   "evosax==0.2.0",
+  "weasyprint>=68.1",
+  "mutax>=0.4.5",
 ]
 
 [project.optional-dependencies]
@@ -45,11 +47,6 @@ docs = [
   "mkdocs-material",
   "mkdocstrings[python]",
   "pymdown-extensions",
-]
-hybrid = [
-  "scipy>=1.11",
-  "evosax>=0.1.6",
-  "qdax>=0.5.0",
 ]
 
 [project.scripts]

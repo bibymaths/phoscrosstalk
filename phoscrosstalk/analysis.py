@@ -1066,7 +1066,10 @@ def plot_goodness_of_fit(file, outdir):
     data_cols = [c for c in df.columns if c.startswith("data_t")]
 
     if len(sim_cols) == 0 or len(data_cols) == 0:
-        raise ValueError(f"No sim_t*/data_t* columns found in {file}")
+        logger.warning(
+            f"[!] Skipping goodness-of-fit plot: no sim_t*/data_t* columns found in {file}"
+        )
+        return
 
     # Construct labels
     labels = []
@@ -1088,7 +1091,11 @@ def plot_goodness_of_fit(file, outdir):
     mask_all = np.isfinite(data_all) & np.isfinite(sim_all)
 
     if mask_all.sum() < 3:
-        raise ValueError("Not enough finite points to compute fit metrics.")
+        logger.warning(
+            "[!] Skipping goodness-of-fit plot: fewer than 3 finite observed/simulated "
+            "points are available."
+        )
+        return
 
     x = data_all[mask_all]
     y = sim_all[mask_all]
@@ -1579,11 +1586,12 @@ def save_mrna_outputs(outdir, gene_ids, t_rna, rna_data_obs, rna_simulated):
         to *outdir*.
     """
     if rna_simulated is None:
-        raise ValueError(
-            "save_mrna_outputs: rna_simulated must not be None.  "
-            "Pass the simulated R(t) values from your model (e.g. from simulate "
-            "with return_full=True)."
+        logger.warning(
+            "[!] save_mrna_outputs skipped: rna_simulated is None. "
+            "Pass real simulated R(t) values from the model; fake zero-residual "
+            "mRNA outputs will not be written."
         )
+        return
 
     os.makedirs(outdir, exist_ok=True)
 
@@ -1591,10 +1599,12 @@ def save_mrna_outputs(outdir, gene_ids, t_rna, rna_data_obs, rna_simulated):
     rna_simulated = np.asarray(rna_simulated, dtype=float)
 
     if rna_data_obs.shape != rna_simulated.shape:
-        raise ValueError(
-            f"save_mrna_outputs: shape mismatch: observed {rna_data_obs.shape} "
-            f"vs simulated {rna_simulated.shape}.  Ensure both use matched gene rows."
+        logger.warning(
+            "[!] save_mrna_outputs skipped: shape mismatch: "
+            f"observed {rna_data_obs.shape} vs simulated {rna_simulated.shape}. "
+            "Ensure both use matched gene rows."
         )
+        return
 
     # Clip simulated RNA to non-negative before saving (fold-change is always ≥ 0)
     rna_simulated = np.clip(rna_simulated, 0.0, None)

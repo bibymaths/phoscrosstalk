@@ -321,39 +321,42 @@ def main():
         ),
     )
     parser.add_argument(
-        "--es-algo",
-        choices=["sep_cma_es", "cma_es", "de"],
-        default="sep_cma_es",
-        dest="es_algo",
-        help="Evolutionary strategy algorithm for the hybrid solver.",
+        "--de-strategy",
+        choices=["best1bin", "rand1bin"],
+        default="best1bin",
+        dest="de_strategy",
+        help="Mutax Differential Evolution strategy.",
     )
     parser.add_argument(
-        "--es-popsize",
+        "--de-popsize",
         type=int,
-        default=64,
-        dest="es_popsize",
-        help="Population size for the evolutionary strategy.",
+        default=15,
+        dest="de_popsize",
+        help="Mutax Differential Evolution population multiplier.",
     )
+
     parser.add_argument(
-        "--es-generations",
+        "--de-maxiter",
         type=int,
         default=200,
-        dest="es_generations",
-        help="Number of evolutionary strategy generations.",
+        dest="de_maxiter",
+        help="Mutax Differential Evolution maximum generations.",
     )
+
     parser.add_argument(
-        "--es-top-k",
+        "--de-workers",
+        type=int,
+        default=1,
+        dest="de_workers",
+        help="Number of JAX devices used by Mutax. Use -1 for all available devices.",
+    )
+
+    parser.add_argument(
+        "--polish-top-k",
         type=int,
         default=5,
-        dest="es_top_k",
-        help="Number of top evosax candidates to pass to LM polish.",
-    )
-    parser.add_argument(
-        "--lhs-samples",
-        type=int,
-        default=512,
-        dest="lhs_samples",
-        help="Number of Latin Hypercube Sampling samples (Phase 0).",
+        dest="polish_top_k",
+        help="Number of best global-search candidates to polish with Optimistix.",
     )
     parser.add_argument(
         "--skip-lhs",
@@ -361,27 +364,6 @@ def main():
         default=False,
         dest="skip_lhs",
         help="Skip Phase 0 LHS screen.",
-    )
-    parser.add_argument(
-        "--qdax-centroids",
-        type=int,
-        default=1024,
-        dest="qdax_centroids",
-        help="Number of CVT centroids for QDax MAP-Elites.",
-    )
-    parser.add_argument(
-        "--qdax-iterations",
-        type=int,
-        default=2000,
-        dest="qdax_iterations",
-        help="Number of QDax MAP-Elites iterations.",
-    )
-    parser.add_argument(
-        "--qdax-batch",
-        type=int,
-        default=256,
-        dest="qdax_batch",
-        help="Batch size for QDax MAP-Elites.",
     )
     parser.add_argument(
         "--hybrid-seed",
@@ -469,27 +451,45 @@ def main():
         ode_root_find_max_steps=getattr(cfg.solver, "root_find_max_steps", 10),
         # solver backend + hybrid settings
         solver=getattr(cfg.optimisation, "solver", "lm"),
-        es_algo=getattr(
-            getattr(cfg, "hybrid", SimpleNamespace()), "es_algo", "sep_cma_es"
+        de_strategy=getattr(
+            getattr(cfg, "hybrid", SimpleNamespace()), "de_strategy", "best1bin"
         ),
-        es_popsize=getattr(getattr(cfg, "hybrid", SimpleNamespace()), "es_popsize", 64),
-        es_generations=getattr(
-            getattr(cfg, "hybrid", SimpleNamespace()), "es_n_generations", 200
+        de_popsize=getattr(
+            getattr(cfg, "hybrid", SimpleNamespace()), "de_popsize", 15
         ),
-        es_top_k=getattr(getattr(cfg, "hybrid", SimpleNamespace()), "es_top_k", 5),
+        de_maxiter=getattr(
+            getattr(cfg, "hybrid", SimpleNamespace()), "de_maxiter", 200
+        ),
+        de_tol=getattr(
+            getattr(cfg, "hybrid", SimpleNamespace()), "de_tol", 0.01
+        ),
+        de_atol=getattr(
+            getattr(cfg, "hybrid", SimpleNamespace()), "de_atol", 0.0
+        ),
+        de_recombination=getattr(
+            getattr(cfg, "hybrid", SimpleNamespace()), "de_recombination", 0.8
+        ),
+        de_workers=getattr(
+            getattr(cfg, "hybrid", SimpleNamespace()), "de_workers", 1
+        ),
+        de_updating=getattr(
+            getattr(cfg, "hybrid", SimpleNamespace()), "de_updating", "immediate"
+        ),
+        polish_top_k=getattr(
+            getattr(cfg, "hybrid", SimpleNamespace()), "polish_top_k", 5
+        ),
         lhs_samples=getattr(
             getattr(cfg, "hybrid", SimpleNamespace()), "lhs_n_samples", 512
         ),
-        lhs_top_p=getattr(getattr(cfg, "hybrid", SimpleNamespace()), "lhs_top_p", 16),
-        skip_lhs=getattr(getattr(cfg, "hybrid", SimpleNamespace()), "skip_lhs", False),
-        qdax_centroids=getattr(
-            getattr(cfg, "qdax", SimpleNamespace()), "n_centroids", 1024
+        lhs_top_p=getattr(
+            getattr(cfg, "hybrid", SimpleNamespace()), "lhs_top_p", 16
         ),
-        qdax_iterations=getattr(
-            getattr(cfg, "qdax", SimpleNamespace()), "n_iterations", 2000
+        skip_lhs=getattr(
+            getattr(cfg, "hybrid", SimpleNamespace()), "skip_lhs", False
         ),
-        qdax_batch=getattr(getattr(cfg, "qdax", SimpleNamespace()), "batch_size", 256),
-        hybrid_seed=getattr(getattr(cfg, "hybrid", SimpleNamespace()), "seed", 0),
+        hybrid_seed=getattr(
+            getattr(cfg, "hybrid", SimpleNamespace()), "seed", 0
+        ),
         hybrid_verbose=getattr(
             getattr(cfg, "hybrid", SimpleNamespace()), "verbose", False
         ),
@@ -1156,39 +1156,34 @@ def main():
             lhs_n_samples=getattr(args, "lhs_samples", 512),
             lhs_top_p=getattr(args, "lhs_top_p", 16),
             skip_lhs=getattr(args, "skip_lhs", False),
-            es_algo=getattr(args, "es_algo", "sep_cma_es"),
-            es_popsize=getattr(args, "es_popsize", 64),
-            es_n_generations=getattr(args, "es_generations", 200),
-            es_top_k=getattr(args, "es_top_k", 5),
+            de_strategy=getattr(args, "de_strategy", "best1bin"),
+            de_popsize=getattr(args, "de_popsize", getattr(args, "es_popsize", 15)),
+            de_maxiter=getattr(args, "de_maxiter", getattr(args, "es_generations", 200)),
+            de_tol=getattr(args, "de_tol", 0.01),
+            de_atol=getattr(args, "de_atol", 0.0),
+            de_mutation=getattr(args, "de_mutation", (0.5, 1.0)),
+            de_recombination=getattr(args, "de_recombination", 0.8),
+            de_workers=getattr(args, "de_workers", 1),
+            de_updating=getattr(args, "de_updating", "immediate"),
+            polish_top_k=getattr(args, "polish_top_k", getattr(args, "es_top_k", 5)),
             lm_max_steps=args.max_steps,
             lm_rtol=args.opt_rtol,
             lm_atol=args.opt_atol,
-            qdax_n_centroids=getattr(args, "qdax_centroids", 1024),
-            qdax_batch_size=getattr(args, "qdax_batch", 256),
-            qdax_n_iterations=getattr(args, "qdax_iterations", 2000),
+            optx_adjoint=getattr(args, "optx_adjoint", "implicit"),
+            ls_solver=getattr(args, "ls_solver", "lm"),
+            jac_mode=getattr(args, "jac_mode", "fwd"),
             seed=getattr(args, "hybrid_seed", 0),
             verbose=getattr(args, "hybrid_verbose", False),
         )
 
         theta_best = hybrid_result.theta_opt
 
-        # Save QDax repertoire
-        qdax_out = os.path.join(outdir, "hybrid_qdax_repertoire.npz")
-        np.savez(
-            qdax_out,
-            qdax_genotypes=hybrid_result.qdax_genotypes,
-            qdax_descriptors=hybrid_result.qdax_descriptors,
-            qdax_fitnesses=hybrid_result.qdax_fitnesses,
-        )
-        logger.success(f"[*] QDax repertoire saved to {qdax_out}")
-
-        # Build F/X arrays compatible with downstream analysis code
-        F = np.array(
-            [[hybrid_result.f1, hybrid_result.f2, hybrid_result.f3, hybrid_result.f4]]
-        )
-        X = theta_best[None, :]  # (1, n_var)
-        total_losses = np.array([hybrid_result.total_loss])
-        best_idx = 0
+        # Build F/X arrays compatible with downstream analysis code.
+        # Use all successful polished candidates, not only the final best one.
+        F = hybrid_result.polish_F
+        X = hybrid_result.polish_X
+        total_losses = hybrid_result.polish_J
+        best_idx = int(np.argmin(total_losses))
 
     else:
         # Default: multi-start LM via run_multi_start_optimization

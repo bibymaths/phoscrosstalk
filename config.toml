@@ -254,7 +254,7 @@ include_tfs_as_proteins = false
 #   These are not ODE tolerances.
 # =============================================================================
 [optimisation]
-n_starts      = 10
+n_starts      = 5
 max_steps     = 500
 
 solver        = "hybrid"         # options: "lm" | "hybrid"
@@ -373,7 +373,7 @@ atol          = 1e-6
 #   Diffrax ode_adjoint = "forward"
 # ---------------------------------------------------------------------------
 [solver]
-ode_solver          = "tsit5"    # best default for likely stiff biochemical ODEs
+ode_solver          = "kvaerno4"    # best default for likely stiff biochemical ODEs
 ode_adjoint         = "forward"     # required because [optimisation] jac_mode = "fwd"
 
 rtol                = 1e-4
@@ -639,40 +639,6 @@ verbose = false
 
 
 # =============================================================================
-# [qdax] – MAP-Elites behavioural repertoire
-# =============================================================================
-#
-# Used after hybrid fitting.
-#
-# Behaviour descriptor axes:
-#   1. log10 median kinase half-life
-#   2. log10 median protein half-life
-#
-# Output:
-#   {output_dir}/hybrid_qdax_repertoire.npz
-#
-# n_centroids:
-#   Number of CVT centroids.
-#   Higher = finer behavioural map, more compute.
-#
-# batch_size:
-#   Number of variants evaluated per MAP-Elites iteration.
-#
-# n_iterations:
-#   Total MAP-Elites iterations.
-#
-# iso_sigma / line_sigma:
-#   Mutation parameters for isoline variation.
-# =============================================================================
-[qdax]
-n_centroids  = 1024
-batch_size   = 256
-n_iterations = 2000
-iso_sigma    = 0.005
-line_sigma   = 0.05
-
-
-# =============================================================================
 # [bounds] – parameter bounds used by create_bounds()
 # =============================================================================
 #
@@ -791,9 +757,9 @@ rna_relax = 0.02
 # =============================================================================
 [analysis]
 tune            = false
-run_steadystate = true
-run_knockouts   = true
-run_sensitivity = true
+run_steadystate = false
+run_knockouts   = false
+run_sensitivity = false
 
 
 # =============================================================================
