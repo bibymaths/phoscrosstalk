@@ -38,6 +38,7 @@ _REQUIRED = {
 _OPTIONAL_FILES = [
     "fit_timeseries.tsv",
     "fit_timeseries_dense.tsv",
+    "mrna_fit_timeseries_dense.tsv",
     "internal_states.tsv",
     "derived_rates.npz",
     "derived_rates_long.tsv",
@@ -327,6 +328,23 @@ def load_dense_timeseries(results_dir: str) -> pd.DataFrame | None:
         return None
     try:
         return pd.read_csv(path, sep="\t")
+    except Exception:
+        return None
+
+
+def load_mrna_dense_timeseries(results_dir: str) -> pd.DataFrame | None:
+    """
+    Load mrna_fit_timeseries_dense.tsv – long-format dense mRNA simulation output.
+
+    Columns: gene, time, value, series_type, source, interpolation_method
+    Returns None if missing (dense mRNA output is optional).
+    """
+    path = os.path.join(results_dir, "mrna_fit_timeseries_dense.tsv")
+    if not os.path.exists(path):
+        return None
+    try:
+        df = pd.read_csv(path, sep="\t")
+        return df if not df.empty else None
     except Exception:
         return None
 
