@@ -2083,20 +2083,6 @@ wheels = [
 ]
 
 [[package]]
-name = "mutax"
-version = "0.4.5"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "equinox" },
-    { name = "jax" },
-    { name = "parajax" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/5f/77/727ac3c8f47d3738fa69111cff8c6d38b75463582203438f134fc6d9b698/mutax-0.4.5.tar.gz", hash = "sha256:abc8400a056687af807d86d8238b3ae59e2ecf082efb0b3a0e9a0a81e19fd7f4", size = 6083 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/bc/6e/4f7533d6bb3e8ed6a95e963b0295d47e0c9421f68b743c8449d9dffabdc7/mutax-0.4.5-py3-none-any.whl", hash = "sha256:7149651dd1bfef24218521c93e2e221e73c45dda2bd89dbf0ce42f203baad643", size = 6601 },
-]
-
-[[package]]
 name = "mypy-extensions"
 version = "1.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2341,18 +2327,6 @@ wheels = [
 ]
 
 [[package]]
-name = "parajax"
-version = "0.3.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "jax" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/5b/85/65b1676f92042157f739af5d918f608cb7b75d9db2db296573531b78bf4a/parajax-0.3.1.tar.gz", hash = "sha256:894e83188b2f390b13abdacd1745588ca38807b978f68c94237c9a5baceaa342", size = 4230 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c9/28/c79636d7d1706371f590b410112d87547ab16563e607204bdaebf1af19bc/parajax-0.3.1-py3-none-any.whl", hash = "sha256:0f6a35b12be30a956d0203fe25cd49e54f4d01ee5b07ab1005061c10b84d6d6f", size = 4864 },
-]
-
-[[package]]
 name = "parso"
 version = "0.8.7"
 source = { registry = "https://pypi.org/simple" }
@@ -2397,7 +2371,6 @@ dependencies = [
     { name = "jaxlib" },
     { name = "lxml" },
     { name = "matplotlib" },
-    { name = "mutax" },
     { name = "networkx" },
     { name = "numpy" },
     { name = "optax" },
@@ -2409,6 +2382,7 @@ dependencies = [
     { name = "rich" },
     { name = "salib" },
     { name = "seaborn" },
+    { name = "setuptools" },
     { name = "streamlit" },
     { name = "weasyprint" },
 ]
@@ -2445,7 +2419,6 @@ requires-dist = [
     { name = "mkdocs", marker = "extra == 'docs'" },
     { name = "mkdocs-material", marker = "extra == 'docs'" },
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'" },
-    { name = "mutax", specifier = ">=0.4.5" },
     { name = "networkx", specifier = ">=3.4.2" },
     { name = "numpy", specifier = "==2.2.2" },
     { name = "optax", specifier = ">=0.2.8" },
@@ -2461,6 +2434,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "salib", specifier = ">=1.5.2" },
     { name = "seaborn", specifier = ">=0.13.2" },
+    { name = "setuptools", specifier = "<81" },
     { name = "streamlit", specifier = ">=1.54.0" },
     { name = "weasyprint", specifier = ">=68.1" },
 ]
@@ -3488,11 +3462,11 @@ wheels = [
 
 [[package]]
 name = "setuptools"
-version = "82.0.1"
+version = "80.10.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/4f/db/cfac1baf10650ab4d1c111714410d2fbb77ac5a616db26775db562c8fab2/setuptools-82.0.1.tar.gz", hash = "sha256:7d872682c5d01cfde07da7bccc7b65469d3dca203318515ada1de5eda35efbf9", size = 1152316 }
+sdist = { url = "https://files.pythonhosted.org/packages/76/95/faf61eb8363f26aa7e1d762267a8d602a1b26d4f3a1e758e92cb3cb8b054/setuptools-80.10.2.tar.gz", hash = "sha256:8b0e9d10c784bf7d262c4e5ec5d4ec94127ce206e8738f29a437945fbc219b70", size = 1200343 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9d/76/f789f7a86709c6b087c5a2f52f911838cad707cc613162401badc665acfe/setuptools-82.0.1-py3-none-any.whl", hash = "sha256:a59e362652f08dcd477c78bb6e7bd9d80a7995bc73ce773050228a348ce2e5bb", size = 1006223 },
+    { url = "https://files.pythonhosted.org/packages/94/b8/f1f62a5e3c0ad2ff1d189590bfa4c46b4f3b6e49cef6f26c6ee4e575394d/setuptools-80.10.2-py3-none-any.whl", hash = "sha256:95b30ddfb717250edb492926c92b5221f7ef3fbcc2b07579bcd4a27da21d0173", size = 1064234 },
 ]
 
 [[package]]
