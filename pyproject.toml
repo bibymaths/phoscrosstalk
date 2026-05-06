@@ -33,6 +33,7 @@ dependencies = [
   "weasyprint>=68.1",
   "mutax>=0.4.5",
   "optax>=0.2.8",
+  "ipykernel>=7.2.0",
 ]
 
 [project.optional-dependencies]

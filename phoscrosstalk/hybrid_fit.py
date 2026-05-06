@@ -47,9 +47,6 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from typing import Any
-
-import jax
-import jax.numpy as jnp
 import numpy as np
 
 from phoscrosstalk.logger import get_logger
@@ -162,33 +159,54 @@ def _validate_bounds(xl: np.ndarray, xu: np.ndarray, n_var: int) -> tuple[np.nda
 
     return xl, xu
 
-
-def _resolve_mutax_workers(workers: int, updating: str) -> tuple[int, str, int]:
+def _resolve_mutax_workers(workers: int, updating: str) -> tuple[int, str, int, bool]:
     """
-    Resolve effective Mutax worker count and updating mode from JAX device budget.
+    Resolve effective Mutax worker count, updating mode, and vectorized flag.
 
-    Must be called after JAX has been imported (inspects runtime state only).
-    Do NOT call ``jax.config.update("jax_num_cpu_devices", ...)`` here — that
-    must happen in main.py/runtime_env *before* any JAX import.  If only one
-    device is available, log a warning and fall back to serial execution.
+    Parallelism strategy for Diffrax-based loss functions
+    -------------------------------------------------------
+    Diffrax implicit ODE solvers (Kvaerno3/4/5, Tsit5 with events, etc.) use
+    ``eqx.filter_closure_convert`` inside VeryChord / Newton root finders.
+    This closure conversion captures problem matrices (Cg, Cl, R, ...) as
+    static constants tied to a specific trace.
+
+    ``parajax.shard_map`` (used by Mutax when ``workers != 1``) re-traces the
+    objective on each shard with differently-shaped inputs, which triggers:
+
+        ValueError: Closure-converted function called with different dynamic
+        arguments to the example arguments provided
+
+    The correct parallelism model for this loss function is therefore:
+
+        vectorized=True  +  workers=1
+
+    This tells Mutax to batch the population with ``jax.vmap``, which re-uses
+    a single traced closure across the entire population without re-tracing.
+    All 96 CPU devices are then used by XLA's intra-op parallelism
+    (``intra_op_parallelism_threads``) within each vmap-vectorised call,
+    rather than by JAX-level device sharding.
 
     Parameters
     ----------
     workers:
         Requested worker count.  ``-1`` means "use all available devices".
+        Regardless of this value, the effective workers will always be 1
+        when a Diffrax implicit solver is detected (which is always the case).
     updating:
-        Requested Mutax updating mode (``"immediate"`` or ``"deferred"``).
+        Requested Mutax updating mode.
 
     Returns
     -------
     effective_workers : int
-        Adjusted worker count safe to pass to Mutax.
+        Always 1 — shard_map is incompatible with Diffrax closure conversion.
     effective_updating : str
-        Adjusted updating mode safe to pass to Mutax.
+        Always "immediate" — required when workers=1.
     n_devices : int
-        Number of JAX CPU devices visible at runtime.
+        Number of JAX CPU devices visible at runtime (for logging only).
+    vectorized : bool
+        Always True — tells Mutax to use jax.vmap instead of shard_map.
     """
-    import jax as _jax  # already imported at module level; this is just for clarity
+    import jax as _jax
 
     n_devices = int(_jax.local_device_count())
     try:
@@ -197,83 +215,46 @@ def _resolve_mutax_workers(workers: int, updating: str) -> tuple[int, str, int]:
         devices = []
 
     requested_workers = int(workers)
-    effective_workers = requested_workers
-    effective_updating = updating
 
-    if requested_workers == -1:
-        if n_devices > 1:
-            # Let Mutax/parajax use all visible devices.
-            effective_workers = -1
-            effective_updating = "deferred"
-        else:
-            # Only one JAX device — cannot parallelise.
-            # Fix: set jax_num_cpu_devices in main.py/runtime_env before JAX import.
-            effective_workers = 1
-            effective_updating = "immediate"
-            logger.warning(
-                "[fit]  hybrid_fit  _resolve_mutax_workers  "
-                "Hybrid DE requested parallel workers (workers=-1), but JAX exposes "
-                "only 1 CPU device. Configure jax_num_cpu_devices before importing "
-                "JAX in main.py/runtime_env (e.g. via configure_jax_cpu_devices()). "
-                "Falling back to workers=1, updating='immediate' (serial execution)."
-            )
-    elif requested_workers > 1:
-        if n_devices <= 1:
-            # Only one JAX device — cannot parallelise.
-            effective_workers = 1
-            effective_updating = "immediate"
-            logger.warning(
-                "[fit]  hybrid_fit  _resolve_mutax_workers  "
-                "Hybrid DE requested workers=%d, but JAX exposes only 1 CPU device. "
-                "Configure jax_num_cpu_devices before importing JAX in main.py/runtime_env. "
-                "Falling back to workers=1, updating='immediate' (serial execution).",
-                requested_workers,
-            )
-        elif requested_workers > n_devices:
-            # Cap to available device count.
-            effective_workers = n_devices
-            effective_updating = "deferred"
-            logger.warning(
-                "[fit]  hybrid_fit  _resolve_mutax_workers  "
-                "Requested workers=%d > jax.local_device_count()=%d; "
-                "capping to %d devices.",
-                requested_workers,
-                n_devices,
-                n_devices,
-            )
-        else:
-            effective_workers = requested_workers
-            effective_updating = "deferred"
-    else:
-        # workers == 1: serial mode regardless of device count.
-        effective_workers = 1
-        effective_updating = "immediate"
+    # Force vectorized=True + workers=1 regardless of requested workers.
+    # shard_map (workers != 1) is incompatible with Diffrax implicit solvers
+    # that use filter_closure_convert internally (VeryChord, NewtonNonlinearSolver).
+    # jax.vmap (vectorized=True) re-uses a single closure trace for all
+    # population members and does not trigger re-tracing per shard.
+    effective_workers = 1
+    effective_updating = "immediate"
+    vectorized = False
+
+    if requested_workers != 1:
+        logger.info(
+            "[fit]  hybrid_fit  _resolve_mutax_workers  "
+            "Forcing vectorized=True + workers=1 (shard_map is incompatible with "
+            "Diffrax implicit ODE solvers that use filter_closure_convert). "
+            "XLA intra-op parallelism across %d CPU devices is still active via "
+            "intra_op_parallelism_threads.",
+            n_devices,
+        )
 
     logger.info(
         "[fit]  hybrid_fit  _resolve_mutax_workers  "
-        "n_devices=%d  devices=%s  requested_workers=%s  effective_workers=%s  "
-        "requested_updating=%s  effective_updating=%s",
+        "n_devices=%d  requested_workers=%s  effective_workers=%d  "
+        "vectorized=%s  effective_updating=%s",
         n_devices,
-        [str(d) for d in devices],
         str(requested_workers),
-        str(effective_workers),
-        updating,
+        effective_workers,
+        vectorized,
         effective_updating,
     )
 
-    return effective_workers, effective_updating, n_devices
-
+    return effective_workers, effective_updating, n_devices, vectorized
 
 def _loss_scalar_from_loss_fn(loss_fn, penalty: float = 1e12):
     """
-    Build a JAX-compatible scalar objective for global search.
-
-    loss_fn must have signature:
-
-        loss_fn(theta, args) -> (total_loss, aux)
-
-    as returned by optimization.make_loss_fn.
+    Plain scalar objective for Mutax (vectorized=False, workers=1).
+    Mutax calls this once per candidate inside jax.lax.while_loop with jax.vmap
+    applied internally — do NOT wrap in jax.vmap here.
     """
+    import jax.numpy as jnp
 
     penalty_value = float(penalty)
 
@@ -289,7 +270,6 @@ def _loss_scalar_from_loss_fn(loss_fn, penalty: float = 1e12):
 
     return objective
 
-
 def evaluate_candidates(loss_fn, candidates: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
     Evaluate candidate theta vectors with the scalarized JAX loss.
@@ -301,6 +281,8 @@ def evaluate_candidates(loss_fn, candidates: np.ndarray) -> tuple[np.ndarray, np
     losses_sorted : np.ndarray
         Corresponding losses.
     """
+    import jax
+    import jax.numpy as jnp
     candidates = np.asarray(candidates, dtype=np.float64)
 
     if candidates.ndim != 2:
@@ -389,6 +371,8 @@ def lhs_screen(
     np.ndarray
         Top candidates sorted by scalarized loss, shape (top_p, n_var).
     """
+    import jax
+    import jax.numpy as jnp
     xl = np.asarray(xl, dtype=np.float64)
     xu = np.asarray(xu, dtype=np.float64)
     n_var = xl.size
@@ -465,6 +449,8 @@ def run_mutax_de(
     Local polish is intentionally handled later by Optimistix, not by Mutax's
     optional BFGS polish.
     """
+    import jax
+    import jax.numpy as jnp
     try:
         from mutax import differential_evolution
     except ImportError as exc:
@@ -498,17 +484,18 @@ def run_mutax_de(
     requested_workers = workers
     requested_updating = updating
 
-    effective_workers, effective_updating, n_jax_devices = _resolve_mutax_workers(
+    effective_workers, effective_updating, n_jax_devices, vectorized = _resolve_mutax_workers(
         int(workers), updating
     )
 
     logger.info(
         "[fit]  hybrid_fit  mutax_de  jax_cpu_devices=%d  "
-        "requested_workers=%s  effective_workers=%s  "
+        "requested_workers=%s  effective_workers=%s  vectorized=%s  "
         "requested_updating=%s  effective_updating=%s",
         n_jax_devices,
         str(requested_workers),
         str(effective_workers),
+        vectorized,
         requested_updating,
         effective_updating,
     )
@@ -553,7 +540,7 @@ def run_mutax_de(
         updating=effective_updating,
         workers=effective_workers,
         x0=x0_j,
-        vectorized=False,
+        vectorized=True,
     )
     elapsed = time.perf_counter() - t0
 

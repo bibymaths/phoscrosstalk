@@ -500,9 +500,14 @@ def configure_jax_cpu_devices(n_devices="auto") -> int:
             topo = detect_cpu_topology()
             n = topo.total_available
 
+    # Primary: modern JAX env var (JAX >= 0.4.25)
+    os.environ["JAX_NUM_CPU_DEVICES"] = str(n)
+
+    # Secondary: legacy XLA flag (older JAX / jaxlib versions)
     additions = {"--xla_force_host_platform_device_count": str(n)}
     existing_xla = os.environ.get("XLA_FLAGS", "")
     os.environ["XLA_FLAGS"] = _merge_xla_flags(existing_xla, additions)
+
     return n
 
 
@@ -532,7 +537,8 @@ def log_env_summary(logger=None, plan=None) -> None:
         f"  JAX_ENABLE_X64           = {os.environ.get('JAX_ENABLE_X64', '(not set)')}",
         f"  JAX_PLATFORMS            = {os.environ.get('JAX_PLATFORMS', '(not set)')}",
         f"  XLA_FLAGS                = {_xla_flags_str or '(not set)'}",
-        f"  JAX host CPU devices     = {_jax_cpu_devices}",
+        f"  JAX_NUM_CPU_DEVICES      = {os.environ.get('JAX_NUM_CPU_DEVICES', '(not set)')}",
+        f"  JAX host CPU devices     = {_jax_cpu_devices}  (from XLA_FLAGS)",
         f"  OMP_NUM_THREADS          = {os.environ.get('OMP_NUM_THREADS', '(not set)')}",
         f"  OPENBLAS_NUM_THREADS     = {os.environ.get('OPENBLAS_NUM_THREADS', '(not set)')}",
         f"  MKL_NUM_THREADS          = {os.environ.get('MKL_NUM_THREADS', '(not set)')}",
