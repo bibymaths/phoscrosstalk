@@ -48,16 +48,28 @@ def _read_runtime_config():
 
         argv = sys.argv[1:]
         config_path = "./config.toml"
+        solver_cli = None
         for i, arg in enumerate(argv):
             if arg == "--config" and i + 1 < len(argv):
                 config_path = argv[i + 1]
             elif arg.startswith("--config="):
                 config_path = arg.split("=", 1)[1]
+            elif arg == "--solver" and i + 1 < len(argv):
+                solver_cli = argv[i + 1]
+            elif arg.startswith("--solver="):
+                solver_cli = arg.split("=", 1)[1]
 
         with open(config_path, "rb") as _f:
             raw = tomllib.load(_f)
         rt = raw.get("runtime", {})
         opt = raw.get("optimisation", {})
+        config_solver = opt.get("solver", "lm")
+        # CLI --solver overrides the config file for early runtime setup.
+        effective_solver = (
+            solver_cli
+            if solver_cli in ("lm", "hybrid")
+            else config_solver
+        )
         return {
             "cpu_threads": rt.get("cpu_threads", "auto"),
             "parallel_starts": rt.get("parallel_starts", "auto"),
@@ -65,7 +77,7 @@ def _read_runtime_config():
             "use_physical_cores": rt.get("use_physical_cores", True),
             "reserve_cores": rt.get("reserve_cores", 0),
             "n_starts": opt.get("n_starts", 1),
-            "solver": opt.get("solver", "lm"),
+            "solver": effective_solver,
             "de_workers": raw.get("hybrid", {}).get("de_workers", 1),
         }
     except Exception:
@@ -403,6 +415,10 @@ def main():
 
     args = parser.parse_args()
     config_path = args.config
+    # Save the raw CLI values before they are overwritten by the SimpleNamespace
+    # built from the config file below.  We need them to apply CLI overrides.
+    _cli_solver = args.solver  # None if not passed on CLI, "lm"/"hybrid" if passed
+    _cli_de_workers = args.de_workers  # int from CLI, default 1
 
     # ------------------------------------------------------------------
     # LOAD AND VALIDATE CONFIG
@@ -471,7 +487,12 @@ def main():
         ode_dt0=getattr(cfg.solver, "dt0", 0.01),
         ode_root_find_max_steps=getattr(cfg.solver, "root_find_max_steps", 10),
         # solver backend + hybrid settings
-        solver=getattr(cfg.optimisation, "solver", "lm"),
+        # CLI --solver overrides the config file solver choice.
+        solver=(
+            _cli_solver
+            if _cli_solver is not None
+            else getattr(cfg.optimisation, "solver", "lm")
+        ),
         de_strategy=getattr(
             getattr(cfg, "hybrid", SimpleNamespace()), "de_strategy", "best1bin"
         ),
@@ -490,8 +511,14 @@ def main():
         de_recombination=getattr(
             getattr(cfg, "hybrid", SimpleNamespace()), "de_recombination", 0.8
         ),
-        de_workers=getattr(
-            getattr(cfg, "hybrid", SimpleNamespace()), "de_workers", 1
+        de_workers=(
+            # CLI --de-workers takes precedence when it differs from the default (1),
+            # indicating the user explicitly provided a value.
+            _cli_de_workers
+            if _cli_de_workers != 1
+            else getattr(
+                getattr(cfg, "hybrid", SimpleNamespace()), "de_workers", 1
+            )
         ),
         de_updating=getattr(
             getattr(cfg, "hybrid", SimpleNamespace()), "de_updating", "immediate"
