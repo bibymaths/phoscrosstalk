@@ -21,6 +21,9 @@ import os
 import pathlib
 import sys
 
+from phoscrosstalk.utils import sync_gitignore
+
+
 def _read_runtime_config():
     """
     Pre-parse the ``[runtime]`` section and the ``n_starts`` value from the
@@ -1184,8 +1187,10 @@ def main():
 
 
 if __name__ == "__main__":
+    sync_gitignore()
     main()
 
 
 def cli():
+    sync_gitignore()
     main()

@@ -1,0 +1,1 @@
+from phoscrosstalk.utils.gitignore_sync import sync_gitignore
