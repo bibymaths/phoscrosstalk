@@ -38,6 +38,13 @@ compute_objectives_jax(theta, P_data, P_sim, A_scaled, A_sim, W_data,
 
 from __future__ import annotations
 
+import os
+
+os.environ["JAX_ENABLE_X64"] = "true"
+
+import jax
+jax.config.update("jax_enable_x64", True)
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -71,6 +78,8 @@ def decode_theta(theta, K: int, M: int, N: int):
         k_off                  (N,)
         gamma_S_p, gamma_A_S, gamma_A_p, gamma_K_net  scalar
     """
+    theta = jnp.asarray(theta, dtype=jnp.float64)
+
     idx = 0
     log_k_deact = theta[idx : idx + K]
     idx += K
@@ -94,7 +103,7 @@ def decode_theta(theta, K: int, M: int, N: int):
     raw_gamma = theta[idx : idx + 4]
 
     def clip(v):
-        return jnp.clip(v, -20.0, 10.0)
+        return jnp.clip(v, jnp.float64(-20.0), jnp.float64(10.0))
 
     k_deact = jnp.exp(clip(log_k_deact))
     d_deg = jnp.exp(clip(log_d_deg))
@@ -103,13 +112,15 @@ def decode_theta(theta, K: int, M: int, N: int):
     kK_deact = jnp.exp(clip(log_kK_deact))
     k_off = jnp.exp(clip(log_k_off))
 
-    beta_g = jnp.exp(jnp.clip(log_beta_g, -20.0, 10.0))
-    beta_l = jnp.exp(jnp.clip(log_beta_l, -20.0, 10.0))
+    beta_g = jnp.exp(jnp.clip(log_beta_g, jnp.float64(-20.0), jnp.float64(10.0)))
+    beta_l = jnp.exp(jnp.clip(log_beta_l, jnp.float64(-20.0), jnp.float64(10.0)))
 
-    gamma_S_p = 2.0 * jnp.tanh(raw_gamma[0])
-    gamma_A_S = 2.0 * jnp.tanh(raw_gamma[1])
-    gamma_A_p = 2.0 * jnp.tanh(raw_gamma[2])
-    gamma_K_net = 2.0 * jnp.tanh(raw_gamma[3])
+    two = jnp.float64(2.0)
+
+    gamma_S_p = two * jnp.tanh(raw_gamma[0])
+    gamma_A_S = two * jnp.tanh(raw_gamma[1])
+    gamma_A_p = two * jnp.tanh(raw_gamma[2])
+    gamma_K_net = two * jnp.tanh(raw_gamma[3])
 
     return (
         k_deact,
@@ -213,8 +224,8 @@ def make_rhs(
     # ------------------------------------------------------------------
     # Constant fallbacks so RHS never branches on None during tracing
     # ------------------------------------------------------------------
-    _k_act_const = jnp.ones(K, dtype=jnp.float32)
-    _s_prod_const = jnp.full(K, 0.1, dtype=jnp.float32)
+    _k_act_const = jnp.ones(K, dtype=jnp.float64)
+    _s_prod_const = jnp.full(K, 0.1, dtype=jnp.float64)
 
     if k_act_fn is None:
 
@@ -247,10 +258,26 @@ def make_rhs(
             prev_site_idx,
         ) = args
 
+        t = jnp.asarray(t, dtype=jnp.float64)
+        y = jnp.asarray(y, dtype=jnp.float64)
+
+        theta = jnp.asarray(theta, dtype=jnp.float64)
+        Cg = jnp.asarray(Cg, dtype=jnp.float64)
+        Cl = jnp.asarray(Cl, dtype=jnp.float64)
+        K_site_kin = jnp.asarray(K_site_kin, dtype=jnp.float64)
+        R = jnp.asarray(R, dtype=jnp.float64)
+        L_alpha = jnp.asarray(L_alpha, dtype=jnp.float64)
+        receptor_mask_prot = jnp.asarray(receptor_mask_prot, dtype=jnp.float64)
+        receptor_mask_kin = jnp.asarray(receptor_mask_kin, dtype=jnp.float64)
+
+        site_prot_idx = jnp.asarray(site_prot_idx, dtype=jnp.int32)
+        kin_to_prot_idx = jnp.asarray(kin_to_prot_idx, dtype=jnp.int32)
+        prev_site_idx = jnp.asarray(prev_site_idx, dtype=jnp.int32)
+
         # Small constants used only for fixed numerical structure.
-        eps = jnp.float32(1e-8)
-        seq_leak = jnp.float32(1e-3)
-        kinase_basal = jnp.float32(0.05)
+        eps = jnp.float64(1e-8)
+        seq_leak = jnp.float64(1e-3)
+        kinase_basal = jnp.float64(0.05)
 
         # ------------------------------------------------------------------
         # Decode parameters

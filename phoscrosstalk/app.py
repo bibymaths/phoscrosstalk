@@ -22,22 +22,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 from plotly.subplots import make_subplots
-
-try:
-    import networkx as _nx
-
-    _HAS_NX = True
-except ImportError:  # pragma: no cover
-    _HAS_NX = False
-    _nx = None
-
-try:
-    import gravis as _gv
-
-    _HAS_GRAVIS = True
-except ImportError:  # pragma: no cover
-    _HAS_GRAVIS = False
-    _gv = None
+import gravis as _gv
+import networkx as _nx
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -203,117 +189,6 @@ def _run_simulation(results_dir: str, t_max: float, num_points: int, mechanism: 
 # Plot helpers
 # ──────────────────────────────────────────────────────────────────────────
 
-
-def _render_plotly_network(df_net: pd.DataFrame, src_col: str, tgt_col: str) -> None:
-    """Render a small directed network as a Plotly scatter-with-lines figure."""
-    if not _HAS_NX:
-        st.info("networkx is not installed; cannot render interactive network.")
-        return
-
-    if df_net is None or df_net.empty:
-        st.info("No network edges available for rendering.")
-        return
-
-    if src_col not in df_net.columns or tgt_col not in df_net.columns:
-        st.error(f"Missing network columns: {src_col!r}, {tgt_col!r}")
-        return
-
-    weight_col = (
-        "Weight_Fitted"
-        if "Weight_Fitted" in df_net.columns
-        else (df_net.columns[2] if df_net.shape[1] > 2 else None)
-    )
-
-    G = _nx.DiGraph()
-
-    for _, row in df_net.iterrows():
-        src = str(row[src_col])
-        tgt = str(row[tgt_col])
-
-        if not src or not tgt or src.lower() == "nan" or tgt.lower() == "nan":
-            continue
-
-        weight = 1.0
-        if weight_col is not None:
-            try:
-                weight = float(row[weight_col])
-                if not np.isfinite(weight):
-                    weight = 1.0
-            except Exception:
-                weight = 1.0
-
-        G.add_edge(src, tgt, weight=weight)
-
-    if G.number_of_nodes() == 0 or G.number_of_edges() == 0:
-        st.info("No valid edges after filtering.")
-        return
-
-    pos = _nx.spring_layout(G, seed=42, k=1.5)
-
-    edge_x: list[float | None] = []
-    edge_y: list[float | None] = []
-
-    for u, v in G.edges():
-        x0, y0 = pos[u]
-        x1, y1 = pos[v]
-        edge_x.extend([x0, x1, None])
-        edge_y.extend([y0, y1, None])
-
-    node_labels = list(G.nodes())
-    node_x = [pos[n][0] for n in node_labels]
-    node_y = [pos[n][1] for n in node_labels]
-    node_degree = [G.degree(n) for n in node_labels]
-
-    fig_net = go.Figure()
-
-    fig_net.add_trace(
-        go.Scatter(
-            x=edge_x,
-            y=edge_y,
-            mode="lines",
-            line=dict(width=0.8, color="lightgrey"),
-            hoverinfo="none",
-            showlegend=False,
-        )
-    )
-
-    fig_net.add_trace(
-        go.Scatter(
-            x=node_x,
-            y=node_y,
-            mode="markers+text",
-            marker=dict(
-                size=[max(8, min(40, d * 2.5)) for d in node_degree],
-                color=node_degree,
-                colorscale="Viridis",
-                showscale=True,
-                colorbar=dict(title="Degree"),
-                line=dict(width=0.5, color="black"),
-            ),
-            text=node_labels,
-            textposition="top center",
-            hovertext=[
-                f"{node}<br>degree={deg}"
-                for node, deg in zip(node_labels, node_degree, strict=False)
-            ],
-            hoverinfo="text",
-            name="Nodes",
-        )
-    )
-
-    fig_net.update_layout(
-        height=650,
-        template="plotly_white",
-        showlegend=False,
-        title="Network topology",
-        margin=dict(l=10, r=10, t=50, b=10),
-        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-    )
-
-    st.plotly_chart(fig_net, use_container_width=True)
-
-
 def _render_gravis_network(
     df_net: pd.DataFrame,
     src_col: str,
@@ -333,18 +208,6 @@ def _render_gravis_network(
         ko_node: When provided, the named node is highlighted as a knocked-out
             node (red border, reduced opacity) to reflect the KO topology.
     """
-    if not _HAS_GRAVIS:
-        st.info(
-            "Gravis is not installed. Falling back to Plotly/NetworkX rendering. "
-            "Install gravis (`pip install gravis`) for interactive network views."
-        )
-        _render_plotly_network(df_net, src_col, tgt_col)
-        return
-
-    if not _HAS_NX:
-        st.info("networkx is not installed; cannot build graph for Gravis rendering.")
-        return
-
     if df_net is None or df_net.empty:
         st.info("No network edges available for rendering.")
         return
@@ -876,50 +739,89 @@ with tab_overview:
 # ══════════════════════════════════════════════════════════════════════════
 with tab_fit:
     st.header("Fit Explorer")
-    st.caption("Source: `fit_timeseries.tsv`, optional `fit_timeseries_dense.tsv`, `mrna_fit_timeseries.tsv`")
+    st.caption(
+        "Sparse source: `fit_timeseries.tsv`, `mrna_fit_timeseries.tsv`  \n"
+        "Dense source: `fit_timeseries_dense.tsv`, `mrna_fit_timeseries_dense.tsv`"
+    )
+
+    # ------------------------------------------------------------------
+    # Small reusable legend style: bottom, horizontal, compact
+    # ------------------------------------------------------------------
+    _BOTTOM_LEGEND = dict(
+        orientation="h",
+        yanchor="top",
+        y=-0.28,
+        xanchor="center",
+        x=0.5,
+        font=dict(size=10),
+        bgcolor="rgba(255,255,255,0)",
+        borderwidth=0,
+        itemwidth=30,
+    )
+
+
+    def _legend_below(y=-0.28, font_size=10):
+        legend = _BOTTOM_LEGEND.copy()
+        legend.update(
+            y=y,
+            font=dict(size=font_size),
+        )
+        return legend
+
+    def _short_series_name(series_type: str) -> str:
+        s = str(series_type).lower()
+        if s in {"sim", "simulated", "simulated_dense"}:
+            return "sim"
+        if s in {"obs", "observed", "observed_interpolated_dense"}:
+            return "obs"
+        if "interp" in s:
+            return "obs"
+        if "sim" in s:
+            return "sim"
+        return str(series_type)
+
+    def _style_fit_plot(fig, height: int, title: str, x_title: str, y_title: str):
+        fig.update_layout(
+            height=height,
+            template="plotly_white",
+            hovermode="x unified",
+            title=title,
+            xaxis_title=x_title,
+            yaxis_title=y_title,
+            legend=_BOTTOM_LEGEND,
+            margin=dict(l=40, r=20, t=60, b=105),
+        )
+        return fig
 
     df_ft = _load_fit_ts(results_dir)
     df_dense = _load_dense_ts(results_dir)
+    df_mrna_dense = _load_mrna_dense_ts(results_dir)
 
-    # Dense output availability and selection
     _has_dense = df_dense is not None and not df_dense.empty
-    _dense_series_types = list(df_dense["series_type"].unique()) if _has_dense else []
-    _has_simulated_dense = _has_dense and "simulated_dense" in _dense_series_types
-    _has_obs_interp = _has_dense and "observed_interpolated_dense" in _dense_series_types
+    _dense_series_types = (
+        list(df_dense["series_type"].unique())
+        if _has_dense and "series_type" in df_dense.columns
+        else []
+    )
 
-    if _has_dense:
-        _show_dense = st.toggle(
-            "Show dense fitted curves (smooth ODE simulation)",
-            value=False,
-            help=(
-                "Overlays a dense smooth model simulation (fit_timeseries_dense.tsv) "
-                "alongside the sparse observed-time fit. Dense curves are model output "
-                "only and do NOT affect the optimisation loss."
-            ),
-        )
-        if _has_obs_interp:
-            _show_obs_interp = st.toggle(
-                "Show interpolated observed data (diagnostic)",
-                value=False,
-                help=(
-                    "Shows observed data interpolated to a dense grid for visualisation. "
-                    "These are NOT measured data points — they are cubic/linear "
-                    "interpolations of the sparse observed values. Clearly labelled "
-                    "as 'observed_interpolated_dense' in the source file."
-                ),
-            )
-        else:
-            _show_obs_interp = False
-    else:
-        _show_dense = False
-        _show_obs_interp = False
+    _has_simulated_dense = any(
+        _short_series_name(s) == "sim" for s in _dense_series_types
+    )
+    _has_obs_interp = any(
+        _short_series_name(s) == "obs" for s in _dense_series_types
+    )
 
-    df_ft = _load_fit_ts(results_dir)
     if df_ft is None:
         st.warning("fit_timeseries.tsv not found.")
+    elif not selected_protein:
+        st.warning("No protein selected.")
     else:
+        # ------------------------------------------------------------------
+        # Sparse original observed-time data
+        # ------------------------------------------------------------------
         sim_cols = [c for c in df_ft.columns if c.startswith("sim_t")]
         data_cols = [c for c in df_ft.columns if c.startswith("data_t")]
+
         t_vals = extract_time_axis(df_ft, prefix="sim_t")
         t_axis = t_orig if len(t_vals) == len(t_orig) > 0 else t_vals
 
@@ -928,264 +830,502 @@ with tab_fit:
             if len(t_axis) > 0
             else np.ones(len(t_vals), dtype=bool)
         )
+
         sim_cols_f = [c for c, m in zip(sim_cols, t_mask, strict=False) if m]
         data_cols_f = [c for c, m in zip(data_cols, t_mask, strict=False) if m]
         t_filt = t_axis[t_mask] if len(t_axis) > 0 else t_vals
 
-        if selected_protein:
-            df_prot_row = df_ft[
-                (df_ft["Type"] == "ProteinAbundance")
-                & (df_ft["Protein"] == selected_protein)
-            ]
-            df_site_rows = df_ft[
-                (df_ft["Type"] == "Phosphosite")
-                & (df_ft["Protein"] == selected_protein)
-            ]
+        df_prot_row = df_ft[
+            (df_ft["Type"] == "ProteinAbundance")
+            & (df_ft["Protein"] == selected_protein)
+        ]
 
-            mrna_path = os.path.join(results_dir, "mrna_fit_timeseries.tsv")
-            df_mrna = None
-            if os.path.exists(mrna_path):
-                try:
-                    df_mrna_all = pd.read_csv(mrna_path, sep="\t")
-                    if "gene" in df_mrna_all.columns:
-                        sub = df_mrna_all[df_mrna_all["gene"] == selected_protein]
-                        df_mrna = sub if not sub.empty else None
-                except Exception:
-                    df_mrna = None
+        df_site_rows = df_ft[
+            (df_ft["Type"] == "Phosphosite")
+            & (df_ft["Protein"] == selected_protein)
+        ]
 
-            n_panels = 3 if df_mrna is not None else 2
-            if n_panels == 3:
-                subtitles = [
-                    f"{selected_protein} mRNA / R_rna(t)",
-                    f"{selected_protein} protein abundance",
-                    f"{selected_protein} relative phosphosite signal",
-                ]
-            else:
-                subtitles = [
-                    f"{selected_protein} protein abundance",
-                    f"{selected_protein} relative phosphosite signal",
-                ]
+        # Sparse mRNA
+        mrna_path = os.path.join(results_dir, "mrna_fit_timeseries.tsv")
+        df_mrna = None
+        if os.path.exists(mrna_path):
+            try:
+                df_mrna_all = pd.read_csv(mrna_path, sep="\t")
+                if "gene" in df_mrna_all.columns:
+                    sub = df_mrna_all[df_mrna_all["gene"] == selected_protein]
+                    df_mrna = sub if not sub.empty else None
+            except Exception:
+                df_mrna = None
 
-            fig_fit = make_subplots(rows=1, cols=n_panels, subplot_titles=subtitles)
-            col_offset = 1
+        st.subheader(f"Sparse original fit — {selected_protein}")
+        st.caption(
+            "Observed-time model fit and measured data. These are the sparse time points used for fitting."
+        )
 
-            if n_panels == 3 and df_mrna is not None:
+        sparse_top_l, sparse_top_r = st.columns(2)
+
+        # ------------------------------------------------------------------
+        # Sparse mRNA panel
+        # ------------------------------------------------------------------
+        with sparse_top_l:
+            fig_mrna_sparse = go.Figure()
+
+            if df_mrna is not None:
                 rna_sub = (
                     df_mrna.sort_values("time")
                     if "time" in df_mrna.columns
                     else df_mrna
                 )
+
                 t_rna = (
                     rna_sub["time"].values
                     if "time" in rna_sub.columns
-                    else np.array([])
+                    else np.arange(len(rna_sub), dtype=float)
                 )
+
+                if len(t_rna) > 0:
+                    rna_mask = (t_rna >= time_range[0]) & (t_rna <= time_range[1])
+                else:
+                    rna_mask = np.ones(len(rna_sub), dtype=bool)
+
                 rna_fit_col = (
                     "fitted"
                     if "fitted" in rna_sub.columns
                     else ("simulated" if "simulated" in rna_sub.columns else None)
                 )
+
                 if rna_fit_col:
-                    fig_fit.add_trace(
+                    fig_mrna_sparse.add_trace(
                         go.Scatter(
-                            x=t_rna,
-                            y=rna_sub[rna_fit_col].values,
+                            x=t_rna[rna_mask],
+                            y=rna_sub[rna_fit_col].values[rna_mask],
                             mode="lines",
-                            name="mRNA model",
+                            name="sim",
                             line=dict(width=2),
-                        ),
-                        row=1,
-                        col=col_offset,
+                        )
                     )
+
                 if show_obs and "observed" in rna_sub.columns:
-                    fig_fit.add_trace(
+                    fig_mrna_sparse.add_trace(
                         go.Scatter(
-                            x=t_rna,
-                            y=rna_sub["observed"].values,
+                            x=t_rna[rna_mask],
+                            y=rna_sub["observed"].values[rna_mask],
                             mode="markers",
-                            name="mRNA observed",
+                            name="obs",
                             marker=dict(size=8),
-                        ),
-                        row=1,
-                        col=col_offset,
+                        )
                     )
-                fig_fit.update_yaxes(
-                    title_text="mRNA / transcriptional activation R_rna(t)",
-                    row=1,
-                    col=col_offset,
+
+                _style_fit_plot(
+                    fig_mrna_sparse,
+                    height=410,
+                    title=f"{selected_protein} mRNA / R_rna(t)",
+                    x_title="Time (min)",
+                    y_title="mRNA / transcriptional activation",
                 )
-                col_offset += 1
+                if use_logx:
+                    fig_mrna_sparse.update_xaxes(type="log")
+                st.plotly_chart(fig_mrna_sparse, use_container_width=True)
+            else:
+                st.info("Sparse mRNA fit not available for this protein.")
+
+        # ------------------------------------------------------------------
+        # Sparse protein abundance panel
+        # ------------------------------------------------------------------
+        with sparse_top_r:
+            fig_prot_sparse = go.Figure()
 
             if not df_prot_row.empty:
                 row_p = df_prot_row.iloc[0]
-                fig_fit.add_trace(
+
+                fig_prot_sparse.add_trace(
                     go.Scatter(
                         x=t_filt,
                         y=row_p[sim_cols_f].values.astype(float),
                         mode="lines",
-                        name="abundance (model)",
+                        name="sim",
                         line=dict(width=2, color="royalblue"),
-                    ),
-                    row=1,
-                    col=col_offset,
+                    )
                 )
+
                 if show_obs:
-                    fig_fit.add_trace(
+                    fig_prot_sparse.add_trace(
                         go.Scatter(
                             x=t_filt,
                             y=row_p[data_cols_f].values.astype(float),
                             mode="markers",
-                            name="abundance (data)",
-                            marker=dict(size=8, symbol="square", color="royalblue"),
-                        ),
-                        row=1,
-                        col=col_offset,
-                    )
-                # Dense protein abundance overlay
-                if _show_dense and _has_simulated_dense and df_dense is not None:
-                    _df_A_dense = df_dense[
-                        (df_dense["series_type"] == "simulated_dense")
-                        & (df_dense["entity_type"] == "ProteinAbundance")
-                        & (df_dense["entity"] == selected_protein)
-                    ]
-                    if not _df_A_dense.empty:
-                        _td_a = _df_A_dense["time"].values
-                        _td_a_mask = (_td_a >= time_range[0]) & (_td_a <= time_range[1])
-                        fig_fit.add_trace(
-                            go.Scatter(
-                                x=_td_a[_td_a_mask],
-                                y=_df_A_dense["value"].values[_td_a_mask],
-                                mode="lines",
-                                name="abundance (dense model)",
-                                line=dict(width=1.5, color="royalblue", dash="dot"),
-                                opacity=0.75,
+                            name="obs",
+                            marker=dict(
+                                size=8,
+                                symbol="square",
+                                color="royalblue",
                             ),
-                            row=1,
-                            col=col_offset,
                         )
-            fig_fit.update_yaxes(title_text="Protein abundance", row=1, col=col_offset)
-            col_offset += 1
+                    )
 
-            colors = px.colors.qualitative.Plotly
-            for i, (_, row_s) in enumerate(df_site_rows.iterrows()):
-                label = f"{row_s['Protein']}_{row_s['Residue']}"
-                c = colors[i % len(colors)]
-                fig_fit.add_trace(
-                    go.Scatter(
-                        x=t_filt,
-                        y=row_s[sim_cols_f].values.astype(float),
-                        mode="lines",
-                        name=f"{label} (model)",
-                        line=dict(width=2, color=c),
-                    ),
-                    row=1,
-                    col=col_offset,
+                _style_fit_plot(
+                    fig_prot_sparse,
+                    height=410,
+                    title=f"{selected_protein} protein abundance",
+                    x_title="Time (min)",
+                    y_title="Protein abundance",
                 )
-                if show_obs:
-                    fig_fit.add_trace(
+                if use_logx:
+                    fig_prot_sparse.update_xaxes(type="log")
+                st.plotly_chart(fig_prot_sparse, use_container_width=True)
+            else:
+                st.info("Sparse protein abundance fit not available for this protein.")
+
+        # ------------------------------------------------------------------
+        # Sparse phosphosite panel, centered/wide below
+        # ------------------------------------------------------------------
+        sparse_bottom_l, sparse_bottom_c, sparse_bottom_r = st.columns([0.08, 0.84, 0.08])
+
+        with sparse_bottom_c:
+            fig_sites_sparse = go.Figure()
+            colors = px.colors.qualitative.Plotly
+
+            if not df_site_rows.empty:
+                for i, (_, row_s) in enumerate(df_site_rows.iterrows()):
+                    label = f"{row_s['Protein']}_{row_s['Residue']}"
+                    c = colors[i % len(colors)]
+
+                    fig_sites_sparse.add_trace(
                         go.Scatter(
                             x=t_filt,
-                            y=row_s[data_cols_f].values.astype(float),
-                            mode="markers",
-                            name=f"{label} (data)",
-                            marker=dict(size=8, color=c),
-                            showlegend=False,
-                        ),
-                        row=1,
-                        col=col_offset,
+                            y=row_s[sim_cols_f].values.astype(float),
+                            mode="lines",
+                            name=label,
+                            line=dict(width=2, color=c),
+                        )
                     )
 
-                # Dense fitted curve overlay
-                if _show_dense and _has_simulated_dense and df_dense is not None:
-                    site_key = label
+                    if show_obs:
+                        fig_sites_sparse.add_trace(
+                            go.Scatter(
+                                x=t_filt,
+                                y=row_s[data_cols_f].values.astype(float),
+                                mode="markers",
+                                name=f"{label} obs",
+                                marker=dict(size=7, color=c),
+                                showlegend=False,
+                            )
+                        )
+
+                _style_fit_plot(
+                    fig_sites_sparse,
+                    height=480,
+                    title=f"{selected_protein} relative phosphosite signal",
+                    x_title="Time (min)",
+                    y_title="Relative phosphosite signal",
+                )
+                fig_sites_sparse.update_layout(
+                    legend=_legend_below(y=-0.22, font_size=9),
+                    margin=dict(l=50, r=20, t=60, b=120),
+                )
+                if use_logx:
+                    fig_sites_sparse.update_xaxes(type="log")
+                st.plotly_chart(fig_sites_sparse, use_container_width=True)
+            else:
+                st.info("Sparse phosphosite fit not available for this protein.")
+
+        # ------------------------------------------------------------------
+        # Dense fitted data group
+        # ------------------------------------------------------------------
+        st.divider()
+        st.subheader(f"Dense fit trajectories — {selected_protein}")
+        st.caption(
+            "Dense curves are smooth model/interpolated outputs for visualization. "
+            "They are displayed separately from sparse fitted data."
+        )
+
+        dense_top_l, dense_top_r = st.columns(2)
+
+        # ------------------------------------------------------------------
+        # Dense mRNA panel
+        # ------------------------------------------------------------------
+        with dense_top_l:
+            fig_mrna_dense = go.Figure()
+
+            if df_mrna_dense is not None and not df_mrna_dense.empty:
+                if "gene" in df_mrna_dense.columns:
+                    md_sub = df_mrna_dense[
+                        df_mrna_dense["gene"] == selected_protein
+                    ].copy()
+                elif "entity" in df_mrna_dense.columns:
+                    md_sub = df_mrna_dense[
+                        df_mrna_dense["entity"] == selected_protein
+                    ].copy()
+                else:
+                    md_sub = pd.DataFrame()
+
+                if not md_sub.empty and "time" in md_sub.columns:
+                    md_sub = md_sub.sort_values("time")
+                    md_sub = md_sub[
+                        (md_sub["time"] >= time_range[0])
+                        & (md_sub["time"] <= time_range[1])
+                    ]
+
+                    val_col = (
+                        "value"
+                        if "value" in md_sub.columns
+                        else (
+                            "fitted"
+                            if "fitted" in md_sub.columns
+                            else (
+                                "simulated"
+                                if "simulated" in md_sub.columns
+                                else None
+                            )
+                        )
+                    )
+
+                    if val_col is not None:
+                        if "series_type" in md_sub.columns:
+                            for series_type, grp in md_sub.groupby("series_type"):
+                                grp = grp.sort_values("time")
+                                fig_mrna_dense.add_trace(
+                                    go.Scatter(
+                                        x=grp["time"],
+                                        y=grp[val_col],
+                                        mode="lines",
+                                        name=_short_series_name(series_type),
+                                        line=dict(width=2),
+                                    )
+                                )
+                        else:
+                            fig_mrna_dense.add_trace(
+                                go.Scatter(
+                                    x=md_sub["time"],
+                                    y=md_sub[val_col],
+                                    mode="lines",
+                                    name="sim",
+                                    line=dict(width=2),
+                                )
+                            )
+
+                        _style_fit_plot(
+                            fig_mrna_dense,
+                            height=410,
+                            title=f"{selected_protein} dense mRNA / R_rna(t)",
+                            x_title="Time (min)",
+                            y_title="mRNA / transcriptional activation",
+                        )
+                        if use_logx:
+                            fig_mrna_dense.update_xaxes(type="log")
+                        st.plotly_chart(fig_mrna_dense, use_container_width=True)
+                    else:
+                        st.info("Dense mRNA value column not found.")
+                else:
+                    st.info("Dense mRNA data not available for this selected protein.")
+            else:
+                st.info("`mrna_fit_timeseries_dense.tsv` not found or empty.")
+
+        # ------------------------------------------------------------------
+        # Dense protein abundance panel
+        # ------------------------------------------------------------------
+        with dense_top_r:
+            fig_prot_dense = go.Figure()
+
+            if _has_dense and df_dense is not None:
+                _df_A_dense = df_dense[
+                    (df_dense["entity_type"] == "ProteinAbundance")
+                    & (df_dense["entity"] == selected_protein)
+                ].copy()
+
+                if not _df_A_dense.empty:
+                    _df_A_dense = _df_A_dense[
+                        (_df_A_dense["time"] >= time_range[0])
+                        & (_df_A_dense["time"] <= time_range[1])
+                    ]
+
+                    if "series_type" in _df_A_dense.columns:
+                        for series_type, grp in _df_A_dense.groupby("series_type"):
+                            grp = grp.sort_values("time")
+                            short_name = _short_series_name(series_type)
+
+                            dash = "solid" if short_name == "sim" else "dash"
+                            opacity = 0.9 if short_name == "sim" else 0.55
+
+                            fig_prot_dense.add_trace(
+                                go.Scatter(
+                                    x=grp["time"],
+                                    y=grp["value"],
+                                    mode="lines",
+                                    name=short_name,
+                                    line=dict(
+                                        width=2,
+                                        color="royalblue",
+                                        dash=dash,
+                                    ),
+                                    opacity=opacity,
+                                )
+                            )
+                    else:
+                        _df_A_dense = _df_A_dense.sort_values("time")
+                        fig_prot_dense.add_trace(
+                            go.Scatter(
+                                x=_df_A_dense["time"],
+                                y=_df_A_dense["value"],
+                                mode="lines",
+                                name="sim",
+                                line=dict(width=2, color="royalblue"),
+                            )
+                        )
+
+                    _style_fit_plot(
+                        fig_prot_dense,
+                        height=410,
+                        title=f"{selected_protein} dense protein abundance",
+                        x_title="Time (min)",
+                        y_title="Protein abundance",
+                    )
+                    if use_logx:
+                        fig_prot_dense.update_xaxes(type="log")
+                    st.plotly_chart(fig_prot_dense, use_container_width=True)
+                else:
+                    st.info("Dense protein abundance not available for this selected protein.")
+            else:
+                st.info("`fit_timeseries_dense.tsv` not found or empty.")
+
+        # ------------------------------------------------------------------
+        # Dense phosphosite panel, centered/wide below
+        # ------------------------------------------------------------------
+        dense_bottom_l, dense_bottom_c, dense_bottom_r = st.columns([0.08, 0.84, 0.08])
+
+        with dense_bottom_c:
+            fig_sites_dense = go.Figure()
+            colors = px.colors.qualitative.Plotly
+
+            if _has_dense and df_dense is not None and not df_site_rows.empty:
+                n_dense_traces = 0
+
+                for i, (_, row_s) in enumerate(df_site_rows.iterrows()):
+                    label = f"{row_s['Protein']}_{row_s['Residue']}"
+                    c = colors[i % len(colors)]
+
                     _df_site_dense = df_dense[
-                        (df_dense["series_type"] == "simulated_dense")
-                        & (df_dense["entity_type"] == "Phosphosite")
-                        & (df_dense["entity"] == site_key)
+                        (df_dense["entity_type"] == "Phosphosite")
+                        & (df_dense["entity"] == label)
+                    ].copy()
+
+                    if _df_site_dense.empty:
+                        continue
+
+                    _df_site_dense = _df_site_dense[
+                        (_df_site_dense["time"] >= time_range[0])
+                        & (_df_site_dense["time"] <= time_range[1])
                     ]
-                    if not _df_site_dense.empty:
-                        _td = _df_site_dense["time"].values
-                        _td_mask = (_td >= time_range[0]) & (_td <= time_range[1])
-                        fig_fit.add_trace(
+
+                    if _df_site_dense.empty:
+                        continue
+
+                    if "series_type" in _df_site_dense.columns:
+                        for series_type, grp in _df_site_dense.groupby("series_type"):
+                            grp = grp.sort_values("time")
+                            short_name = _short_series_name(series_type)
+
+                            dash = "solid" if short_name == "sim" else "dash"
+                            opacity = 0.9 if short_name == "sim" else 0.55
+                            width = 2 if short_name == "sim" else 1
+
+                            fig_sites_dense.add_trace(
+                                go.Scatter(
+                                    x=grp["time"],
+                                    y=grp["value"],
+                                    mode="lines",
+                                    name=f"{label} {short_name}",
+                                    line=dict(width=width, color=c, dash=dash),
+                                    opacity=opacity,
+                                    showlegend=(short_name == "sim"),
+                                )
+                            )
+                            n_dense_traces += 1
+                    else:
+                        _df_site_dense = _df_site_dense.sort_values("time")
+                        fig_sites_dense.add_trace(
                             go.Scatter(
-                                x=_td[_td_mask],
-                                y=_df_site_dense["value"].values[_td_mask],
+                                x=_df_site_dense["time"],
+                                y=_df_site_dense["value"],
                                 mode="lines",
-                                name=f"{label} (dense model)",
-                                line=dict(width=1.5, color=c, dash="dot"),
-                                opacity=0.75,
-                            ),
-                            row=1,
-                            col=col_offset,
+                                name=label,
+                                line=dict(width=2, color=c),
+                            )
                         )
+                        n_dense_traces += 1
 
-                # Interpolated observed dense curves (diagnostic, not measured data)
-                if _show_obs_interp and df_dense is not None:
-                    _df_site_oi = df_dense[
-                        (df_dense["series_type"] == "observed_interpolated_dense")
-                        & (df_dense["entity_type"] == "Phosphosite")
-                        & (df_dense["entity"] == site_key)
-                    ]
-                    if not _df_site_oi.empty:
-                        _td_oi = _df_site_oi["time"].values
-                        _td_oi_mask = (_td_oi >= time_range[0]) & (_td_oi <= time_range[1])
-                        fig_fit.add_trace(
-                            go.Scatter(
-                                x=_td_oi[_td_oi_mask],
-                                y=_df_site_oi["value"].values[_td_oi_mask],
-                                mode="lines",
-                                name=f"{label} (obs. interp. - diagnostic only)",
-                                line=dict(width=1, color=c, dash="dash"),
-                                opacity=0.55,
-                            ),
-                            row=1,
-                            col=col_offset,
-                        )
-
-            fig_fit.update_yaxes(
-                title_text="Relative phosphosite signal", row=1, col=col_offset
-            )
-            fig_fit.update_xaxes(title_text="Time (min)")
-            fig_fit.update_layout(
-                height=480,
-                template="plotly_white",
-                hovermode="x unified",
-                title=f"Fit trajectories — {selected_protein}",
-            )
-            st.plotly_chart(fig_fit, use_container_width=True)
-
-            # Dense output info box
-            if _has_dense:
-                _info_parts = ["Dense output available from `fit_timeseries_dense.tsv`."]
-                if _has_simulated_dense:
-                    _info_parts.append(
-                        "**Dense model curves** (dotted) = ODE simulation on fine grid, "
-                        "NOT used in optimisation loss."
+                if n_dense_traces > 0:
+                    _style_fit_plot(
+                        fig_sites_dense,
+                        height=480,
+                        title=f"{selected_protein} dense relative phosphosite signal",
+                        x_title="Time (min)",
+                        y_title="Relative phosphosite signal",
                     )
-                if _has_obs_interp:
-                    _info_parts.append(
-                        "**Interpolated observed** (dashed, diagnostic only) = cubic/linear "
-                        "interpolation of sparse measured values — diagnostic only, "
-                        "NOT measured data."
+                    fig_sites_dense.update_layout(
+                        legend=_legend_below(y=-0.22, font_size=9),
+                        margin=dict(l=50, r=20, t=60, b=120),
                     )
+                    if use_logx:
+                        fig_sites_dense.update_xaxes(type="log")
+                    st.plotly_chart(fig_sites_dense, use_container_width=True)
+                else:
+                    st.info("Dense phosphosite data not available for this selected protein.")
+            else:
+                st.info("`fit_timeseries_dense.tsv` not found or no phosphosite rows available.")
+
+        # ------------------------------------------------------------------
+        # Dense interpretation note
+        # ------------------------------------------------------------------
+        if _has_dense or df_mrna_dense is not None:
+            _info_parts = []
+
+            if _has_simulated_dense:
+                _info_parts.append(
+                    "**sim** = dense ODE simulation on a fine grid; not additional optimization observations."
+                )
+
+            if _has_obs_interp:
+                _info_parts.append(
+                    "**obs** = interpolated sparse observed values; diagnostic only, not measured data."
+                )
+
+            if df_mrna_dense is not None:
+                _info_parts.append(
+                    "Dense mRNA curves are loaded from `mrna_fit_timeseries_dense.tsv`."
+                )
+
+            if _info_parts:
                 st.info("  \n".join(_info_parts))
 
-        with st.expander("Download fit table"):
+        # ------------------------------------------------------------------
+        # Downloads
+        # ------------------------------------------------------------------
+        with st.expander("Download sparse fit table"):
             st.dataframe(df_ft, use_container_width=True)
             st.download_button(
-                "Download CSV",
+                "Download sparse fit CSV",
                 df_ft.to_csv(index=False).encode(),
                 file_name="fit_timeseries.csv",
             )
+
         if _has_dense:
             with st.expander("Download dense timeseries table"):
                 st.dataframe(df_dense, use_container_width=True)
                 st.download_button(
-                    "Download dense CSV",
+                    "Download dense fit CSV",
                     df_dense.to_csv(index=False).encode(),
                     file_name="fit_timeseries_dense.csv",
                 )
 
+        if df_mrna_dense is not None:
+            with st.expander("Download dense mRNA timeseries table"):
+                st.dataframe(df_mrna_dense, use_container_width=True)
+                st.download_button(
+                    "Download dense mRNA CSV",
+                    df_mrna_dense.to_csv(index=False).encode(),
+                    file_name="mrna_fit_timeseries_dense.csv",
+                )
 # ══════════════════════════════════════════════════════════════════════════
 # C · INTERNAL STATES
 # ══════════════════════════════════════════════════════════════════════════
@@ -2703,10 +2843,6 @@ with tab_neural:
 
 def _render_plotly_network(df_net: pd.DataFrame, src_col: str, tgt_col: str) -> None:
     """Render a small network as Plotly scatter-with-lines."""
-    if not _HAS_NX:
-        st.info("networkx not installed; cannot render network.")
-        return
-
     G = _nx.DiGraph()
     weight_col = (
         "Weight_Fitted"

@@ -125,7 +125,7 @@
 data              = "data_timeseries/input1.csv"
 ptm_intra         = "data_curated/processed/ptm_intra.db"
 ptm_inter         = "data_curated/processed/ptm_inter.db"
-output_dir        = "thesis_dist"
+output_dir        = "test_rand"
 
 crosstalk_tsv     = ""
 rna_data          = "data_timeseries/input3.csv"
@@ -169,7 +169,7 @@ unified_graph_pkl = "data_curated/processed/unified_kinase_graph.gpickle"
 #   true  – TF-related proteins may be added when RNA/TF network supports them.
 # =============================================================================
 [model]
-mechanism               = "dist"      # options: "dist" | "seq" | "rand"
+mechanism               = "rand"      # options: "dist" | "seq" | "rand"
 scale_mode              = "none"      # options: "none" | "minmax" | "log-minmax"
 length_scale            = 25.0
 weight_scheme           = "uniform"   # options: uniform, early_emphasis, early_emphasis_moderate, late_emphasis, flat_no_noise
@@ -250,7 +250,7 @@ include_tfs_as_proteins = false
 #   These are not ODE tolerances.
 # =============================================================================
 [optimisation]
-n_starts      = 5
+n_starts      = 20
 max_steps     = 500
 
 ls_solver     = "lm"         # options: "lm" | "gauss_newton" | "dogleg" | "indirect_lm"
@@ -646,9 +646,9 @@ rna_relax = 0.02
 #   After fitting is stable, enable analyses one by one.
 # =============================================================================
 [analysis]
-tune            = false
-run_steadystate = false
-run_knockouts   = false
+tune            = true
+run_steadystate = true
+run_knockouts   = true
 run_sensitivity = false
 
 
