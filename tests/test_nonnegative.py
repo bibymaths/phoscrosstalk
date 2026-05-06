@@ -277,7 +277,6 @@ def test_simulate_nonneg_outputs():
     m = _make_tiny(K=2, M=3, N=4, T=6)
 
     result = simulate(
-        m["dims"],
         m["t"],
         m["P_data"],
         m["A_data"],

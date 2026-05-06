@@ -27,7 +27,6 @@ def test_simulate_requires_explicit_dims():
     receptor_mask_kin = np.array([0, 0], dtype=np.int64)
 
     P_sim, A_sim = simulate(
-        dims,
         t,
         P_data,
         A_data,
