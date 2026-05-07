@@ -543,7 +543,7 @@ def run_steadystate_analysis(
       steadystate_convergence.tsv  -- per-state absolute and relative last-step deltas
       steadystate_metadata.json    -- horizon, tolerances, event info, solve status
     """
-    logger.info("\n[*] Running long-horizon relaxation analysis...")
+    logger.info("[*] Running Steady-state analysis")
     ss_dir = os.path.join(outdir, "steadystate")
     os.makedirs(ss_dir, exist_ok=True)
 
@@ -555,11 +555,12 @@ def run_steadystate_analysis(
         n_late=n_late,
         late_grid=late_grid,
     )
-    logger.info(
-        f"   -> Time grid: {len(t_long)} points  "
-        f"[{t_long[0]:.1f}, {t_long[-1]:.1f}] min  "
-        f"(early_end={early_end}, late_grid={late_grid!r})"
-    )
+    logger.info("   -> Time grid:")
+    logger.info("      Points = %d", len(t_long))
+    logger.info("      Start = %.1f min", t_long[0])
+    logger.info("      End = %.1f min", t_long[-1])
+    logger.info("      Early end = %s", early_end)
+    logger.info("      Late grid = %r", late_grid)
 
     # 2. Build initial conditions
     if dims is None:
@@ -581,21 +582,28 @@ def run_steadystate_analysis(
     R_data0 = getattr(problem, "R_data0", None)
     rna_relax = getattr(problem, "rna_relax", 0.1)
 
+    logger.info("   -> Derived/input rate functions:")
     logger.info(
-        f"   -> k_act_fn={'set' if k_act_fn is not None else 'None (constant 1.0)'}  "
-        f"s_prod_fn={'set' if s_prod_fn is not None else 'None (constant 0.1)'}  "
-        f"R_data0={'set' if R_data0 is not None else 'None (default 1.0)'}  "
-        f"rna_relax={rna_relax}"
+        "      k_act_fn = %s",
+        "set" if k_act_fn is not None else "None (constant 1.0)",
     )
+    logger.info(
+        "      s_prod_fn = %s",
+        "set" if s_prod_fn is not None else "None (constant 0.1)",
+    )
+    logger.info(
+        "      R_data0 = %s",
+        "set" if R_data0 is not None else "None (default 1.0)",
+    )
+    logger.info("      rna_relax = %s", rna_relax)
 
     # 3. Run simulation using Diffrax-native steady-state event (or plain simulate)
     _solve_dt0 = dt0 if dt0 is not None else 0.01
 
     if use_event:
-        logger.info(
-            f"   -> Using diffrax.steady_state_event "
-            f"(event_rtol={event_rtol or rtol:.1e}, event_atol={event_atol or atol:.1e})"
-        )
+        logger.info("   -> Using diffrax.steady_state_event:")
+        logger.info("      event_rtol = %.1e", event_rtol or rtol)
+        logger.info("      event_atol = %.1e", event_atol or atol)
         try:
             P_ss, A_ss, S_ss, Kdyn_ss, t_out, solve_status, t_final_actual = (
                 _run_steadystate_solve(
@@ -681,12 +689,18 @@ def run_steadystate_analysis(
     # Log termination status
     _status_msg = {
         "successful": "Solve reached t_end normally.",
-        "event_occurred": f"Steady-state event fired; solution converged at t≈{t_final_actual:.1f} min (< t_end={t_end:.1f}).",
+        "event_occurred": (
+            f"Steady-state event fired; solution converged at "
+            f"t≈{t_final_actual:.1f} min (< t_end={t_end:.1f})."
+        ),
         "max_steps_reached": "Max steps reached before t_end; output may be incomplete.",
         "failed": "Solve failed; check diagnostics.",
         "unknown": "Status unknown.",
     }.get(solve_status, f"Status: {solve_status}")
-    logger.info(f"   -> {_status_msg}")
+
+    logger.info("   -> Solve status:")
+    logger.info("      Status key = %s", solve_status)
+    logger.info("      Message = %s", _status_msg)
 
     # Compute final derivative norm and state norm for logging/metadata
     final_deriv_norm = None
@@ -705,11 +719,10 @@ def run_steadystate_analysis(
                 deriv_proxy = np.abs(finite_last - finite_prev)
                 final_deriv_norm = float(np.sqrt(np.mean(deriv_proxy**2)))
 
-    logger.info(
-        f"   -> t_final={t_final_actual:.2f}  "
-        f"final_state_norm(P)={final_state_norm}  "
-        f"final_deriv_norm_proxy(P)={final_deriv_norm}"
-    )
+    logger.info("   -> Final solve diagnostics:")
+    logger.info("      t_final = %.2f", t_final_actual)
+    logger.info("      final_state_norm(P) = %s", final_state_norm)
+    logger.info("      final_deriv_norm_proxy(P) = %s", final_deriv_norm)
 
     # 4. Non-finite diagnostics
     matrices = {
@@ -856,7 +869,7 @@ def run_steadystate_analysis(
         final_state_norm=final_state_norm,
     )
 
-    logger.info("[*] Long-horizon relaxation analysis complete.")
+    logger.success("[*] Steady state analysis complete.")
 
 
 def _plot_convergence_heatmap(

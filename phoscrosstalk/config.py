@@ -13,6 +13,7 @@ Provides:
 """
 import logging
 import os
+import sys
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -313,6 +314,51 @@ def load_config(path: str | None = None) -> SimpleNamespace:
 
     return _to_ns(merged)
 
+def _read_runtime_config():
+    """
+    Pre-parse the ``[runtime]`` section and the ``n_starts`` value from the
+    config file so that ``plan_cpu_runtime`` can be called before any JAX
+    import.
+
+    Uses only the standard library so that no JAX import can happen before
+    the env vars are configured.  Returns safe defaults on any error.
+    """
+    _defaults = {
+        "cpu_threads": "auto",
+        "parallel_starts": "auto",
+        "threads_per_start": "auto",
+        "use_physical_cores": True,
+        "reserve_cores": 0,
+        "n_starts": 1,
+    }
+    try:
+        try:
+            import tomllib  # stdlib Python >= 3.11
+        except ModuleNotFoundError:
+            import tomli as tomllib  # fallback
+
+        argv = sys.argv[1:]
+        config_path = "./config.toml"
+        for i, arg in enumerate(argv):
+            if arg == "--config" and i + 1 < len(argv):
+                config_path = argv[i + 1]
+            elif arg.startswith("--config="):
+                config_path = arg.split("=", 1)[1]
+
+        with open(config_path, "rb") as _f:
+            raw = tomllib.load(_f)
+        rt = raw.get("runtime", {})
+        opt = raw.get("optimisation", {})
+        return {
+            "cpu_threads": rt.get("cpu_threads", "auto"),
+            "parallel_starts": rt.get("parallel_starts", "auto"),
+            "threads_per_start": rt.get("threads_per_start", "auto"),
+            "use_physical_cores": rt.get("use_physical_cores", True),
+            "reserve_cores": rt.get("reserve_cores", 0),
+            "n_starts": opt.get("n_starts", 1),
+        }
+    except Exception:
+        return _defaults
 
 # ---------------------------------------------------------------------------
 # Config validator

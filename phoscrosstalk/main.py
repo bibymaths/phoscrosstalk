@@ -19,57 +19,9 @@ Entry point for the Global Phospho-Network Model orchestration.
 
 import os
 import pathlib
-import sys
 
+from phoscrosstalk.config import _read_runtime_config
 from phoscrosstalk.utils import sync_gitignore, print_config_summary, save_model_table
-
-
-def _read_runtime_config():
-    """
-    Pre-parse the ``[runtime]`` section and the ``n_starts`` value from the
-    config file so that ``plan_cpu_runtime`` can be called before any JAX
-    import.
-
-    Uses only the standard library so that no JAX import can happen before
-    the env vars are configured.  Returns safe defaults on any error.
-    """
-    _defaults = {
-        "cpu_threads": "auto",
-        "parallel_starts": "auto",
-        "threads_per_start": "auto",
-        "use_physical_cores": True,
-        "reserve_cores": 0,
-        "n_starts": 1,
-    }
-    try:
-        try:
-            import tomllib  # stdlib Python >= 3.11
-        except ModuleNotFoundError:
-            import tomli as tomllib  # fallback
-
-        argv = sys.argv[1:]
-        config_path = "./config.toml"
-        for i, arg in enumerate(argv):
-            if arg == "--config" and i + 1 < len(argv):
-                config_path = argv[i + 1]
-            elif arg.startswith("--config="):
-                config_path = arg.split("=", 1)[1]
-
-        with open(config_path, "rb") as _f:
-            raw = tomllib.load(_f)
-        rt = raw.get("runtime", {})
-        opt = raw.get("optimisation", {})
-        return {
-            "cpu_threads": rt.get("cpu_threads", "auto"),
-            "parallel_starts": rt.get("parallel_starts", "auto"),
-            "threads_per_start": rt.get("threads_per_start", "auto"),
-            "use_physical_cores": rt.get("use_physical_cores", True),
-            "reserve_cores": rt.get("reserve_cores", 0),
-            "n_starts": opt.get("n_starts", 1),
-        }
-    except Exception:
-        return _defaults
-
 
 from phoscrosstalk.runtime_env import (  # noqa: E402
     enable_x64,
@@ -104,7 +56,7 @@ import pandas as pd
 
 from phoscrosstalk import analysis, data_loader, hyperparam, knockouts, steadystate
 from phoscrosstalk.analysis import _save_preopt_snapshot_txt_csv
-from phoscrosstalk.config import ModelDims, _opt, load_config, validate_config
+from phoscrosstalk.config import ModelDims, _opt, load_config, validate_config, _read_runtime_config
 from phoscrosstalk.derived_rates import make_k_act_fn, make_s_prod_fn
 from phoscrosstalk.equations import generate_equations_report
 from phoscrosstalk.logger import get_logger
@@ -308,6 +260,9 @@ def main():
     # PRINT CONFIG SUMMARY AND RUNTIME ENVIRONMENT
     # ------------------------------------------------------------------
     sync_gitignore()
+    # Create output directory
+    os.makedirs(outdir, exist_ok=True)
+    logger.success(f"[*] Results will be saved here : {outdir}")
     print_config_summary(cfg, config_path)
     log_env_summary(logger, plan=_cpu_plan)
     logger.info(
@@ -319,9 +274,7 @@ def main():
         getattr(getattr(cfg, "runtime", None), "cpu_threads", "auto"),
     )
 
-    # Create output directory
-    os.makedirs(outdir, exist_ok=True)
-    logger.header(f"[*] Output directory: {outdir}")
+    logger.header("[*] Loading and preprocessing timeseries data")
 
     (
         _net_allowed_sites,
@@ -362,8 +315,6 @@ def main():
                 pass
         _tmp_files_to_cleanup.clear()
 
-    logger.success(f"[*] Loaded {len(sites)} sites, {len(proteins)} proteins.")
-
     # 2. Load optional mRNA data and TF network
     gene_ids = None
     t_rna = None
@@ -392,6 +343,8 @@ def main():
         logger.success(
             f"[*] Loaded mRNA data: {len(gene_ids)} genes x {len(t_rna)} time points."
         )
+
+    logger.success(f"[*] Loaded {len(sites)} phosphorylation sites & {len(proteins)} proteins.")
 
     if args.tf_net:
         tf_net_df = data_loader.load_tf_network(args.tf_net, gene_ids=gene_ids)
@@ -460,6 +413,7 @@ def main():
         A_bases, A_amps = np.array([]), np.array([])
 
     # 5. Weights
+    logger.info(f"[*] Building weight matrices")
     W_data, W_data_prot, W_data_mrna = build_weight_matrices(
         t=t,
         Y=Y,
@@ -468,6 +422,8 @@ def main():
         rna_data=rna_matrix,
         scheme=args.weight_scheme,
     )
+
+    logger.success(f"[*] Weight matrices built successfully")
 
     # H3: Validate biological inputs (non-negative finite data) before fitting.
     from phoscrosstalk.optimization import validate_biological_inputs  # noqa: PLC0415
@@ -481,6 +437,7 @@ def main():
     )
 
     # 6. Matrices & Graph
+    logger.info(f"[*] Building matrices and graph")
     Cg, Cl = data_loader.build_C_matrices_from_db(
         args.ptm_intra,
         args.ptm_inter,
@@ -491,18 +448,25 @@ def main():
         args.length_scale,
     )
     Cg, Cl = data_loader.row_normalize(Cg), data_loader.row_normalize(Cl)
+    logger.success(f"[*] Matrices and graph built successfully")
 
     if args.kinase_tsv:
+        logger.info(f"[*] Loading kinase-site matrix from {args.kinase_tsv}")
         K_site_kin, kinases = data_loader.load_kinase_site_matrix(
             args.kinase_tsv, sites
         )
+        logger.success(f"[*] Kinase-site matrix loaded successfully")
     elif args.kea_ks_table:
+        logger.info(f"[*] Building kinase-site matrix from KEA table {args.kea_ks_table}")
         K_site_kin, kinases = data_loader.build_kinase_site_from_kea(
             args.kea_ks_table, sites
         )
+        logger.success(f"[*] Kinase-site matrix built successfully")
     else:
+        logger.info("[*] No kinase-site data provided; using identity matrix (each site regulated by its own kinase).")
         K_site_kin = np.eye(len(sites))
         kinases = [f"K_{i}" for i in range(len(sites))]
+        logger.success(f"[*] Kinase-site matrix initialized successfully")
 
     # Transpose kinase-site matrix & normalize
     R = np.ascontiguousarray(K_site_kin.T)
@@ -512,9 +476,13 @@ def main():
 
     L_alpha = np.zeros((len(kinases), len(kinases)))
     if args.unified_graph_pkl and args.lambda_net > 0:
+        logger.info(f"[*] Building alpha Laplacian from unified graph {args.unified_graph_pkl}")
         L_alpha = data_loader.build_alpha_laplacian_from_unified_graph(
             args.unified_graph_pkl, kinases
         )
+        logger.success(f"[*] Alpha Laplacian built successfully")
+        logger.info(f"[*] Alpha Laplacian shape: {L_alpha.shape}")
+
 
     # 7. Mappings & Masks
     prot_map_all = {p: i for i, p in enumerate(proteins)}
@@ -524,8 +492,10 @@ def main():
         A_data=A_scaled if A_scaled.size > 0 else None,
         kin_to_prot_idx=kin_to_prot_idx,
     )
+    logger.success(f"[*] Model dimensions initialized successfully")
 
-    # receptor_names / receptor_kin_names come from cfg.model (set above in args)
+    logger.header("[*] Model network universe")
+    # receptor_names / receptor_kin_names come from cfg.model
     receptor_mask_prot = np.array(
         [1 if p in receptor_names else 0 for p in proteins], dtype=int
     )
@@ -562,6 +532,7 @@ def main():
         )
 
     # 7b. Build entity metadata masks (prior support, TF membership, RNA presence)
+    logger.info(f"[*] Building entity metadata masks")
     entity_masks = data_loader.build_protein_entity_masks(
         proteins=proteins,
         sites=sites,
@@ -572,6 +543,7 @@ def main():
         gene_ids=gene_ids,
         include_tfs_as_proteins=include_tfs_as_proteins,
     )
+    logger.success(f"[*] Entity metadata masks built successfully")
 
     # Log TF network overlap counts
     logger.info(
@@ -630,7 +602,7 @@ def main():
         s_prod_fn_type=s_prod_fn_type,
         interp_mode=interp_mode,
     )
-    logger.info("[*] Built derived rate closures k_act_fn and s_prod_fn.")
+    logger.success(f"[*] Derived rate closures k_act_fn and s_prod_fn built successfully")
 
     # --- HYPERPARAMETER TUNING ---
     if args.tune:
@@ -666,7 +638,7 @@ def main():
             f"LN={args.lambda_net}, Reg={args.reg_lambda}"
         )
 
-    logger.info(f"[*] Building final matrices with Length Scale {args.length_scale}...")
+    logger.info(f"[*] Building Cl (local) & Cg (global) with Length Scale {args.length_scale} from database")
     _, Cl = data_loader.build_C_matrices_from_db(
         args.ptm_intra,
         args.ptm_inter,
@@ -677,6 +649,8 @@ def main():
         length_scale=args.length_scale,
     )
     Cl = data_loader.row_normalize(Cl)
+    logger.success(f"[*] Final C matrices built successfully with tuned Length Scale.")
+
 
     # 9. Global Setup & Bounds
     logger.header("[*] Model dimension summary")
@@ -701,9 +675,8 @@ def main():
     logger.info("    Sources in model proteins = %d", n_sources_in_proteins)
     logger.info("    Targets in model proteins = %d", n_targets_in_proteins)
 
-
-    logger.warning("[DEBUG] Stopping execution here.")
-    raise SystemExit(0)
+    # logger.warning("[DEBUG] Stopping execution here.")
+    # raise SystemExit(0)
 
     xl, xu, dim = create_bounds(
         dims.K,
@@ -790,6 +763,8 @@ def main():
         args=args,
     )
 
+    logger.success(f"[*] Saved snapshot pre-optimization")
+
     # 10. Build RNA-to-model-protein mapping (must happen BEFORE NetworkProblem)
     rna_fit_genes = []
     rna_obs_matched = None
@@ -829,7 +804,7 @@ def main():
     # 11. Optimisation
     logger.info(
         f"[*] Initialising Optimistix problem ({args.n_starts} starts, "
-        f"max_steps={args.max_steps})..."
+        f"max_steps={args.max_steps})"
     )
 
     problem = NetworkOptimizationProblem(
@@ -874,6 +849,8 @@ def main():
         max_steps=args.solver_max_steps,
     )
 
+    logger.success(f"[*] Network problem initialized successfully")
+
     # Store picklable rebuild kwargs on problem so that parallel multi-start
     # workers can reconstruct k_act_fn / s_prod_fn inside the worker process
     # without receiving non-picklable JAX closures across process boundaries.
@@ -902,7 +879,7 @@ def main():
     # Validate problem shapes before starting optimization
     try:
         validate_problem_shapes(problem)
-        logger.info("[*] Problem shape validation passed.")
+        logger.success("[*] Problem shape validation passed.")
     except ValueError as e:
         logger.warning(f"[!] Problem shape validation warnings:\n{e}")
 
@@ -931,9 +908,12 @@ def main():
         s_prod_fn=s_prod_fn,
         t_rna=t_rna,
     )
+    logger.success(f"[*] Derived rates saved successfully")
 
     analysis.save_run_results(outdir, F, X, f1, f2, f3, total_losses, F[best_idx], f4=f4)
+    logger.success(f"[*] Run results saved successfully")
     analysis.plot_run_diagnostics(outdir, F, F[best_idx], f1, f2, f3, X, f4=f4)
+    logger.success(f"[*] Run diagnostics plotted successfully")
 
     analysis.save_fitted_simulation(
         outdir,
@@ -969,6 +949,7 @@ def main():
         data_interpolation_cfg=getattr(cfg, "data_interpolation", None),
         t_rna=t_rna,
     )
+    logger.success(f"[*] Fitted simulation saved successfully")
 
     # mRNA outputs (only when RNA data was provided and RNA matched model proteins)
     if rna_matrix is not None and gene_ids is not None and len(rna_fit_genes) > 0:
@@ -1068,8 +1049,9 @@ def main():
     # 13. Optional post-fit neural latent-rate refinement
     _neural_cfg = getattr(cfg, "neural_ode", None)
     if _neural_cfg is not None and getattr(_neural_cfg, "enabled", False):
-        from phoscrosstalk.neural_ode import run_neural_latent_rate_refinement, save_neural_ode_plots  # noqa: PLC0415
+        from phoscrosstalk.neuralODE import run_neural_latent_rate_refinement, save_neural_ode_plots  # noqa: PLC0415
 
+        logger.header("[*] Running post-fit neural latent-rate refinement")
         jaxpr_out_dir = None
         if getattr(cfg.debug, "save_jaxpr_reports", False):
             jaxpr_out_dir = str(pathlib.Path(outdir) / "jaxpr_reports")

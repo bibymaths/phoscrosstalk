@@ -1,5 +1,5 @@
 """
-neural_ode.py
+neuralODE.py
 Post-fit neural latent-rate refinement for the phospho-network model.
 
 Implements a Mechanistic Graph-Constrained Latent Neural ODE.

@@ -130,7 +130,7 @@ def test_neural_rate_generator_forward_shape(small_dims):
     import jax
     import jax.numpy as jnp
 
-    from phoscrosstalk.neural_ode import NeuralRateGenerator
+    from phoscrosstalk.neuralODE import NeuralRateGenerator
 
     K, M, N = small_dims
     key = jax.random.PRNGKey(42)
@@ -149,7 +149,7 @@ def test_neural_rate_generator_positive_output(small_dims):
     import jax
     import jax.numpy as jnp
 
-    from phoscrosstalk.neural_ode import NeuralRateGenerator
+    from phoscrosstalk.neuralODE import NeuralRateGenerator
 
     K, M, N = small_dims
     key = jax.random.PRNGKey(7)
@@ -170,7 +170,7 @@ def test_latent_rate_mlp_forward_shape(small_dims):
     import jax
     import jax.numpy as jnp
 
-    from phoscrosstalk.neural_ode import LatentRateMLP
+    from phoscrosstalk.neuralODE import LatentRateMLP
 
     K, M, N = small_dims
     in_size = 1 + K + K
@@ -196,7 +196,7 @@ def test_prior_loss_near_zero_when_rates_match(small_dims):
     import jax
     import jax.numpy as jnp
 
-    from phoscrosstalk.neural_ode import NeuralRateGenerator, _EPS
+    from phoscrosstalk.neuralODE import NeuralRateGenerator, _EPS
 
     K, M, N = small_dims
     key = jax.random.PRNGKey(0)
@@ -257,7 +257,7 @@ def test_neural_refinement_writes_outputs_and_preserves_mechanistic(tmp_path):
     import jax.numpy as jnp
 
     from phoscrosstalk.config import ModelDims
-    from phoscrosstalk.neural_ode import run_neural_latent_rate_refinement
+    from phoscrosstalk.neuralODE import run_neural_latent_rate_refinement
 
     K, M, N = 2, 2, 3
 
@@ -362,7 +362,7 @@ def test_theta_best_unchanged_after_neural_refinement(tmp_path):
     import jax.numpy as jnp
 
     from phoscrosstalk.config import ModelDims
-    from phoscrosstalk.neural_ode import run_neural_latent_rate_refinement
+    from phoscrosstalk.neuralODE import run_neural_latent_rate_refinement
 
     K, M, N = 2, 2, 3
     ModelDims.set_dims(K, M, N)
@@ -442,7 +442,7 @@ def test_training_losses_tsv_columns(tmp_path):
     import jax.numpy as jnp
 
     from phoscrosstalk.config import ModelDims
-    from phoscrosstalk.neural_ode import run_neural_latent_rate_refinement
+    from phoscrosstalk.neuralODE import run_neural_latent_rate_refinement
     import pandas as pd
 
     K, M, N = 2, 2, 3

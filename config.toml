@@ -129,8 +129,8 @@ output_dir        = "test_dist"
 
 crosstalk_tsv     = ""
 rna_data          = "data_timeseries/input3.csv"
-tf_net            = "data_subset/subnetwork_EPHA2_LYN/tf_mrna_subset.csv"
-kinase_tsv        = "data_subset/subnetwork_EPHA2_LYN/kinase_sites_subset.tsv"
+tf_net            = "data_subset/subnetwork_ABL2_CLK3_GRK5_GSK3A/tf_mrna_subset.csv"
+kinase_tsv        = "data_subset/subnetwork_ABL2_CLK3_GRK5_GSK3A/kinase_sites_subset.tsv"
 kea_ks_table      = ""
 unified_graph_pkl = "data_curated/processed/unified_kinase_graph.gpickle"
 
