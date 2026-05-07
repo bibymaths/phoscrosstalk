@@ -1,5 +1,7 @@
 import tomllib
 from pathlib import Path
+from phoscrosstalk.logger import get_logger
+logger = get_logger()
 
 MARKER_START = "# >>> auto-generated from config.toml [paths] >>>"
 MARKER_END   = "# <<< end auto-generated <<<"
@@ -30,4 +32,4 @@ def sync_gitignore(config_path: str = "config.toml", gitignore_path: str = ".git
 
     final = filtered + [""] + new_block
     gitignore_path.write_text("\n".join(final) + "\n")
-    print("✔ .gitignore synced from config.toml [paths]")
+    logger.success(f"[*] '{gitignore_path.name}' synced from config.toml [paths]")

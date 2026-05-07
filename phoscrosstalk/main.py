@@ -21,7 +21,7 @@ import os
 import pathlib
 import sys
 
-from phoscrosstalk.utils import sync_gitignore
+from phoscrosstalk.utils import sync_gitignore, print_config_summary, save_model_table
 
 
 def _read_runtime_config():
@@ -111,7 +111,7 @@ from phoscrosstalk.logger import get_logger
 from phoscrosstalk.logo import print_logo
 from phoscrosstalk.multistarts import run_multi_start_optimization
 from phoscrosstalk.optimization import (
-    NetworkProblem as NetworkOptimizationProblem,
+    NetworkProblem as NetworkOptimizationProblem, bounds_to_original_scale,
 )
 from phoscrosstalk.optimization import (
     create_bounds,
@@ -134,150 +134,7 @@ from phoscrosstalk.data_loader import (
 from phoscrosstalk.sensitivity import _generate_param_labels, run_global_sensitivity
 from phoscrosstalk.weighting import build_weight_matrices
 
-logger = get_logger(__name__)
-
-
-def _save_model_entities_table(
-    outdir, proteins, sites, site_prot_idx, entity_masks, gene_ids, A_proteins
-):
-    """
-    Save a model_entities.tsv file recording each protein's prior support and
-    inclusion reason.
-
-    Args:
-        outdir (str): Output directory.
-        proteins (list[str]): Model protein names (length K).
-        sites (list[str]): Phosphosite labels (length N).
-        site_prot_idx (np.ndarray): Maps each site to its protein index.
-        entity_masks (dict): Output of ``build_protein_entity_masks()``.
-        gene_ids (list[str] or None): Gene IDs in the mRNA dataset.
-        A_proteins (np.ndarray or None): Protein names with abundance data.
-    """
-    K = len(proteins)
-    # Count phosphosites per protein
-    n_psites = np.zeros(K, dtype=int)
-    for p_idx in site_prot_idx:
-        n_psites[p_idx] += 1
-
-    # Which proteins have abundance observations
-    prot_has_abundance = np.zeros(K, dtype=bool)
-    if A_proteins is not None:
-        prot_idx_map = {p: i for i, p in enumerate(proteins)}
-        for pname in A_proteins:
-            if pname in prot_idx_map:
-                prot_has_abundance[prot_idx_map[pname]] = True
-
-    rows = []
-    for p_idx, p_name in enumerate(proteins):
-        rows.append(
-            {
-                "protein": p_name,
-                "has_rna_observation": bool(entity_masks["protein_has_rna"][p_idx]),
-                "has_protein_observation": bool(prot_has_abundance[p_idx]),
-                "n_phosphosites": int(n_psites[p_idx]),
-                "is_tf_source": bool(entity_masks["protein_is_tf_source"][p_idx]),
-                "is_tf_target": bool(entity_masks["protein_is_tf_target"][p_idx]),
-                "has_tf_input": bool(entity_masks["protein_has_tf_input"][p_idx]),
-                "has_kinase_prior": bool(
-                    entity_masks["protein_has_kinase_prior"][p_idx]
-                ),
-                "included_by_extended_mode": bool(
-                    entity_masks["included_by_extended_mode"][p_idx]
-                ),
-            }
-        )
-
-    df = pd.DataFrame(rows)
-    path = os.path.join(outdir, "model_entities.tsv")
-    df.to_csv(path, sep="\t", index=False)
-
-    # Also save masks to preopt_snapshot/
-    snap_dir = os.path.join(outdir, "preopt_snapshot")
-    os.makedirs(snap_dir, exist_ok=True)
-    df.to_csv(os.path.join(snap_dir, "model_entities.tsv"), sep="\t", index=False)
-
-    # Save site-level kinase prior mask
-    site_mask_rows = [
-        {
-            "site": s,
-            "has_kinase_prior": bool(entity_masks["site_has_kinase_prior"][i]),
-        }
-        for i, s in enumerate(sites)
-    ]
-    pd.DataFrame(site_mask_rows).to_csv(
-        os.path.join(snap_dir, "site_kinase_prior_mask.tsv"), sep="\t", index=False
-    )
-
-
-def _print_config_summary(cfg, config_path: str) -> None:
-    """Print a compact, human-readable summary of validated configuration."""
-    p = cfg.paths
-    m = cfg.model
-    o = cfg.optimisation
-    s = cfg.solver
-    lw = cfg.loss_weights
-    an = getattr(cfg, "analysis", None)
-
-    def _opt(v):
-        v = (v or "").strip()
-        return v if v else "(not set)"
-
-    lines = [
-        "",
-        "╔══════════════════════════════════════════════════════╗",
-        f"  PhosCrosstalk  –  config: {config_path}",
-        "╚══════════════════════════════════════════════════════╝",
-        "",
-        "  [paths]",
-        f"    data            = {p.data}",
-        f"    ptm_intra       = {p.ptm_intra}",
-        f"    ptm_inter       = {p.ptm_inter}",
-        f"    output_dir      = {p.output_dir}",
-        f"    rna_data        = {_opt(p.rna_data)}",
-        f"    tf_net          = {_opt(p.tf_net)}",
-        f"    kinase_tsv      = {_opt(p.kinase_tsv)}",
-        f"    kea_ks_table    = {_opt(p.kea_ks_table)}",
-        f"    unified_graph   = {_opt(p.unified_graph_pkl)}",
-        "",
-        "  [model]",
-        f"    mechanism               = {m.mechanism}",
-        f"    scale_mode              = {m.scale_mode}",
-        f"    length_scale            = {m.length_scale}",
-        f"    weight_scheme           = {m.weight_scheme}",
-        f"    include_tfs_as_proteins = {m.include_tfs_as_proteins}",
-        f"    receptors               = {list(m.receptors)}",
-        f"    receptor_kinases        = {list(m.receptor_kinases)}",
-        "",
-        "  [optimisation]",
-        f"    n_starts  = {o.n_starts}",
-        f"    max_steps = {o.max_steps}",
-        f"    ls_solver = {getattr(o, 'ls_solver', 'lm')}",
-        f"    optx_adjoint = {getattr(o, 'optx_adjoint', 'implicit')}",
-        f"    jac_mode = {getattr(o, 'jac_mode', 'fwd')}",
-        f"    lambda_net = {o.lambda_net}",
-        f"    reg_lambda = {o.reg_lambda}",
-        "",
-        "  [loss_weights]",
-        f"    phospho={lw.phospho}  abundance={lw.abundance}  "
-        f"    mrna={lw.mrna}  reg={lw.reg}",
-        "",
-        "  [solver]",
-        f"    ode_solver={getattr(s, 'ode_solver', 'tsit5')}  "
-        f"    ode_adjoint={getattr(s, 'ode_adjoint', 'forward')}",
-        f"    rtol={s.rtol}  atol={s.atol}  max_steps={s.max_steps}  "
-        f"    dt0={getattr(s, 'dt0', 0.01)}  "
-        f"    root_find_max_steps={getattr(s, 'root_find_max_steps', 10)}",
-        "",
-    ]
-    if an is not None:
-        lines += [
-            "  [analysis]",
-            f"    tune={an.tune}  steadystate={an.run_steadystate}  "
-            f"knockouts={an.run_knockouts}  sensitivity={an.run_sensitivity}",
-            "",
-        ]
-    logger.info("\n".join(lines))
-
+logger = get_logger("logs/pipeline.log", timestamp=True)
 
 def main():
     """
@@ -347,28 +204,6 @@ def main():
     include_tfs_as_proteins = bool(cfg.model.include_tfs_as_proteins)
     receptor_names = set(list(cfg.model.receptors))
     receptor_kin_names = set(list(cfg.model.receptor_kinases))
-
-    if receptor_names:
-        logger.info(
-            "[*] Config receptors (%d): %s",
-            len(receptor_names),
-            ", ".join(sorted(receptor_names)),
-        )
-    else:
-        logger.warning(
-            "[!] Config receptors list is empty: [model] receptors = []."
-        )
-
-    if receptor_kin_names:
-        logger.info(
-            "[*] Config receptor kinases (%d): %s",
-            len(receptor_kin_names),
-            ", ".join(sorted(receptor_kin_names)),
-        )
-    else:
-        logger.warning(
-            "[!] Config receptor_kinases list is empty: [model] receptor_kinases = []."
-        )
 
     # Optimisation / solver / misc – expose on a namespace for run_multi_start_optimization  # noqa: E501
     args = SimpleNamespace(
@@ -472,7 +307,8 @@ def main():
     # ------------------------------------------------------------------
     # PRINT CONFIG SUMMARY AND RUNTIME ENVIRONMENT
     # ------------------------------------------------------------------
-    _print_config_summary(cfg, config_path)
+    sync_gitignore()
+    print_config_summary(cfg, config_path)
     log_env_summary(logger, plan=_cpu_plan)
     logger.info(
         "[runtime_env] CPU threads configured: %d per run "
@@ -487,12 +323,6 @@ def main():
     os.makedirs(outdir, exist_ok=True)
     logger.header(f"[*] Output directory: {outdir}")
 
-    # ---------------------------------------------------------------------------
-    # TODO(data-loader-refactor): Pre-filter full datasets to the model universe
-    # defined by the biological networks.  Full files act as a measurement
-    # reservoir; kinase_tsv and tf_net define which entities enter the model.
-    # Remove these pre-filter calls once data_loader.py accepts allow-lists.
-    # ---------------------------------------------------------------------------
     (
         _net_allowed_sites,
         _net_allowed_kinases,
@@ -513,10 +343,7 @@ def main():
         include_tfs_as_proteins=include_tfs_as_proteins,
         logger_=logger,
     )
-    # --- end TODO(data-loader-refactor) pre-filter phospho ---
 
-    # Track temporary pre-filter files for cleanup after loaders return.
-    # H1: temp files must be deleted after use to prevent leaks.
     _tmp_files_to_cleanup = []
     if _filtered_data_path != args.data:
         _tmp_files_to_cleanup.append(_filtered_data_path)
@@ -545,9 +372,6 @@ def main():
     tf_net_df = None
 
     if args.rna_data:
-        # TODO(data-loader-refactor): Narrow the full RNA table to only the
-        # genes needed by the model before handing the path to load_rna_data().
-        # At this point proteins[] is already defined from load_site_data().
         _filtered_rna_path = _prefilter_rna_csv(
             rna_path=args.rna_data,
             model_proteins=proteins,  # defined in step 1 above
@@ -555,7 +379,6 @@ def main():
             tf_targets=_net_tf_targets,
             logger_=logger,
         )
-        # --- end TODO(data-loader-refactor) pre-filter RNA ---
         _rna_tmp = _filtered_rna_path if _filtered_rna_path != args.rna_data else None
         try:
             gene_ids, t_rna, rna_matrix = data_loader.load_rna_data(_filtered_rna_path)
@@ -716,6 +539,28 @@ def main():
             "External stimulus u(t) will be ignored."
         )
 
+    if receptor_names:
+        logger.info(
+            "[*] Config receptors (%d): %s",
+            len(receptor_names),
+            ", ".join(sorted(receptor_names)),
+        )
+    else:
+        logger.warning(
+            "[!] Config receptors list is empty: [model] receptors = []."
+        )
+
+    if receptor_kin_names:
+        logger.info(
+            "[*] Config receptor kinases (%d): %s",
+            len(receptor_kin_names),
+            ", ".join(sorted(receptor_kin_names)),
+        )
+    else:
+        logger.warning(
+            "[!] Config receptor_kinases list is empty: [model] receptor_kinases = []."
+        )
+
     # 7b. Build entity metadata masks (prior support, TF membership, RNA presence)
     entity_masks = data_loader.build_protein_entity_masks(
         proteins=proteins,
@@ -752,7 +597,7 @@ def main():
         )
 
     # Save model_entities.tsv
-    _save_model_entities_table(
+    save_model_table(
         outdir=outdir,
         proteins=proteins,
         sites=sites,
@@ -834,15 +679,39 @@ def main():
     Cl = data_loader.row_normalize(Cl)
 
     # 9. Global Setup & Bounds
-    logger.header(f"[*] K={dims.K}, M={dims.M}, N={dims.N}")
-    # H2: Pass cfg.bounds so that config-driven rate limits are respected.
-    xl, xu, dim = create_bounds(dims.K, dims.M, dims.N, bounds=getattr(cfg, "bounds", None))
+    logger.header("[*] Model dimension summary")
 
-    logger.info(
-        f"[DEBUG] create_bounds → xl type={type(xl)}, xu type={type(xu)}, dim={dim}"
+    n_tf_sources = int(entity_masks.get("n_tf_sources", 0))
+    n_tf_targets = int(entity_masks.get("n_tf_targets", 0))
+    n_sources_in_rna = int(entity_masks.get("n_sources_in_rna", 0))
+    n_targets_in_rna = int(entity_masks.get("n_targets_in_rna", 0))
+    n_sources_in_proteins = int(entity_masks.get("n_sources_in_proteins", 0))
+    n_targets_in_proteins = int(entity_masks.get("n_targets_in_proteins", 0))
+
+    logger.info("[*] Dimensions entering create_bounds:")
+    logger.info("    K = %d proteins", dims.K)
+    logger.info("    M = %d kinases", dims.M)
+    logger.info("    N = %d phosphorylation sites", dims.N)
+
+    logger.info("[*] Transcription factor network:")
+    logger.info("    TF sources = %d", n_tf_sources)
+    logger.info("    TF targets = %d", n_tf_targets)
+    logger.info("    Sources in RNA = %d", n_sources_in_rna)
+    logger.info("    Targets in RNA = %d", n_targets_in_rna)
+    logger.info("    Sources in model proteins = %d", n_sources_in_proteins)
+    logger.info("    Targets in model proteins = %d", n_targets_in_proteins)
+
+
+    logger.warning("[DEBUG] Stopping execution here.")
+    raise SystemExit(0)
+
+    xl, xu, dim = create_bounds(
+        dims.K,
+        dims.M,
+        dims.N,
+        bounds=getattr(cfg, "bounds", None),
     )
 
-    # Guard: create_bounds must return finite numpy arrays.
     if xl is None or xu is None:
         raise RuntimeError(
             f"create_bounds() returned None for xl={xl} or xu={xu}. "
@@ -850,10 +719,47 @@ def main():
             "This usually means ModelDims.set_dims() was called with zero dimensions — "
             "check that kinase_tsv/kea_ks_table loaded at least one site and one kinase."
         )
+
     xl = np.asarray(xl, dtype=float)
     xu = np.asarray(xu, dtype=float)
+
     assert np.all(np.isfinite(xl)) and np.all(np.isfinite(xu)), (
         f"create_bounds() returned non-finite values: xl={xl}, xu={xu}"
+    )
+
+    param_labels = _generate_param_labels(
+        dims.K,
+        dims.M,
+        dims.N,
+        proteins,
+        kinases,
+        sites,
+    )
+
+    xl_orig, xu_orig = bounds_to_original_scale(
+        xl,
+        xu,
+        dims.K,
+        dims.M,
+        dims.N,
+    )
+
+    bounds_df = pd.DataFrame(
+        {
+            "parameter": param_labels,
+            "optimizer_lower": xl,
+            "optimizer_upper": xu,
+            "original_lower": xl_orig,
+            "original_upper": xu_orig,
+        }
+    )
+
+    logger.header("Model parameters")
+
+    logger.info(
+        "[*] create_bounds → dim=%d\n%s",
+        dim,
+        bounds_df.to_string(index=False),
     )
 
     _save_preopt_snapshot_txt_csv(
@@ -1209,10 +1115,8 @@ def main():
 
 
 if __name__ == "__main__":
-    sync_gitignore()
     main()
 
 
 def cli():
-    sync_gitignore()
     main()

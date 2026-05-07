@@ -28,7 +28,7 @@ from phoscrosstalk.mechanisms import compute_prev_site_idx, make_rhs
 from phoscrosstalk.simulation import build_full_A0, simulate
 from phoscrosstalk.solver_config import make_diffrax_solver, make_stepsize_controller
 
-logger = get_logger(__name__)
+logger = get_logger()
 
 # Small epsilon for relative convergence metrics
 _EPS = 1e-12

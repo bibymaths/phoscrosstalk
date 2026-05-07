@@ -57,7 +57,7 @@ from phoscrosstalk.logger import get_logger
 # multistarts.py before apply_cpu_env() is called, so any top-level JAX import
 # here would initialise XLA with the wrong thread count.
 
-logger = get_logger(__name__)
+logger = get_logger()
 
 
 class OptimizationResult:

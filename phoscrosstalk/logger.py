@@ -129,15 +129,10 @@ class RichLogger:
 
     def success(self, msg, *args, **kwargs):
         """
-        Log a success message with a checkmark icon.
-
-        Args:
-            msg (str): The message string.
-            *args, **kwargs: Arguments passed to the standard logger.
+        Log a success message using the normal RichHandler layout.
         """
-        console.print(f"[success]✔ {msg}[/success]")
-        # Log to file as INFO
-        self.logger.info(f"[SUCCESS] {msg}", *args, **kwargs)
+
+        self.logger.info(f"[success]✔ {msg}[/success]", *args, **kwargs)
 
     def warning(self, msg, *args, **kwargs):
         """

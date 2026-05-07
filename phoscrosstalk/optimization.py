@@ -57,7 +57,7 @@ from phoscrosstalk.solver_config import (
     make_stepsize_controller,
 )
 
-logger = get_logger(__name__)
+logger = get_logger()
 
 # Module-level standard logger used by jax.debug.callback (must be a plain
 # logging.Logger — jax.debug.callback executes the callback outside the trace).
@@ -270,6 +270,69 @@ def create_bounds(K, M, N, bounds=None):
     idx += 4
     return xl, xu, dim
 
+def bounds_to_original_scale(xl, xu, K, M, N):
+    """
+    Convert transformed optimizer bounds back to original biological scale.
+
+    Positive rate parameters are log-transformed, so use exp().
+    Gamma parameters are raw signed values, so keep them unchanged.
+    """
+
+    xl = np.asarray(xl, dtype=float)
+    xu = np.asarray(xu, dtype=float)
+
+    xl_orig = xl.copy()
+    xu_orig = xu.copy()
+
+    idx = 0
+
+    # k_deact, length K
+    xl_orig[idx : idx + K] = np.exp(xl[idx : idx + K])
+    xu_orig[idx : idx + K] = np.exp(xu[idx : idx + K])
+    idx += K
+
+    # d_deg, length K
+    xl_orig[idx : idx + K] = np.exp(xl[idx : idx + K])
+    xu_orig[idx : idx + K] = np.exp(xu[idx : idx + K])
+    idx += K
+
+    # beta_g, scalar
+    xl_orig[idx] = np.exp(xl[idx])
+    xu_orig[idx] = np.exp(xu[idx])
+    idx += 1
+
+    # beta_l, scalar
+    xl_orig[idx] = np.exp(xl[idx])
+    xu_orig[idx] = np.exp(xu[idx])
+    idx += 1
+
+    # alpha, length M
+    xl_orig[idx : idx + M] = np.exp(xl[idx : idx + M])
+    xu_orig[idx : idx + M] = np.exp(xu[idx : idx + M])
+    idx += M
+
+    # kK_act, length M
+    xl_orig[idx : idx + M] = np.exp(xl[idx : idx + M])
+    xu_orig[idx : idx + M] = np.exp(xu[idx : idx + M])
+    idx += M
+
+    # kK_deact, length M
+    xl_orig[idx : idx + M] = np.exp(xl[idx : idx + M])
+    xu_orig[idx : idx + M] = np.exp(xu[idx : idx + M])
+    idx += M
+
+    # k_off, length N
+    xl_orig[idx : idx + N] = np.exp(xl[idx : idx + N])
+    xu_orig[idx : idx + N] = np.exp(xu[idx : idx + N])
+    idx += N
+
+    # gamma values, length 4
+    # Already raw signed values. Do not exponentiate.
+    idx += 4
+
+    assert idx == len(xl), f"Parameter dimension mismatch: idx={idx}, len(xl)={len(xl)}"
+
+    return xl_orig, xu_orig
 
 def build_parameter_labels(K: int, M: int, N: int) -> list[str]:
     """

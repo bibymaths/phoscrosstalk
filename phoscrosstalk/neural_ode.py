@@ -50,7 +50,7 @@ from phoscrosstalk.logger import get_logger
 from phoscrosstalk.mechanisms import compute_prev_site_idx, make_rhs
 from phoscrosstalk.simulation import build_full_A0
 
-logger = get_logger(__name__)
+logger = get_logger()
 
 # Module-level standard logger for use in jax.debug.callback.  It must be a
 # plain Python logging.Logger, not the project RichLogger, because callbacks are

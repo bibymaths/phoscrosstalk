@@ -22,7 +22,7 @@ from phoscrosstalk.optimization import (
     run_single_optimisation,
 )
 
-logger = get_logger(__name__)
+logger = get_logger()
 
 # --- Bounds Configuration ---
 BOUNDS_CONFIG = {

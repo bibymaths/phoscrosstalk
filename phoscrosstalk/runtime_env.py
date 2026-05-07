@@ -487,10 +487,9 @@ def log_env_summary(logger=None, plan=None) -> None:
             f"  SLURM active             = {topo.slurm_cpus is not None}",
             f"  logical CPUs             = {topo.logical_cpus}",
             f"  physical cores           = {topo.physical_cores if topo.physical_cores is not None else 'unknown'}",
-            f"  affinity CPUs            = {topo.affinity_cpus if topo.affinity_cpus is not None else 'n/a'}",
             f"  total available CPUs     = {plan.total_available_cpus}",
             f"  CPU source               = {topo.source}",
-            "  n_starts                 = (see optimisation config)",
+            f"  n_starts                 = (see optimisation config)",
             f"  parallel starts          = {plan.n_parallel_runs}",
             f"  threads per run          = {plan.threads_per_run}",
             f"  XLA intra-op threads     = {plan.xla_threads}",
@@ -499,6 +498,7 @@ def log_env_summary(logger=None, plan=None) -> None:
 
     message = "\n".join(lines)
     if logger is not None:
+        logger.header("Environment: Active & Runtime")
         logger.info(message)
     else:
         print(message, file=sys.stderr, flush=True)

@@ -15,7 +15,7 @@ from phoscrosstalk.config import ModelDims
 from phoscrosstalk.mechanisms import decode_theta
 from phoscrosstalk.logger import get_logger
 
-logger = get_logger(__name__)
+logger = get_logger()
 
 
 def save_run_metadata(outdir, dims: ModelDims, args, execution_time=None):

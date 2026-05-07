@@ -25,7 +25,7 @@ import requests
 
 from phoscrosstalk.logger import get_logger
 
-logger = get_logger(__name__)
+logger = get_logger()
 
 # --- Configuration Constants ---
 HARMONIZOME_BASE_URL = "https://maayanlab.cloud/static/hdfs/harmonizome/data"

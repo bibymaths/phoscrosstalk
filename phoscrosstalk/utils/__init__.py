@@ -1,1 +1,6 @@
 from phoscrosstalk.utils.gitignore_sync import sync_gitignore
+from phoscrosstalk.utils.print_config import _save_model_entities_table
+from phoscrosstalk.utils.print_config import _print_config_summary
+
+print_config_summary = _print_config_summary
+save_model_table = _save_model_entities_table
