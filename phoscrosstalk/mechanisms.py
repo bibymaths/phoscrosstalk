@@ -270,7 +270,6 @@ def make_rhs(
 
         # Small constants used only for fixed numerical structure.
         eps = jnp.float64(1e-8)
-        seq_leak = jnp.float64(1e-3)
         kinase_basal = jnp.float64(0.05)
 
         # ------------------------------------------------------------------
