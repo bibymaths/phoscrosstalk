@@ -9,8 +9,8 @@ theme:
   name: material
   language: en
   font:
-    text: Ubuntu           # The font for standard paragraph text
-    code: Fira Code        # The font for code blocks
+    text: Ubuntu
+    code: Fira Code
 
   logo: assets/logo.png
   favicon: assets/logo.png
@@ -99,6 +99,7 @@ plugins:
 nav:
   - Home: index.md
   - Installation: installation.md
+  - Curation: curated_data.md
   - Inputs: inputs.md
   - Configuration: configuration.md
   - Running PhosCrosstalk: running.md
@@ -109,10 +110,12 @@ nav:
   - Developer Guide: developer.md
   - API:
       - Overview: api/index.md
+      - Configuration: api/config.md
+      - Data Loading: api/data_loader.md
+      - Mechanisms: api/mechanisms.md
+      - Neural ODE: api/neural_ode.md
       - Simulation: api/simulation.md
       - Optimisation: api/optimization.md
-      - Hybrid Fitting: api/hybrid_fit.md
-      - Data Loading: api/data_loader.md
       - Derived Rates: api/derived_rates.md
       - Weighting: api/weighting.md
       - Analysis: api/analysis.md

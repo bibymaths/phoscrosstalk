@@ -31,15 +31,34 @@ def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
         timepoints (list/array): Expected time points corresponding to value columns.
 
     Returns:
-        tuple:
-            - sites (list): formatted site labels (Protein_Residue).
-            - proteins (list): unique sorted protein names.
-            - site_prot_idx (np.ndarray): indices mapping sites to the 'proteins' list.
-            - positions (np.ndarray): numeric residue positions (NaN if parsing fails).
-            - t (np.ndarray): time points array.
-            - Y (np.ndarray): Phosphosite intensity matrix (N_sites x T).
-            - A_data (np.ndarray or None): Protein abundance matrix (N_proteins x T) if available.
-            - A_proteins (np.ndarray or None): Names of proteins in A_data.
+        tuple[list[str], list[str], np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]:
+            A tuple containing:
+
+            sites:
+                Formatted site labels as ``Protein_Residue``.
+
+            proteins:
+                Unique sorted protein names.
+
+            site_prot_idx:
+                Integer indices mapping each site to the ``proteins`` list.
+
+            positions:
+                Numeric residue positions. Values are ``np.nan`` if parsing fails.
+
+            t:
+                Time point array.
+
+            Y:
+                Phosphosite intensity matrix with shape ``(N_sites, T)``.
+
+            A_data:
+                Protein abundance matrix with shape ``(N_proteins, T)``, if available;
+                otherwise ``None``.
+
+            A_proteins:
+                Names of proteins in ``A_data``, if available; otherwise ``None``.
+
     """  # noqa: E501
     if not os.path.exists(path):
         raise FileNotFoundError(f"Data file not found: {path}")
@@ -135,9 +154,12 @@ def scale_fc_to_unit_interval(Y, use_log=False):
 
     Returns:
         tuple:
-            - P (np.ndarray): Scaled data matrix.
-            - baselines (np.ndarray): Minimum values per row (for inverse scaling).
-            - amplitudes (np.ndarray): Range (max-min) per row (for inverse scaling).
+            ``(P, baselines, amplitudes)``.
+
+            - ``P``: scaled data matrix.
+            - ``baselines``: minimum value per row, used for inverse scaling.
+            - ``amplitudes``: row-wise range, computed as ``max - min``, used for
+              inverse scaling.
     """
     N, T = Y.shape
     P = np.zeros_like(Y, dtype=float)
@@ -172,7 +194,13 @@ def apply_scaling(Y, mode="minmax"):
         mode (str): Scaling mode ('minmax', 'log-minmax', or 'none').
 
     Returns:
-        tuple: (Scaled Matrix, Baselines, Amplitudes)
+        tuple:
+            ``(P, baselines, amplitudes)``.
+
+            - ``P``: scaled data matrix.
+            - ``baselines``: minimum value per row, used for inverse scaling.
+            - ``amplitudes``: row-wise range, computed as ``max - min``, used for
+              inverse scaling.
     """
     if mode == "minmax":
         return scale_fc_to_unit_interval(Y, use_log=False)
@@ -229,7 +257,11 @@ def build_C_matrices_from_db(
         length_scale (float): Decay length for local sequence-based coupling.
 
     Returns:
-        tuple: (Cg, Cl) - The global and local adjacency matrices.
+        tuple:
+            ``(Cg, Cl)``.
+
+            - ``Cg``: global adjacency matrix.
+            - ``Cl``: local adjacency matrix.
     """  # noqa: E501
     if not os.path.exists(ptm_intra_path):
         raise FileNotFoundError(
@@ -299,8 +331,11 @@ def load_kinase_site_matrix(path, sites):
 
     Returns:
         tuple:
-            - K_site_kin (np.ndarray): Matrix of weights (Sites x Kinases).
-            - kinases (list): Sorted list of kinase names found in the file.
+            ``(K_site_kin, kinases)``.
+
+            - ``K_site_kin``: site-by-kinase weight matrix with shape
+              ``(N_sites, N_kinases)``.
+            - ``kinases``: sorted list of kinase names found in the input file.
     """
     if not os.path.exists(path):
         raise FileNotFoundError(f"Kinase-site TSV not found: {path}")

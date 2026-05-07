@@ -153,21 +153,68 @@ def bio_score(theta, dims: ModelDims | None = None):
 
 def create_bounds(K, M, N, bounds=None):
     """
-    Generates the lower (xl) and upper (xu) bound vectors for the optimization search space.
+    Create lower and upper bound vectors for the optimization parameter space.
 
-    ``k_act`` and ``s_prod`` are no longer optimisation variables.
-    The dimension is now ``2*K + 2 + 3*M + N + 4``.
+    The optimized parameter vector is stored in transformed coordinates. Positive
+    rate parameters are represented on a log scale, while the four gamma
+    parameters are represented as raw signed values used by the parameter
+    decoder.
+
+    ``k_act`` and ``s_prod`` are not optimization variables. They are derived
+    from input data through the rate-construction functions. Therefore, the
+    parameter dimension is:
+
+    ``2 * K + 2 + 3 * M + N + 4``
+
+    The parameter blocks are ordered as:
+
+    - ``k_deact``: protein signalling deactivation rates, length ``K``.
+    - ``d_deg``: protein degradation rates, length ``K``.
+    - ``beta_g``: global crosstalk coupling strength, scalar.
+    - ``beta_l``: local crosstalk coupling strength, scalar.
+    - ``alpha``: kinase-site activation strengths, length ``M``.
+    - ``kK_act``: kinase activation rates, length ``M``.
+    - ``kK_deact``: kinase deactivation rates, length ``M``.
+    - ``k_off``: phosphosite dephosphorylation rates, length ``N``.
+    - ``gamma`` values: signed regulatory coupling parameters, length ``4``.
 
     Args:
-        K, M, N (int): Model dimensions.
-        bounds (SimpleNamespace | None): Optional config ``[bounds]`` section.
-            When provided, ``rate_min``, ``rate_max``, ``protein_degradation_max``,
-            ``kinase_rate_max``, ``phosphatase_rate_max``, and ``gamma_abs_max``
-            override the hard-coded defaults.
+        K (int):
+            Number of model proteins.
+
+        M (int):
+            Number of kinases.
+
+        N (int):
+            Number of phosphosites.
+
+        bounds (types.SimpleNamespace | None, optional):
+            Optional configuration namespace corresponding to the ``[bounds]``
+            section of ``config.toml``. When provided, the following attributes
+            override the built-in defaults:
+
+            - ``rate_min``: lower bound for positive rate parameters.
+            - ``rate_max``: generic upper bound for positive rate parameters.
+            - ``protein_degradation_max``: upper bound for ``d_deg``.
+            - ``kinase_rate_max``: upper bound for ``kK_act`` and ``kK_deact``.
+            - ``phosphatase_rate_max``: upper bound for ``k_off``.
+            - ``gamma_abs_max``: absolute bound for the raw gamma parameters.
+
+            If ``bounds`` is ``None`` or an attribute is missing, the function
+            falls back to hard-coded defaults.
 
     Returns:
-        tuple: (xl, xu, dim)
-    """  # noqa: E501
+        tuple:
+            ``(xl, xu, dim)``.
+
+            - ``xl``: lower-bound vector with shape ``(dim,)``.
+            - ``xu``: upper-bound vector with shape ``(dim,)``.
+            - ``dim``: total number of optimization variables.
+
+            Bounds for positive biological rates are returned in log space.
+            Bounds for gamma parameters are returned directly in raw parameter
+            space.
+    """
     # Resolve bound values from config or fall back to hard-coded defaults.
     if bounds is not None:
         _rate_min = float(getattr(bounds, "rate_min", 1e-5))

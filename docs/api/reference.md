@@ -2,8 +2,6 @@
 
 ## Core modules
 
-::: phoscrosstalk.config
-
 ::: phoscrosstalk.mechanisms
 
 ::: phoscrosstalk.simulation
@@ -12,7 +10,21 @@
 
 ::: phoscrosstalk.multistarts
 
+::: phoscrosstalk.hyperparam
+
+::: phoscrosstalk.neural_ode
+
+## Configuration modules
+
+::: phoscrosstalk.config
+
+::: phoscrosstalk.solver_config 
+
+::: phoscrosstalk.runtime_env
+
 ## Data and model utilities
+
+::: phoscrosstalk.data_curator
 
 ::: phoscrosstalk.data_loader
 
@@ -34,10 +46,10 @@
 
 ::: phoscrosstalk.knockouts
 
-## CLI and logging
+## CLI
 
 ::: phoscrosstalk.main
 
-::: phoscrosstalk.logger
+::: phoscrosstalk.app
 
-::: phoscrosstalk.logo
+::: phoscrosstalk.app_cli

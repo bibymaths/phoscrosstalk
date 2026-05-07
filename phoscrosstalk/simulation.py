@@ -80,18 +80,21 @@ def simulate(
         P_data0 (np.ndarray): Initial phosphosite data (N_sites x T) for t=0 IC.
         A_data0 (np.ndarray): Initial protein abundance data (K x T) for t=0 IC.
         theta (np.ndarray): Flattened parameter vector (length 2*K+2+3*M+N+4).
-        Cg, Cl (np.ndarray): Global and Local coupling matrices.
+        Cg (np.ndarray): Global coupling matrix.
+        Cl (np.ndarray): Local coupling matrix.
         site_prot_idx (np.ndarray): Mapping indices for sites to proteins.
         K_site_kin (np.ndarray): Kinase-site interaction matrix.
         R (np.ndarray): Receptor/kinase input matrix (NOT the mRNA state).
         L_alpha (np.ndarray): Kinase network Laplacian.
         kin_to_prot_idx (np.ndarray): Mapping indices for kinases to proteins.
-        receptor_mask_prot, receptor_mask_kin (np.ndarray): Input masks.
+        receptor_mask_prot (np.ndarray): Input masks for substrate proteins.
+        receptor_mask_kin (np.ndarray): Input masks for kinases.
         mechanism (str): Kinetic mechanism ('dist', 'seq', 'rand').
         full_output (bool): If True, return (P_sim, A_sim, S_sim, Kdyn_sim).
         return_full (bool): If True, return a dict with all state components
             plus R_sim (at t_arr) and R_sim_rna (at t_rna).
-        rtol, atol (float): Solver tolerances.
+        rtol (float): Solver relative tolerance.
+        atol (float): Solver absolute tolerance.
         max_steps (int): Maximum solver steps.
         dt0 (float): Initial step size.
         k_act_fn (callable | None): JAX closure for derived k_act(t) -> (K,).
@@ -102,11 +105,37 @@ def simulate(
             R_rna state is initialized from first column (or vector). Defaults 1.0.
 
     Returns:
-        If return_full=True: dict with keys
-            P_sim, A_sim, S_sim, Kdyn_sim, R_sim, R_sim_rna, t, t_rna, solver_times
-        elif full_output=True: (P_sim, A_sim, S_sim, Kdyn_sim)  – (N|K|K|M x T)
-        else: (P_sim, A_sim)  – (N_sites x T, K x T)
-        Returns NaN arrays if integration fails.
+        dict | tuple:
+            Simulation outputs. The returned object depends on the requested output mode.
+
+            If ``return_full`` is ``True``, returns a dictionary with the following keys:
+
+            - ``P_sim``: simulated phosphosite matrix with shape ``(N_sites, T)``.
+            - ``A_sim``: simulated protein abundance matrix with shape ``(K, T)``.
+            - ``S_sim``: simulated protein signalling-state matrix with shape ``(K, T)``.
+            - ``Kdyn_sim``: simulated kinase-state matrix with shape ``(M, T)``.
+            - ``R_sim``: simulated RNA/transcriptional state on the main solver time grid.
+            - ``R_sim_rna``: simulated RNA/transcriptional state on the RNA time grid.
+            - ``t``: main simulation time points.
+            - ``t_rna``: RNA simulation time points, if available.
+            - ``solver_times``: internal solver time points or diagnostic solver times.
+
+            If ``full_output`` is ``True`` and ``return_full`` is ``False``, returns:
+
+            ``(P_sim, A_sim, S_sim, Kdyn_sim)``
+
+            where ``P_sim`` has shape ``(N_sites, T)``, ``A_sim`` has shape
+            ``(K, T)``, ``S_sim`` has shape ``(K, T)``, and ``Kdyn_sim`` has shape
+            ``(M, T)``.
+
+            Otherwise, returns:
+
+            ``(P_sim, A_sim)``
+
+            where ``P_sim`` has shape ``(N_sites, T)`` and ``A_sim`` has shape
+            ``(K, T)``.
+
+            If integration fails, the returned arrays contain ``NaN`` values.
     """
     if dims is None:
         dims = ModelDims.from_data(P_data0, A_data0, kin_to_prot_idx)
@@ -282,7 +311,61 @@ def simulate(
 
 
 def _nan_result(N_sites, K, M, T, full_output, return_full=False, t_rna_arr=None):
-    """Return NaN sentinel arrays matching expected output shape."""
+    """
+    Return NaN-filled sentinel simulation outputs with the expected shapes.
+
+    This helper is used when ODE integration fails or when simulation output
+    cannot be trusted. It preserves the same return structure as the normal
+    simulation path so downstream code can continue handling the result without
+    special-case shape logic.
+
+    Args:
+        N_sites (int):
+            Number of phosphosites.
+
+        K (int):
+            Number of model proteins.
+
+        M (int):
+            Number of kinases.
+
+        T (int):
+            Number of main simulation time points.
+
+        full_output (bool):
+            If ``True`` and ``return_full`` is ``False``, return the extended
+            tuple ``(P_sim, A_sim, S_sim, Kdyn_sim)``.
+
+        return_full (bool, optional):
+            If ``True``, return a dictionary containing all simulated state
+            arrays and time-grid metadata. Defaults to ``False``.
+
+        t_rna_arr (np.ndarray | None, optional):
+            RNA-specific time grid. Used only when ``return_full`` is ``True``.
+            If not provided, the RNA output uses ``T`` as its time dimension.
+
+    Returns:
+        dict | tuple:
+            NaN-filled simulation outputs matching the requested output mode.
+
+            If ``return_full`` is ``True``, returns a dictionary with keys:
+
+            - ``P_sim``: phosphosite matrix with shape ``(N_sites, T)``.
+            - ``A_sim``: protein abundance matrix with shape ``(K, T)``.
+            - ``S_sim``: protein signalling-state matrix with shape ``(K, T)``.
+            - ``Kdyn_sim``: kinase-state matrix with shape ``(M, T)``.
+            - ``R_sim``: RNA/transcriptional-state matrix with shape ``(K, T)``.
+            - ``R_sim_rna``: RNA/transcriptional-state matrix with shape
+              ``(K, T_rna)``.
+            - ``t``: ``None``.
+            - ``t_rna``: the provided RNA time grid, or ``None``.
+            - ``solver_times``: ``None``.
+
+            If ``full_output`` is ``True`` and ``return_full`` is ``False``,
+            returns ``(P_sim, A_sim, S_sim, Kdyn_sim)``.
+
+            Otherwise, returns ``(P_sim, A_sim)``.
+    """
     if return_full:
         T_rna = len(t_rna_arr) if t_rna_arr is not None else T
         return {
