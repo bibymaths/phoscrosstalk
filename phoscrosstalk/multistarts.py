@@ -726,7 +726,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
     # ------------------------------------------------------------------
     # Fréchet Distance diagnostics (optional, not used for selection)
     # ------------------------------------------------------------------
-    logger.info("[*] Computing Fréchet Distances (diagnostic only)...")
+    logger.info("[*] Computing Fréchet Distances...")
     frechet_scores = np.full(len(X_combined), np.inf)
     # P_scaled shape is (N_sites, T).  Transpose to (T, N_sites) so that each
     # row is a time-point in N_sites-dimensional feature space, which is the

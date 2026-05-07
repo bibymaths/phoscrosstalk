@@ -28,12 +28,6 @@ make_rhs(K, M, N, mechanism)
 compute_prev_site_idx(site_prot_idx, N)
     Pure-NumPy helper (called once at setup time) that precomputes the static
     "predecessor site" index array needed by the sequential mechanism.
-
-compute_objectives_jax(theta, P_data, P_sim, A_scaled, A_sim, W_data,
-                       W_data_prot, prot_idx_for_A, L_alpha,
-                       lambda_net, reg_lambda, n_p, n_A, n_var, K, M, N)
-    JAX version of optimization.compute_objectives_nb.  Returns (f1, f2, f3)
-    as JAX scalars so the whole loss pipeline stays differentiable.
 """
 
 from __future__ import annotations
@@ -522,73 +516,3 @@ def make_rhs(
         return jnp.concatenate([dR_rna, dS, dA, dKdyn, dp])
 
     return rhs
-
-
-# ---------------------------------------------------------------------------
-# JAX objective computation (loss components)
-# ---------------------------------------------------------------------------
-
-
-def compute_objectives_jax(
-    theta,
-    P_data,
-    P_sim,
-    A_scaled,
-    A_sim,
-    W_data,
-    W_data_prot,
-    prot_idx_for_A,
-    L_alpha,
-    lambda_net: float,
-    reg_lambda: float,
-    n_p: int,
-    n_A: int,
-    n_var: int,
-    K: int,
-    M: int,
-    N: int,
-):
-    """
-    Compute the three objective components of the loss in JAX.
-
-    JAX-native equivalent of optimization.compute_objectives_nb.
-
-    Parameters
-    ----------
-    theta                   : jax.Array, flat parameter vector (2K+2+3M+N+4)
-    P_data                  : jax.Array (N_sites, T)
-    P_sim                   : jax.Array (N_sites, T)  – simulation output
-    A_scaled                : jax.Array (K_obs, T_A) or shape (0,)
-    A_sim                   : jax.Array (K, T)        – full-dim simulation
-    W_data, W_data_prot     : jax.Array – per-element loss weights
-    prot_idx_for_A          : jax.Array (K_obs,) int  – protein indices
-    L_alpha                 : jax.Array (M, M)
-    lambda_net, reg_lambda  : float
-    n_p, n_A, n_var         : int  – normalisation counts
-    K, M, N                 : int
-
-    Returns
-    -------
-    (f1, f2, f3) : tuple of JAX scalars
-    """
-    # --- Decode for regularisation ---
-    _, _, _, _, alpha, _, _, _, _, _, _, _ = decode_theta(theta, K, M, N)
-
-    # 1. Phosphosite loss: weighted MSLE
-    diff_p = P_data - P_sim
-    f1 = jnp.sum(jnp.log1p(W_data * diff_p * diff_p)) / max(n_p, 1)
-
-    # 2. Protein abundance loss
-    if A_scaled.size > 0:
-        A_sim_obs = A_sim[prot_idx_for_A, :]  # (K_obs, T_A)
-        diff_A = A_scaled - A_sim_obs
-        f2 = jnp.sum(jnp.log1p(W_data_prot * diff_A * diff_A)) / max(n_A, 1)
-    else:
-        f2 = jnp.array(0.0)
-
-    # 3. Regularisation: L2 + Laplacian network term
-    reg = reg_lambda * jnp.dot(theta, theta)
-    reg_net = lambda_net * jnp.dot(alpha, L_alpha @ alpha)
-    f3 = (reg + reg_net) / max(n_var, 1)
-
-    return f1, f2, f3

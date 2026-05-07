@@ -43,7 +43,6 @@ import optimistix as optx
 
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.mechanisms import (
-    compute_objectives_jax,
     compute_prev_site_idx,
     make_rhs, decode_theta,
 )
@@ -398,12 +397,78 @@ def build_parameter_labels(K: int, M: int, N: int) -> list[str]:
         labels.append(f"gamma_raw[{i}]")
     return labels
 
+# ---------------------------------------------------------------------------
+# JAX objective computation (loss components)
+# ---------------------------------------------------------------------------
+
+
+def compute_objectives_jax(
+    theta,
+    P_data,
+    P_sim,
+    A_scaled,
+    A_sim,
+    W_data,
+    W_data_prot,
+    prot_idx_for_A,
+    L_alpha,
+    lambda_net: float,
+    reg_lambda: float,
+    n_p: int,
+    n_A: int,
+    n_var: int,
+    K: int,
+    M: int,
+    N: int,
+):
+    """
+    Compute the three objective components of the loss in JAX.
+
+    JAX-native equivalent of optimization.compute_objectives_nb.
+
+    Parameters
+    ----------
+    theta                   : jax.Array, flat parameter vector (2K+2+3M+N+4)
+    P_data                  : jax.Array (N_sites, T)
+    P_sim                   : jax.Array (N_sites, T)  – simulation output
+    A_scaled                : jax.Array (K_obs, T_A) or shape (0,)
+    A_sim                   : jax.Array (K, T)        – full-dim simulation
+    W_data, W_data_prot     : jax.Array – per-element loss weights
+    prot_idx_for_A          : jax.Array (K_obs,) int  – protein indices
+    L_alpha                 : jax.Array (M, M)
+    lambda_net, reg_lambda  : float
+    n_p, n_A, n_var         : int  – normalisation counts
+    K, M, N                 : int
+
+    Returns
+    -------
+    (f1, f2, f3) : tuple of JAX scalars
+    """
+    # --- Decode for regularisation ---
+    _, _, _, _, alpha, _, _, _, _, _, _, _ = decode_theta(theta, K, M, N)
+
+    # 1. Phosphosite loss: weighted MSLE
+    diff_p = P_data - P_sim
+    f1 = jnp.sum(jnp.log1p(W_data * diff_p * diff_p)) / max(n_p, 1)
+
+    # 2. Protein abundance loss
+    if A_scaled.size > 0:
+        A_sim_obs = A_sim[prot_idx_for_A, :]  # (K_obs, T_A)
+        diff_A = A_scaled - A_sim_obs
+        f2 = jnp.sum(jnp.log1p(W_data_prot * diff_A * diff_A)) / max(n_A, 1)
+    else:
+        f2 = jnp.array(0.0)
+
+    # 3. Regularisation: L2 + Laplacian network term
+    reg = reg_lambda * jnp.dot(theta, theta)
+    reg_net = lambda_net * jnp.dot(alpha, L_alpha @ alpha)
+    f3 = (reg + reg_net) / max(n_var, 1)
+
+    return f1, f2, f3
 
 # ---------------------------------------------------------------------------
 # Scalarized JAX loss for Optimistix
 # ---------------------------------------------------------------------------
-
-
 def make_loss_fn(
     dims: ModelDims,
     t,

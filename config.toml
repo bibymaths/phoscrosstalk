@@ -174,9 +174,9 @@ scale_mode              = "none"      # options: "none" | "minmax" | "log-minmax
 length_scale            = 25.0
 weight_scheme           = "uniform"   # options: uniform, early_emphasis, early_emphasis_moderate, late_emphasis, flat_no_noise
 
-receptors               = ["EPHA2"]
-receptor_kinases        = ["EPHA2", "LYN"]
-include_tfs_as_proteins = true
+receptors               = ["ABL2", "CLK3", "GRK5", "GSK3A"]
+receptor_kinases        = ["ABL2", "CLK3", "GRK5", "GSK3A"]
+include_tfs_as_proteins = false
 
 
 # =============================================================================
@@ -255,7 +255,7 @@ max_steps     = 500
 
 ls_solver     = "lm"         # options: "lm" | "gauss_newton" | "dogleg" | "indirect_lm"
 
-optx_adjoint  = "checkpoint"   # options: "implicit" | "checkpoint"
+optx_adjoint  = "implicit"   # options: "implicit" | "checkpoint"
 jac_mode      = "fwd"        # options: "fwd" | "bwd"
 
 verbose       = false
@@ -561,13 +561,13 @@ reg       = 1.0
 # =============================================================================
 [bounds]
 rate_min                = 1e-5
-rate_max                = 10.0
+rate_max                = 100.0
 protein_degradation_max = 0.5
-kinase_rate_max         = 3.0
-phosphatase_rate_max    = 5.0
-gamma_abs_max           = 2.0
-rna_max                 = 10.0
-abundance_max           = 5.0
+kinase_rate_max         = 10.0
+phosphatase_rate_max    = 10.0
+gamma_abs_max           = 20.0
+rna_max                 = 100.0
+abundance_max           = 50.0
 
 
 # =============================================================================
@@ -622,7 +622,7 @@ interpolation    = "piecewise_constant"   # options: "piecewise_constant" | "lin
 # =============================================================================
 [derived_rates]
 s_prod_fn = "softplus"   # options: "softplus" | "linear"
-rna_relax = 0.02
+rna_relax = 0.1
 
 
 # =============================================================================
@@ -955,10 +955,10 @@ use_optax               = true
 optimizer               = "adabelief"
 optax_loop              = "scan"
 print_every             = 10
-enabled                 = false
+enabled                 = true
 width                   = 32
 depth                   = 2
-steps                   = 2000
+steps                   = 10000
 learning_rate           = 1e-3
 prior_weight_k_act      = 1.0
 prior_weight_s_prod     = 1.0
