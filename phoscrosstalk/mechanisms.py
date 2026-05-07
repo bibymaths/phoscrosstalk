@@ -363,28 +363,43 @@ def make_rhs(
         # ------------------------------------------------------------------
         # 0. mRNA / transcriptional state
         # ------------------------------------------------------------------
-        # Relaxation to the external/derived transcriptional drive.
+        # RNA tracks the external transcriptional drive but is mildly modulated
+        # by model-internal phosphosite/network/receptor context.
+
         _rna_relax = jnp.asarray(rna_relax, dtype=jnp.float64)
-        dR_rna = _rna_relax * (k_act - R_rna)
+
+        rna_field = gamma_S_p * mq + mc + receptor_mask_prot * u
+        rna_reg = jnp.exp(jnp.float64(0.25) * jnp.tanh(rna_field))
+
+        R_target = k_act * rna_reg
+
+        dR_rna = _rna_relax * (R_target - R_rna)
 
         # ------------------------------------------------------------------
         # 1. Protein signalling state S
         # ------------------------------------------------------------------
-        # Regulatory field for signalling activation.
-        # Use sigmoid rather than hard clipping 1 + field, so negative evidence
-        # suppresses activation smoothly without creating dead regions.
         S_field = gamma_S_p * mq + mc + receptor_mask_prot * u
         S_drive = 1.0 / (1.0 + jnp.exp(-S_field))
 
-        dS = k_act * S_drive * (1.0 - S) - k_deact * S
+        k_act_sig = k_act / (jnp.float64(1.0) + k_act)
+
+        dS = k_act_sig * S_drive * (1.0 - S) - k_deact * S
 
         # ------------------------------------------------------------------
         # 2. Protein abundance state A
         # ------------------------------------------------------------------
-        # Positive synthesis modulation. This avoids hard zeroing of
-        # s_prod * R_rna * (1 + gamma_A_S * S) when the parenthesis is negative.
-        A_drive = 1.0 / (1.0 + jnp.exp(-(gamma_A_S * S)))
-        s_eff = s_prod * R_rna * A_drive
+        # Basal synthesis is s_prod * R_rna.
+        # Signalling and phosphosite context act as positive fold-change modifiers
+        # centered around 1, not as hard suppressive sigmoid gates.
+
+        A_signal = S - jnp.float64(0.5)
+        A_drive = jnp.exp(gamma_A_S * A_signal)
+
+        A_phospho_drive = jnp.exp(
+            jnp.float64(0.25) * gamma_A_p * (mq - jnp.float64(0.5))
+        )
+
+        s_eff = s_prod * R_rna * A_drive * A_phospho_drive
 
         dA = s_eff - d_deg * A
 
@@ -431,15 +446,29 @@ def make_rhs(
             gate = jnp.ones(N, dtype=jnp.float64)
 
         elif mechanism == "seq":
-            # Sequential mechanism: downstream site depends on predecessor site.
-            # A small leak avoids exact structural blocking when the predecessor
-            # bounded proxy q is near zero.
+            # Sequential mechanism:
+            # first site on each protein is directly accessible;
+            # downstream sites require predecessor occupancy;
+            # each site becomes less available as its own occupancy increases.
+
             safe_prev = jnp.where(prev_site_idx >= 0, prev_site_idx, 0)
+            has_prev = prev_site_idx >= 0
+
             prev_occ = q[safe_prev]
+
+            # Saturating predecessor enablement.
+            # prev_occ = 0    -> downstream site blocked
+            # prev_occ high  -> downstream site enabled
+            seq_half = jnp.float64(0.10)
+            pred_enable = prev_occ / (seq_half + prev_occ)
+
+            # Prevent repeated production into an already occupied current site.
+            site_available = 1.0 - q
+
             gate = jnp.where(
-                prev_site_idx >= 0,
-                seq_leak + (1.0 - seq_leak) * prev_occ,
-                1.0,
+                has_prev,
+                pred_enable * site_available,
+                site_available,
             )
 
         else:
