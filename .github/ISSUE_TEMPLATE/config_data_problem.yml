@@ -1,0 +1,87 @@
+name: Config or data-loading problem
+description: Report issues with config.toml, input files, shapes, mappings, or data loading
+title: "[Config/Data]: "
+labels:
+  - data
+  - configuration
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template when the issue involves config.toml, input file formats, missing paths, shape mismatches, kinase-site tables, TF networks, RNA/protein matching, or receptor settings.
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant config.toml section
+      description: Paste relevant config sections.
+      render: toml
+      placeholder: |
+        [paths]
+        data = ""
+        rna_data = ""
+        tf_net = ""
+        kinase_tsv = ""
+
+        [model]
+        mechanism = "seq"
+        receptors = []
+        receptor_kinases = []
+    validations:
+      required: true
+
+  - type: dropdown
+    id: data_type
+    attributes:
+      label: Affected input
+      options:
+        - phosphoproteomics data
+        - protein abundance data
+        - mRNA/transcriptomics data
+        - TF network
+        - kinase-site table
+        - PTM database
+        - crosstalk TSV
+        - unified graph
+        - output/export
+        - multiple
+    validations:
+      required: true
+
+  - type: textarea
+    id: columns
+    attributes:
+      label: Input columns
+      description: Paste headers and 2-5 example rows if possible. Do not include private or sensitive data.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: error
+    attributes:
+      label: Error message or warning
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected mapping or behavior
+      description: Explain what should have matched or loaded.
+    validations:
+      required: true
+
+  - type: textarea
+    id: dimensions
+    attributes:
+      label: Observed dimensions
+      placeholder: |
+        phospho data shape:
+        RNA data shape:
+        protein abundance shape:
+        number of TF edges:
+        number of kinase-site rows:
+    validations:
+      required: false

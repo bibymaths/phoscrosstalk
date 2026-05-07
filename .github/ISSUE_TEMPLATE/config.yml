@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security issue
+    url: https://github.com/bibymaths/phoscrosstalk/security/policy
+    about: Please report security issues using the repository security policy.

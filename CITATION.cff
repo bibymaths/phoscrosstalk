@@ -1,0 +1,48 @@
+cff-version: 1.2.0
+message: "If you use this software in your research, please cite it using the metadata below."
+
+title: "PhosCrosstalk"
+abstract: >
+  PhosCrosstalk is a Python package for optimization-driven modeling of
+  phosphorylation crosstalk networks using transcriptomics, proteomics,
+  phosphoproteomics, kinase-site priors, and mechanistic ODE-based simulations.
+
+type: software
+
+authors:
+  - family-names: Mishra
+    given-names: Abhinav
+    orcid: "https://orcid.org/0009-0005-3179-7408"
+
+repository-code: "https://github.com/bibymaths/phoscrosstalk"
+url: "https://github.com/bibymaths/phoscrosstalk"
+
+license: BSD-3-Clause
+
+keywords:
+  - bioinformatics
+  - computational biology
+  - phosphoproteomics
+  - transcriptomics
+  - proteomics
+  - phosphorylation
+  - systems biology
+  - ordinary differential equations
+  - optimization
+  - JAX
+  - Diffrax
+  - kinase signaling
+
+version: "0.1.0"
+
+preferred-citation:
+  type: software
+  title: "PhosCrosstalk: optimization-driven ODE modeling of phosphorylation crosstalk networks"
+  authors:
+    - family-names: Mishra
+      given-names: Abhinav
+      orcid: "https://orcid.org/0009-0005-3179-7408"
+  repository-code: "https://github.com/bibymaths/phoscrosstalk"
+  url: "https://github.com/bibymaths/phoscrosstalk"
+  license: BSD-3-Clause
+  version: "0.1.0"

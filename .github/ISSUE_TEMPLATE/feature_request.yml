@@ -1,0 +1,102 @@
+name: Feature request
+description: Suggest an improvement or new feature
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What feature do you want?
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Why is this useful for the package?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Proposed behavior
+      description: Describe the intended behavior, API, config option, or output.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Mention any workaround or alternative design.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - data loading
+        - model equations
+        - optimization
+        - solver/runtime
+        - plotting/exports
+        - documentation
+        - testing
+        - packaging
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact on scientific or modeling
+      description: Describe how this feature will affect scientific or modeling capabilities.
+    validations:
+      required: false
+
+  - type: textarea
+    id: timeline
+    attributes:
+      label: Timeline
+      description: Estimate when you would like to see this feature implemented.
+    validations:
+      required: false
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: List any external packages or tools required for this feature.
+    validations:
+      required: false
+
+  - type: textarea
+    id: resources
+    attributes:
+      label: Relevant resources
+      description: Provide links to relevant papers, discussions, or existing implementations.
+    validations:
+      required: false
+
+  - type: textarea
+    id: budget
+    attributes:
+      label: Budget
+      description: Estimate the time or resources required for implementation.
+    validations:
+      required: false
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: Mention any limitations or constraints that may affect implementation.
+    validations:
+      required: false

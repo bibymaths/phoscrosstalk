@@ -1,0 +1,118 @@
+name: Bug report
+description: Report a reproducible software bug
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for reproducible software bugs. For scientific/modeling questions, use the scientific question template if available.
+
+  - type: input
+    id: version
+    attributes:
+      label: Package version or commit
+      description: Provide the installed version or Git commit hash.
+      placeholder: "0.1.0 or commit hash"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mechanism
+    attributes:
+      label: Mechanism
+      description: Which phosphorylation mechanism were you using?
+      options:
+        - dist
+        - seq
+        - rand
+        - not applicable
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem description
+      description: Describe what went wrong.
+      placeholder: "The run fails when..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal steps to reproduce
+      description: Provide the smallest reproducible command/config/data description.
+      render: bash
+      placeholder: |
+        phoscrosstalk --config config.toml
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant config
+      description: Paste the relevant parts of config.toml. Remove private paths if needed.
+      render: toml
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error log or traceback
+      description: Paste the full traceback or relevant log output.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: dimensions
+    attributes:
+      label: Data/model dimensions
+      description: Provide dimensions if available.
+      placeholder: |
+        K proteins:
+        M kinases:
+        N phosphosites:
+        phospho matrix shape:
+        protein abundance matrix shape:
+        mRNA matrix shape:
+    validations:
+      required: false
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Linux / macOS / Windows / HPC cluster"
+    validations:
+      required: false
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "Python 3.11"
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment details
+      description: Include JAX, Diffrax, Optimistix, NumPy, pandas versions if relevant.
+      render: text
+    validations:
+      required: false

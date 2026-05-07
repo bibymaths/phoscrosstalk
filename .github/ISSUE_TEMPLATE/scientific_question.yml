@@ -1,0 +1,53 @@
+name: Scientific or modeling question
+description: Ask about model assumptions, equations, interpretation, or biological use
+title: "[Question]: "
+labels:
+  - question
+  - scientific-modeling
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: Ask the scientific or modeling question clearly.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mechanism
+    attributes:
+      label: Relevant mechanism
+      options:
+        - dist
+        - seq
+        - rand
+        - all
+        - not sure
+        - not applicable
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Provide biological/network context, data type, or model setting.
+    validations:
+      required: false
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant config or parameters
+      render: toml
+    validations:
+      required: false
+
+  - type: textarea
+    id: outputs
+    attributes:
+      label: Relevant outputs
+      description: Paste relevant metrics, plots description, or logs.
+      render: text
+    validations:
+      required: false
