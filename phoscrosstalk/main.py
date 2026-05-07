@@ -348,6 +348,28 @@ def main():
     receptor_names = set(list(cfg.model.receptors))
     receptor_kin_names = set(list(cfg.model.receptor_kinases))
 
+    if receptor_names:
+        logger.info(
+            "[*] Config receptors (%d): %s",
+            len(receptor_names),
+            ", ".join(sorted(receptor_names)),
+        )
+    else:
+        logger.warning(
+            "[!] Config receptors list is empty: [model] receptors = []."
+        )
+
+    if receptor_kin_names:
+        logger.info(
+            "[*] Config receptor kinases (%d): %s",
+            len(receptor_kin_names),
+            ", ".join(sorted(receptor_kin_names)),
+        )
+    else:
+        logger.warning(
+            "[!] Config receptor_kinases list is empty: [model] receptor_kinases = []."
+        )
+
     # Optimisation / solver / misc – expose on a namespace for run_multi_start_optimization  # noqa: E501
     args = SimpleNamespace(
         data=data_path,
