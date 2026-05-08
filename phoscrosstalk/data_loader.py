@@ -31,33 +31,16 @@ def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
         timepoints (list/array): Expected time points corresponding to value columns.
 
     Returns:
-        tuple[list[str], list[str], np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]:
-            A tuple containing:
-
-            sites:
-                Formatted site labels as ``Protein_Residue``.
-
-            proteins:
-                Unique sorted protein names.
-
-            site_prot_idx:
-                Integer indices mapping each site to the ``proteins`` list.
-
-            positions:
-                Numeric residue positions. Values are ``np.nan`` if parsing fails.
-
-            t:
-                Time point array.
-
-            Y:
-                Phosphosite intensity matrix with shape ``(N_sites, T)``.
-
-            A_data:
-                Protein abundance matrix with shape ``(N_proteins, T)``, if available;
-                otherwise ``None``.
-
-            A_proteins:
-                Names of proteins in ``A_data``, if available; otherwise ``None``.
+        (tuple[list[str], list[str], np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]):
+            ``(sites, proteins, site_prot_idx, positions, t, Y, A_data, A_proteins)``.
+            ``sites`` is a list of site labels as ``Protein_Residue``.
+            ``proteins`` is a list of unique sorted protein names.
+            ``site_prot_idx`` maps each site to the ``proteins`` list.
+            ``positions`` has numeric residue positions (``np.nan`` if parsing fails).
+            ``t`` is the time point array.
+            ``Y`` is the phosphosite intensity matrix ``(N_sites, T)``.
+            ``A_data`` is the protein abundance matrix ``(N_proteins, T)`` or ``None``.
+            ``A_proteins`` is the list of protein names in ``A_data`` or ``None``.
 
     """  # noqa: E501
     if not os.path.exists(path):
@@ -153,13 +136,9 @@ def scale_fc_to_unit_interval(Y, use_log=False):
         use_log (bool): If True, applies log1p transform before scaling.
 
     Returns:
-        tuple:
-            ``(P, baselines, amplitudes)``.
-
-            - ``P``: scaled data matrix.
-            - ``baselines``: minimum value per row, used for inverse scaling.
-            - ``amplitudes``: row-wise range, computed as ``max - min``, used for
-              inverse scaling.
+        (tuple): ``(P, baselines, amplitudes)`` where ``P`` is the scaled data matrix
+            (N x T), ``baselines`` is the minimum value per row (N,), and ``amplitudes``
+            is the row-wise range ``max - min`` (N,), used for inverse scaling.
     """
     N, T = Y.shape
     P = np.zeros_like(Y, dtype=float)
@@ -194,13 +173,9 @@ def apply_scaling(Y, mode="minmax"):
         mode (str): Scaling mode ('minmax', 'log-minmax', or 'none').
 
     Returns:
-        tuple:
-            ``(P, baselines, amplitudes)``.
-
-            - ``P``: scaled data matrix.
-            - ``baselines``: minimum value per row, used for inverse scaling.
-            - ``amplitudes``: row-wise range, computed as ``max - min``, used for
-              inverse scaling.
+        (tuple): ``(P, baselines, amplitudes)`` where ``P`` is the scaled data matrix
+            (N x T), ``baselines`` is the minimum value per row (N,), and ``amplitudes``
+            is the row-wise range ``max - min`` (N,), used for inverse scaling.
     """
     if mode == "minmax":
         return scale_fc_to_unit_interval(Y, use_log=False)
@@ -224,7 +199,7 @@ def row_normalize(C):
         C (np.ndarray): Input matrix.
 
     Returns:
-        np.ndarray: Row-normalized matrix.
+        (np.ndarray): Row-normalized matrix.
     """
     row_sums = C.sum(axis=1, keepdims=True)
     row_sums[row_sums == 0.0] = 1.0
@@ -257,11 +232,8 @@ def build_C_matrices_from_db(
         length_scale (float): Decay length for local sequence-based coupling.
 
     Returns:
-        tuple:
-            ``(Cg, Cl)``.
-
-            - ``Cg``: global adjacency matrix.
-            - ``Cl``: local adjacency matrix.
+        (tuple): ``(Cg, Cl)`` where ``Cg`` is the global adjacency matrix and
+            ``Cl`` is the local adjacency matrix.
     """  # noqa: E501
     if not os.path.exists(ptm_intra_path):
         raise FileNotFoundError(
@@ -330,12 +302,9 @@ def load_kinase_site_matrix(path, sites):
         sites (list): List of target sites in the model.
 
     Returns:
-        tuple:
-            ``(K_site_kin, kinases)``.
-
-            - ``K_site_kin``: site-by-kinase weight matrix with shape
-              ``(N_sites, N_kinases)``.
-            - ``kinases``: sorted list of kinase names found in the input file.
+        (tuple): ``(K_site_kin, kinases)`` where ``K_site_kin`` is the site-by-kinase
+            weight matrix of shape ``(N_sites, N_kinases)`` and ``kinases`` is the
+            sorted list of kinase names found in the input file.
     """
     if not os.path.exists(path):
         raise FileNotFoundError(f"Kinase-site TSV not found: {path}")
@@ -365,9 +334,9 @@ def build_kinase_site_from_kea(ks_psite_table_path, sites):
         sites (list): List of target sites in the model.
 
     Returns:
-        tuple:
-            - K_site_kin (np.ndarray): Row-normalized interaction matrix (Sites x Kinases).
-            - kinases (list): Sorted list of kinase names.
+        (tuple): ``(K_site_kin, kinases)`` where ``K_site_kin`` is the row-normalized
+            interaction matrix (Sites x Kinases) and ``kinases`` is the sorted list of
+            kinase names.
     """  # noqa: E501
     if not os.path.exists(ks_psite_table_path):
         raise FileNotFoundError(
@@ -695,7 +664,7 @@ def build_tf_prot_weights(tf_net_df, gene_ids, proteins):
         proteins (list[str]): Protein names in the model.
 
     Returns:
-        np.ndarray: Weight matrix of shape ``(K_proteins, n_genes)`` where
+        (np.ndarray): Weight matrix of shape ``(K_proteins, n_genes)`` where
             entry ``[p, g]`` is the sum of edge weights from gene *g* (as TF)
             to protein *p* (matched by target name).
     """
@@ -750,7 +719,7 @@ def build_alpha_laplacian_from_unified_graph(
         weight_attr (str): Edge attribute name to use as weight.
 
     Returns:
-        np.ndarray: The Laplacian matrix (M_kinases x M_kinases).
+        (np.ndarray): The Laplacian matrix (M_kinases x M_kinases).
     """  # noqa: E501
     if not os.path.exists(pkl_path):
         raise FileNotFoundError(f"Unified kinase graph pickle not found: {pkl_path}")

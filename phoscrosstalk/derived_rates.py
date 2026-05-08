@@ -175,7 +175,7 @@ def make_k_act_fn(
                               Pass ``None`` to disable the fallback entirely.
 
     Returns:
-        A JAX function ``fn(t) -> jnp.array(shape=(K,))``.
+        (callable): A JAX function ``fn(t) -> jnp.array(shape=(K,))``.
     """
     if t_rna is None or rna_data is None or tf_prot_weights is None:
         # No TF/mRNA data: constant neutral activation
@@ -259,7 +259,7 @@ def make_s_prod_fn(
         interp_mode:     ``"piecewise_constant"`` or ``"linear"``.
 
     Returns:
-        A JAX function ``fn(t) -> jnp.array(shape=(K,))``.
+        (callable): A JAX function ``fn(t) -> jnp.array(shape=(K,))``.
     """
     if Y_data is None or Y_data.size == 0 or R_kin_site.shape[0] == 0:
         _const = jnp.full(K, 0.1, dtype=jnp.float64)
@@ -340,23 +340,9 @@ def build_data_interpolations(
                     Never modifies the original training arrays.
 
     Returns:
-        dict with keys:
-          ``"t_obs"``         – original time vector (reference, not a copy)
-          ``"P_interp"``      – callable ``fn(t_q) -> np.ndarray`` returning shape
-                                ``(N_sites,)`` for a scalar query or
-                                ``(N_sites, len(t_q))`` for an array query;
-                                or None if P_data is not provided.
-          ``"A_interp"``      – callable ``fn(t_q) -> np.ndarray`` returning shape
-                                ``(K_obs,)`` for a scalar query or
-                                ``(K_obs, len(t_q))`` for an array query;
-                                or None if A_data is not provided.
-          ``"rna_interp"``    – callable ``fn(t_q) -> np.ndarray`` returning shape
-                                ``(n_genes,)`` for a scalar query or
-                                ``(n_genes, len(t_q))`` for an array query;
-                                or None if rna_data is not provided.
-          ``"method"``        – interpolation method actually used.
-          ``"nan_fill_log"``  – list of messages documenting NaN handling.
-          ``"original_arrays_unchanged"`` – always True (invariant check).
+        (dict): Keys ``"t_obs"``, ``"P_interp"``, ``"A_interp"``, ``"rna_interp"``,
+            ``"method"``, ``"nan_fill_log"``, ``"original_arrays_unchanged"``.
+            All interp values are callables ``fn(t_q) -> np.ndarray`` or ``None``.
 
     Raises:
         ImportError: If ``method="cubic_hermite"`` and SciPy is not installed.

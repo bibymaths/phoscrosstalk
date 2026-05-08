@@ -1202,7 +1202,7 @@ def save_neural_ode_plots(
         ts:           ``(T,)`` array of time points.
         ys:           Dict with keys ``"P_sim"`` (``(N, T)``) and
                       ``"A_sim"`` (``(K, T)``).
-        model:        Trained Equinox neural model (unused directly; reserved for
+        model (object): Trained Equinox neural model (unused directly; reserved for
                       future latent-state visualisation).
         loss_history: List of per-step total loss values.
         time_history: List of per-step wall-clock times (seconds).

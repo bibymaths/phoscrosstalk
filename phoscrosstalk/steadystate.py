@@ -506,7 +506,7 @@ def run_steadystate_analysis(
     Args:
         outdir:                  Root output directory; results go to
                                  ``{outdir}/steadystate/``.
-        problem:                 Fitted :class:`NetworkProblem` instance.
+        problem (NetworkProblem): Fitted :class:`NetworkProblem` instance.
         theta_opt:               Optimised parameter vector.
         sites:                   Phosphosite labels (length N).
         proteins:                Protein labels (length K).

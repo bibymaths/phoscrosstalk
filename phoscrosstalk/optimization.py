@@ -203,16 +203,11 @@ def create_bounds(K, M, N, bounds=None):
             falls back to hard-coded defaults.
 
     Returns:
-        tuple:
-            ``(xl, xu, dim)``.
-
-            - ``xl``: lower-bound vector with shape ``(dim,)``.
-            - ``xu``: upper-bound vector with shape ``(dim,)``.
-            - ``dim``: total number of optimization variables.
-
-            Bounds for positive biological rates are returned in log space.
-            Bounds for gamma parameters are returned directly in raw parameter
-            space.
+        (tuple): ``(xl, xu, dim)`` where ``xl`` is the lower-bound vector of shape
+            ``(dim,)``, ``xu`` is the upper-bound vector of shape ``(dim,)``, and
+            ``dim`` is the total number of optimization variables.
+            Bounds for positive biological rates are in log space; bounds for gamma
+            parameters are in raw parameter space.
     """
     # Resolve bound values from config or fall back to hard-coded defaults.
     if bounds is not None:
@@ -342,15 +337,15 @@ def build_parameter_labels(K: int, M: int, N: int) -> list[str]:
     ============  =====================  ============================
     Slice         Length                 Content
     ============  =====================  ============================
-    [0 : K)       K                      log_k_deact[0..K-1]
-    [K : 2K)      K                      log_d_deg[0..K-1]
-    [2K : 2K+1)   1                      log_beta_g
-    [2K+1 : 2K+2) 1                      log_beta_l
-    [2K+2 : ...)  M                      log_alpha[0..M-1]
-    [... : ...)   M                      log_kK_act[0..M-1]
-    [... : ...)   M                      log_kK_deact[0..M-1]
-    [... : ...)   N                      log_k_off[0..N-1]
-    [... : end)   4                      gamma_raw[0..3]
+    ``[0:K)``     K                      log_k_deact[0..K-1]
+    ``[K:2K)``    K                      log_d_deg[0..K-1]
+    ``[2K:2K+1)`` 1                      log_beta_g
+    ``[2K+1:2K+2)`` 1                    log_beta_l
+    ``[2K+2:...)``  M                    log_alpha[0..M-1]
+    ``[...:...)``   M                    log_kK_act[0..M-1]
+    ``[...:...)``   M                    log_kK_deact[0..M-1]
+    ``[...:...)``   N                    log_k_off[0..N-1]
+    ``[...:end)``   4                    gamma_raw[0..3]
     ============  =====================  ============================
 
     Parameters
@@ -1581,7 +1576,7 @@ class NetworkProblem:
             x (np.ndarray): Parameter vector.
 
         Returns:
-            np.ndarray: P_sim (N_sites x T).
+            (np.ndarray): P_sim (N_sites x T).
         """
         theta = np.asarray(x, dtype=np.float64)
         K, T = self.dims.K, self.P_data.shape[1]
@@ -1626,7 +1621,7 @@ class NetworkProblem:
             x (np.ndarray): Parameter vector.
 
         Returns:
-            dict: Keys: P_sim, A_sim, S_sim, Kdyn_sim, R_sim, R_sim_rna, t, t_rna,
+            (dict): Keys: P_sim, A_sim, S_sim, Kdyn_sim, R_sim, R_sim_rna, t, t_rna,
                 solver_times.
         """
         theta = np.asarray(x, dtype=np.float64)

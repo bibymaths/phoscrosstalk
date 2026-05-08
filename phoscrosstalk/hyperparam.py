@@ -69,7 +69,7 @@ def run_hyperparameter_scan(
     Evaluates each combination with a Fréchet distance score and returns the best params.
 
     Returns:
-        dict: Best hyperparameter combination (length_scale, lambda_net, reg_lambda, score).
+        (dict): Best hyperparameter combination (length_scale, lambda_net, reg_lambda, score).
     """  # noqa: E501
     logger.info("\n" + "=" * 60)
     logger.header("[*] STARTING HYPERPARAMETER TUNING SCAN")
