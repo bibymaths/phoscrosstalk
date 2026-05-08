@@ -192,12 +192,28 @@ def create_bounds(K, M, N, bounds=None):
             section of ``config.toml``. When provided, the following attributes
             override the built-in defaults:
 
-            - ``rate_min``: lower bound for positive rate parameters.
-            - ``rate_max``: generic upper bound for positive rate parameters.
+            - ``rate_min``: lower bound for ALL positive rate parameters.
+            - ``rate_max``: generic upper bound; only used where no dedicated
+              ceiling exists.
             - ``protein_degradation_max``: upper bound for ``d_deg``.
+            - ``k_deact_max``: upper bound for ``k_deact``; separate from
+              ``rate_max`` so deactivation rates can be constrained tightly.
             - ``kinase_rate_max``: upper bound for ``kK_act`` and ``kK_deact``.
             - ``phosphatase_rate_max``: upper bound for ``k_off``.
-            - ``gamma_abs_max``: absolute bound for the raw gamma parameters.
+            - ``beta_coupling_max``: upper bound for ``beta_g`` and ``beta_l``;
+              separate from ``rate_max`` to prevent large crosstalk coupling.
+            - ``alpha_min``: lower bound for ``alpha``; prevents collapse near
+              zero which would silence kinase contributions entirely.
+            - ``gamma_abs_max``: absolute bound for the raw gamma parameters
+              (tanh-encoded; NOT log-space).
+
+            Attributes not consumed here (no effect on ``create_bounds``):
+
+            - ``rna_max``: hard clip for ``R_rna`` in ``make_rhs()`` / simulation
+              code; NOT a parameter bound and NOT used by ``create_bounds()``.
+            - ``abundance_max``: hard clip for protein abundance ``A`` in
+              ``make_rhs()`` / simulation code; NOT a parameter bound and NOT
+              used by ``create_bounds()``.
 
             If ``bounds`` is ``None`` or an attribute is missing, the function
             falls back to hard-coded defaults.
@@ -211,43 +227,53 @@ def create_bounds(K, M, N, bounds=None):
     """
     # Resolve bound values from config or fall back to hard-coded defaults.
     if bounds is not None:
-        _rate_min = float(getattr(bounds, "rate_min", 1e-5))
-        _rate_max = float(getattr(bounds, "rate_max", 10.0))
-        _ddeg_max = float(getattr(bounds, "protein_degradation_max", 0.5))
-        _kin_max = float(getattr(bounds, "kinase_rate_max", 3.0))
-        _phos_max = float(getattr(bounds, "phosphatase_rate_max", 5.0))
-        _gamma_max = float(getattr(bounds, "gamma_abs_max", 3.0))
+        _rate_min  = float(getattr(bounds, "rate_min",                1e-5))
+        _rate_max  = float(getattr(bounds, "rate_max",                10.0))
+        _ddeg_max  = float(getattr(bounds, "protein_degradation_max", 0.5))
+        _kdeact_max = float(getattr(bounds, "k_deact_max",             2.0))
+        _kin_max   = float(getattr(bounds, "kinase_rate_max",          3.0))
+        _phos_max  = float(getattr(bounds, "phosphatase_rate_max",     5.0))
+        _beta_max  = float(getattr(bounds, "beta_coupling_max",        3.0))
+        _alpha_min = float(getattr(bounds, "alpha_min",                0.01))
+        _gamma_max = float(getattr(bounds, "gamma_abs_max",            3.0))
+        # rna_max is consumed by make_rhs() as a clipping value, not by create_bounds().
+        # abundance_max is consumed by make_rhs() / simulation code as a clipping value,
+        # not by create_bounds().
     else:
-        _rate_min = 1e-5
-        _rate_max = 10.0
-        _ddeg_max = 0.5
-        _kin_max = 3.0
-        _phos_max = 5.0
-        _gamma_max = 3.0
+        _rate_min   = 1e-5
+        _rate_max   = 10.0
+        _ddeg_max   = 0.5
+        _kdeact_max = 2.0
+        _kin_max    = 3.0
+        _phos_max   = 5.0
+        _beta_max   = 3.0
+        _alpha_min  = 0.01
+        _gamma_max  = 3.0
 
     dim = 2 * K + 2 + 3 * M + N + 4
     xl, xu = np.zeros(dim), np.zeros(dim)
     idx = 0
     # Protein: k_deact, d_deg (k_act and s_prod removed – derived from data)
-    # k_deact
+    # k_deact — dedicated ceiling separate from generic rate_max
     xl[idx : idx + K] = np.log(_rate_min)
-    xu[idx : idx + K] = np.log(_rate_max)
-    idx += K
+    xu[idx : idx + K] = np.log(_kdeact_max)
+    idx += K  # k_deact
     # d_deg (restricted upper bound for biological plausibility)
     xl[idx : idx + K] = np.log(_rate_min)
     xu[idx : idx + K] = np.log(_ddeg_max)
     idx += K
-    # Coupling
+    # Coupling — dedicated beta_coupling_max ceiling, not generic rate_max
     xl[idx] = np.log(_rate_min)
-    xu[idx] = np.log(_rate_max)
-    idx += 1
+    xu[idx] = np.log(_beta_max)
+    idx += 1  # beta_g
     xl[idx] = np.log(_rate_min)
-    xu[idx] = np.log(_rate_max)
-    idx += 1
+    xu[idx] = np.log(_beta_max)
+    idx += 1  # beta_l
     # Kinase: alpha, kK_act, kK_deact
-    xl[idx : idx + M] = np.log(_rate_min)
+    # alpha — dedicated lower bound to prevent collapse near zero
+    xl[idx : idx + M] = np.log(_alpha_min)
     xu[idx : idx + M] = np.log(_rate_max)
-    idx += M
+    idx += M  # alpha
     xl[idx : idx + M] = np.log(_rate_min)
     xu[idx : idx + M] = np.log(_kin_max)
     idx += M

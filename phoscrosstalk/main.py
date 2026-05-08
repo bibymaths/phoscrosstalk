@@ -198,6 +198,7 @@ def main():
         opt_rtol=getattr(cfg.optimisation, "rtol", 1e-8),
         opt_atol=getattr(cfg.optimisation, "atol", 1e-8),
         opt_verbose=getattr(cfg.optimisation, "verbose", False),
+        opt_log_every=getattr(cfg.optimisation, "log_every", 100),
         # model tuning
         scale_mode=cfg.model.scale_mode,
         length_scale=cfg.model.length_scale,
