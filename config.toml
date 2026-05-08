@@ -1012,5 +1012,88 @@ max_steps               = 4096
 save_dense              = false
 dense_n_points          = 100
 
+
+# =============================================================================
+# [pinn] – PINN / Universal ODE augmentation mode (optional)
+# =============================================================================
+#
+# When enabled = false (default): existing mechanistic optimisation and
+# post-fit neuralODE workflow run exactly as before.  No existing behaviour
+# changes.
+#
+# When enabled = true: mechanistic multistart optimisation and post-fit
+# neuralODE refinement are BYPASSED.  A single-start PINN joint optimisation
+# is run instead.  This is an ALTERNATIVE run mode, not an additional step.
+#
+# WARNING:
+#   PINN mode bypasses mechanistic multistart and post-fit neuralODE.
+#   It is an alternative run mode, not an additional post-processing step.
+#
+# Architecture
+# ------------
+# width_size:
+#   Hidden layer width of the PINN MLP.
+# depth:
+#   Number of hidden layers (>= 1).
+# activation:
+#   Activation function: "tanh" | "relu" | "gelu" | "silu" | "softplus" | "elu"
+#
+# Regularisation
+# --------------
+# lambda_pinn:
+#   Weight for the PINN neural regularisation term.  Higher values constrain
+#   the neural correction more strongly toward zero.
+# regularize:
+#   "residual_l2"  – regularise by mean L2 of neural correction over trajectory.
+#   "param_l2"     – regularise by L2 of network parameters.
+#
+# Optimisation
+# ------------
+# max_steps:
+#   Number of Optax training steps.
+# learning_rate:
+#   Adam optimiser learning rate.
+# rtol / atol:
+#   ODE solver tolerances used during PINN training.
+# seed:
+#   Random seed for PINN weight initialisation.
+# print_every:
+#   Log progress every N steps.
+# grad_clip:
+#   Global gradient norm clip (0 to disable).
+#
+# Runtime
+# -------
+# use_max_machine_threads:
+#   When true, use the maximum available CPU budget for the single PINN run
+#   through the existing runtime planning infrastructure.
+# =============================================================================
+[pinn]
+enabled                 = false   # set to true to activate PINN mode
+
+# Architecture
+width_size              = 64
+depth                   = 2
+activation              = "tanh"  # options: "tanh" | "relu" | "gelu" | "silu" | "softplus" | "elu"
+
+# Regularisation
+lambda_pinn             = 0.1
+regularize              = "residual_l2"   # options: "residual_l2" | "param_l2"
+
+# Optimisation
+max_steps               = 500
+learning_rate           = 1e-3
+rtol                    = 1e-8
+atol                    = 1e-8
+seed                    = 0
+verbose                 = true
+print_every             = 50
+grad_clip               = 1.0
+optimizer               = "adam"
+
+# Runtime
+use_max_machine_threads = true
+
+
 [debug]
 save_jaxpr_reports = true

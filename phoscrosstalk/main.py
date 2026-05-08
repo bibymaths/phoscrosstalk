@@ -896,6 +896,59 @@ def main():
         logger.warning(f"[!] Problem shape validation warnings:\n{e}")
 
     # ------------------------------------------------------------------
+    # Route: PINN mode vs mechanistic multistart
+    # ------------------------------------------------------------------
+    _pinn_cfg = getattr(cfg, "pinn", None)
+    _pinn_enabled = _pinn_cfg is not None and getattr(_pinn_cfg, "enabled", False)
+
+    if _pinn_enabled:
+        # ----------------------------------------------------------------
+        # PINN path: single-start joint optimisation, skip multistart and
+        # skip post-fit neuralODE.
+        # ----------------------------------------------------------------
+        logger.header("[pinn] PINN / Universal ODE mode selected")
+        logger.info("[pinn] Bypassing mechanistic multistart and post-fit neuralODE.")
+
+        from phoscrosstalk.pinn.runner import run_pinn_pipeline  # noqa: PLC0415
+
+        pinn_result = run_pinn_pipeline(
+            cfg=cfg,
+            dims=dims,
+            t=t,
+            P_scaled=P_scaled,
+            A_scaled=A_scaled,
+            prot_idx_for_A=prot_idx_for_A,
+            W_data=W_data,
+            W_data_prot=W_data_prot,
+            Cg=Cg,
+            Cl=Cl,
+            site_prot_idx=site_prot_idx,
+            K_site_kin=K_site_kin,
+            R=R,
+            L_alpha=L_alpha,
+            kin_to_prot_idx=kin_to_prot_idx,
+            receptor_mask_prot=receptor_mask_prot,
+            receptor_mask_kin=receptor_mask_kin,
+            mechanism=mechanism,
+            k_act_fn=k_act_fn,
+            s_prod_fn=s_prod_fn,
+            t_rna=t_rna if rna_matrix is not None else None,
+            rna_obs_matched=rna_obs_matched,
+            rna_model_prot_idx=rna_model_prot_idx,
+            rna_fit_genes=rna_fit_genes,
+            R_data0=R_data0,
+            W_data_mrna=W_data_mrna_matched if len(rna_fit_genes) > 0 else None,
+            outdir=outdir,
+            proteins=proteins,
+            kinases=kinases,
+            sites=sites,
+        )
+
+        logger.success("[pinn] PINN pipeline complete.")
+        logger.success("[*] Done.")
+        return
+
+    # ------------------------------------------------------------------
     # Optimisation: multi-start LM via run_multi_start_optimization
     # ------------------------------------------------------------------
     res, best_idx, total_losses = run_multi_start_optimization(

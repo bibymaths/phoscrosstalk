@@ -104,6 +104,7 @@ nav:
   - Configuration: configuration.md
   - Running PhosCrosstalk: running.md
   - Model: model.md
+  - PINN / Universal ODE: pinn.md
   - Outputs: outputs.md
   - Dashboard: dashboard.md
   - Troubleshooting: troubleshooting.md
