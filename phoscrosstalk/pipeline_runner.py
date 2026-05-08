@@ -32,18 +32,41 @@ def find_phoscrosstalk_executable() -> str | None:
     return shutil.which("phoscrosstalk")
 
 
+def _validate_user_path(path: Path, label: str = "path") -> None:
+    """
+    Raise ``ValueError`` if *path* points to a suspicious system location.
+
+    This is a lightweight guard for the local dashboard use-case.  It does
+    NOT try to be a comprehensive sandbox; it just prevents accidental
+    misuse of obvious system paths.
+    """
+    path_str = str(path)
+    _BLOCKED_PREFIXES = ("/etc/", "/bin/", "/sbin/", "/usr/bin/", "/usr/sbin/",
+                         "/proc/", "/sys/", "/dev/", "/boot/")
+    for prefix in _BLOCKED_PREFIXES:
+        if path_str.startswith(prefix):
+            raise ValueError(
+                f"{label} resolves to a restricted system path: {path_str}"
+            )
+
+
 def build_command(config_path: Path) -> list[str]:
     """
     Build the command list for running the pipeline.
 
+    The command is always passed as a list (``shell=False``), so the config
+    path is never interpreted by a shell.  Only the known ``phoscrosstalk``
+    executable is invoked — no arbitrary user commands are accepted here.
+
     Args:
-        config_path: Absolute (or relative) path to ``config.toml``.
+        config_path: Path to ``config.toml``.
 
     Returns:
-        A list suitable for :func:`subprocess.Popen`.
+        A list suitable for :func:`subprocess.Popen` with ``shell=False``.
 
     Raises:
         FileNotFoundError: if the ``phoscrosstalk`` executable is not on PATH.
+        ValueError: if *config_path* resolves to a suspicious system path.
     """
     exe = find_phoscrosstalk_executable()
     if exe is None:
@@ -51,7 +74,13 @@ def build_command(config_path: Path) -> list[str]:
             "Could not find `phoscrosstalk` on PATH. "
             "Install the package or activate the correct Python environment."
         )
-    return [exe, "--config", str(config_path)]
+
+    # Resolve and do a basic sanity check on the config path.
+    resolved = Path(config_path).resolve()
+    _validate_user_path(resolved, label="config_path")
+
+    # Return a strict list so subprocess never invokes a shell.
+    return [exe, "--config", str(resolved)]
 
 
 # ---------------------------------------------------------------------------
@@ -89,13 +118,22 @@ def start_pipeline(
         "stderr": subprocess.STDOUT,
         "text": True,
         "bufsize": 1,
+        # Never use shell=True — we always pass a validated command list.
+        "shell": False,
     }
 
     # On POSIX create a new process group so we can kill the whole tree.
     if platform.system() != "Windows":
         kwargs["preexec_fn"] = os.setsid
 
-    proc = subprocess.Popen(cmd, **kwargs)
+    try:
+        proc = subprocess.Popen(cmd, **kwargs)
+    except Exception:
+        log_fh.close()
+        raise
+
+    # Attach the file handle so stop_pipeline can close it on cleanup.
+    proc._dashboard_log_fh = log_fh  # type: ignore[attr-defined]
 
     # Write PID file for rerun recovery
     pid_path = run_dir / "pipeline.pid"
@@ -151,6 +189,14 @@ def stop_pipeline(
                 process.wait()
     except (ProcessLookupError, PermissionError, OSError):
         pass  # Process already gone
+
+    # Close the log file handle attached by start_pipeline, if present.
+    log_fh = getattr(process, "_dashboard_log_fh", None)
+    if log_fh is not None:
+        try:
+            log_fh.close()
+        except OSError:
+            pass
 
     if run_dir is not None:
         pid_path = Path(run_dir) / "pipeline.pid"

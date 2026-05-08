@@ -521,10 +521,11 @@ def render_config_editor(
                 max_value=1.0,
                 value=float(bounds.get("rate_min", 1e-5)),
                 format="%.2e",
-                help="Log-space floor for ALL positive rate parameters.",
+                help=(
+                    "Log-space floor for ALL positive rate parameters. "
+                    "Must be > 0 (enforced by the widget minimum)."
+                ),
             )
-            if bounds["rate_min"] <= 0:
-                st.warning("⚠️ Lower bound must be > 0 for log-encoded parameters.")
             bounds["rate_max"] = st.number_input(
                 "rate_max (generic ceiling)",
                 min_value=0.01,
