@@ -323,9 +323,11 @@ def run_pinn_pipeline(
     # ------------------------------------------------------------------
     # 6. Recompute final loss diagnostics
     # ------------------------------------------------------------------
+    total_final = float("nan")
     try:
         total_final, aux_final = loss_fn((theta_final, pinn_final), None)
         f1, f2, f3, f4, fp = tuple(float(a) for a in aux_final)
+        total_final = float(total_final)
     except Exception as exc:
         _debug_logger.warning("[pinn] Could not recompute final diagnostics: %s", exc)
         f1 = f2 = f3 = f4 = fp = float("nan")
@@ -336,14 +338,14 @@ def run_pinn_pipeline(
         "f3": f3,
         "f4": f4,
         "f_pinn_reg": fp,
-        "total_loss": f1 + f2 + f3 + f4 + fp,
+        "total_loss": float(total_final),
     }
     logger.info(
         "[pinn] Final losses: f1=%.4e  f2=%.4e  f3=%.4e  f4=%.4e  f_pinn=%.4e",
         f1, f2, f3, f4, fp,
     )
 
-    theta_opt = np.asarray(theta_final, dtype=np.float64)
+    theta_opt = np.asarray(np.clip(np.asarray(theta_final), xl, xu), dtype=np.float64)
 
     # ------------------------------------------------------------------
     # 7. Forward simulation for dense output

@@ -228,10 +228,11 @@ def save_pinn_residuals(
         import jax.numpy as jnp
 
         ys_j = jnp.asarray(ys, dtype=jnp.float64)
-        # Evaluate pinn_model on every trajectory point
+        ts_j = jnp.asarray(ts, dtype=jnp.float64)
+        # Evaluate pinn_model on every trajectory point, including the correct time.
         pinn_ys = jax.vmap(
-            lambda y_row: pinn_model(y_row, jnp.asarray(0.0, dtype=jnp.float64))
-        )(ys_j)  # (T, state_dim)
+            lambda y_row, t_val: pinn_model(y_row, jnp.asarray(t_val, dtype=jnp.float64))
+        )(ys_j, ts_j)  # (T, state_dim)
         pinn_np = safe_to_numpy(pinn_ys)
     except Exception as exc:
         _logger.warning("[pinn] Could not evaluate PINN corrections: %s", exc)
