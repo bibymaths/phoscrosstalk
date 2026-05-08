@@ -258,7 +258,7 @@ ls_solver     = "lm"         # options: "lm" | "gauss_newton" | "dogleg" | "indi
 optx_adjoint  = "implicit"   # options: "implicit" | "checkpoint"
 jac_mode      = "bwd"        # options: "fwd" | "bwd"
 
-verbose       = false
+verbose       = true
 loss_type     = "mse"
 
 lambda_net    = 0.001
@@ -269,7 +269,7 @@ atol          = 1e-6
 
 # Optimizer backend. Options: "optimistix" (default), "jaxopt_lbfgsb", "jaxopt_pgd",
 # "scipy_jax", "scipy_jax_pen", "optax_adam", "optax_sgd", "optax_lbfgs", "mpax".
-optimizer_backend = "mpax"
+optimizer_backend = "jaxopt_lbfgsb"
 
 
 # =============================================================================
@@ -564,14 +564,14 @@ reg       = 1.0
 #   Biological/numerical upper guide for protein abundance fold-change.
 # =============================================================================
 [bounds]
-rate_min                = 1e-5
-rate_max                = 100.0
-protein_degradation_max = 0.5
-kinase_rate_max         = 10.0
-phosphatase_rate_max    = 10.0
-gamma_abs_max           = 20.0
-rna_max                 = 100.0
-abundance_max           = 50.0
+rate_min                = 1e-4     # raised from 1e-5: log(1e-5)=-11.5 is numerically marginal
+rate_max                = 10.0     # lowered from 100: no RTK-pathway rate realistically > 10 min⁻¹
+protein_degradation_max = 0.02     # → min half-life ~35 min; realistic for EGFR/MET/ERBB2
+kinase_rate_max         = 5.0      # lowered from 10: EGFR/MET kinase dynamics on minute timescale
+phosphatase_rate_max    = 5.0      # same reasoning as kinase
+gamma_abs_max           = 4.0      # tanh(4)≈1; keeps gradients alive across full range
+rna_max                 = 10.0     # lowered from 100: mRNA fold-changes rarely exceed 10x in 16h
+abundance_max           = 5.0      # already set in simulation.py clip; keep consistent
 
 
 # =============================================================================
