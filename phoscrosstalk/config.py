@@ -247,6 +247,35 @@ _DEFAULTS = {
         # Number of time points in the dense neural output grid.
         "dense_n_points": 200,
     },
+    # PINN / Universal ODE augmentation mode.
+    # Only active when enabled = true.  Old configs without this section
+    # default to enabled = false and are entirely unaffected.
+    # When enabled = true, mechanistic multistart and post-fit neuralODE are
+    # bypassed.  A single-start PINN optimisation is run instead.
+    "pinn": {
+        # Set to true to enable PINN mode (bypasses mechanistic multistart
+        # and post-fit neuralODE).
+        "enabled": False,
+        # Architecture
+        "width_size": 64,
+        "depth": 2,
+        "activation": "tanh",
+        # Regularisation
+        "lambda_pinn": 0.1,
+        "regularize": "residual_l2",
+        # Optimisation
+        "max_steps": 500,
+        "learning_rate": 1e-3,
+        "rtol": 1e-8,
+        "atol": 1e-8,
+        "seed": 0,
+        "verbose": True,
+        "print_every": 50,
+        "grad_clip": 1.0,
+        "optimizer": "adam",
+        # Runtime
+        "use_max_machine_threads": True,
+    },
     # Diagnostic / developer flags.  All default to False so production runs
     # are completely unaffected.
     "debug": {
@@ -834,6 +863,26 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
             errors.append(
                 f"  [data_interpolation] replace_nans_at_start = {replace_start!r} "
                 f"is invalid. Must be one of: null, 'zero', 'first_valid'."
+            )
+
+    # -------------------------------------------------------------------
+    # PINN mode
+    # -------------------------------------------------------------------
+    pinn_cfg = getattr(cfg, "pinn", None)
+    if pinn_cfg is not None and getattr(pinn_cfg, "enabled", False):
+        from phoscrosstalk.pinn.config import validate_pinn_config  # noqa: PLC0415
+        try:
+            validate_pinn_config(pinn_cfg)
+        except ValueError as exc:
+            for line in str(exc).splitlines():
+                errors.append(f"  {line}")
+
+        # PINN and neural_ode are mutually exclusive run modes.
+        _neural_enabled = getattr(getattr(cfg, "neural_ode", None), "enabled", False)
+        if _neural_enabled:
+            warnings.append(
+                "  [pinn] enabled = true and [neural_ode] enabled = true are both set. "
+                "PINN mode will bypass post-fit neuralODE; [neural_ode] will be skipped."
             )
 
     # -------------------------------------------------------------------
