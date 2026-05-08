@@ -383,14 +383,15 @@ def make_rhs(
         # ------------------------------------------------------------------
         # Basal synthesis is s_prod * R_rna.
         # Signalling and phosphosite context act as positive fold-change modifiers
-        # centered around 1, not as hard suppressive sigmoid gates.
+        # centered around 1, bounded to [exp(-1), exp(1)] (~ 0.36x to 2.7x)
 
         A_signal = S - jnp.float64(0.5)
-        A_drive = jnp.exp(gamma_A_S * A_signal)
+        # Use tanh to squash the drive, so it cannot blow up exponentially
+        A_drive_field = gamma_A_S * A_signal
+        A_drive = jnp.exp(jnp.tanh(A_drive_field))
 
-        A_phospho_drive = jnp.exp(
-            jnp.float64(0.25) * gamma_A_p * (mq - jnp.float64(0.5))
-        )
+        A_phospho_field = jnp.float64(0.25) * gamma_A_p * (mq - jnp.float64(0.5))
+        A_phospho_drive = jnp.exp(jnp.tanh(A_phospho_field))
 
         s_eff = s_prod * R_rna * A_drive * A_phospho_drive
 
@@ -483,7 +484,9 @@ def make_rhs(
         A_site = A[site_prot_idx] / jnp.asarray(abundance_max, dtype=jnp.float64)
         A_site = jnp.clip(A_site, 0.0, None)
 
-        v_on_raw = k_on_eff * coup_factor * gate * (1.0 + A_site)
+        # Dampen the substrate availability effect
+        v_on_raw = k_on_eff * coup_factor * gate * (1.0 + jnp.float64(0.5) * A_site)
+
         v_on_raw = jnp.clip(v_on_raw, 0.0, None)
 
         # Saturating production prevents runaway while still allowing p > 1.
