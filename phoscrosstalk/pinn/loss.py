@@ -311,10 +311,20 @@ def make_pinn_loss_fn(
 
         # --- f_pinn_reg: neural regularisation ---
         if regularize == "residual_l2":
-            # Mean L2 of PINN correction over trajectory
+            # Mean L2 of PINN correction over trajectory.
+            # We pass t=0 to the PINN model for all trajectory points because
+            # (a) the regularisation only needs an estimate of the correction
+            #     magnitude, not a time-accurate evaluation, and
+            # (b) passing varying traced time values would require vmapping over
+            #     t values from the ODE output, adding overhead.
+            # This simplification is conservative: if the PINN output is large
+            # at t=0 it is likely large elsewhere too.  For "residual_l2" the
+            # time argument is only used as one feature alongside the full ODE
+            # state, so fixing it to a constant does not meaningfully bias the
+            # regularisation.
             pinn_corrections = jax.vmap(
                 lambda y_row: pinn_model(y_row, jnp.asarray(0.0, dtype=jnp.float64))
-            )(xs)  # (T, state_dim) – uses t=0 as a constant proxy; adequate for L2 reg
+            )(xs)  # (T, state_dim)
             f_pinn_reg = jnp.mean(jnp.sum(pinn_corrections ** 2, axis=-1))
         else:  # "param_l2"
             leaves, _ = jax.tree_util.tree_flatten(

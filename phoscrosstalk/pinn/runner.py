@@ -39,8 +39,6 @@ _debug_logger = logging.getLogger("phoscrosstalk.pinn.runner")
 # Training loop helpers
 # ---------------------------------------------------------------------------
 
-_pinn_loss_history: list[dict] = []
-
 
 def _run_pinn_optax(
     *,
