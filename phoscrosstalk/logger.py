@@ -191,65 +191,51 @@ class RichLogger:
         return console
 
 
-# Global singleton accessor
-def get_logger(log_file="pipeline.log", timestamp=True):
+def configure_logger(log_file="logs/pipeline.log", timestamp=True, level=logging.INFO):
     """
-    Return the process-wide ``RichLogger`` singleton.
+    Explicitly configure the process-wide logger.
 
-    This function is **idempotent**: once the singleton has been created by
-    the first call (typically from ``main.py`` or the first imported module),
-    all subsequent calls return the same instance regardless of the arguments
-    passed.  This prevents:
-
-    * Duplicate ``FileHandler`` / ``StreamHandler`` additions when multiple
-      modules call ``get_logger()`` at import time.
-    * Multiple timestamped ``.log`` files being created within a single
-      pipeline run or Streamlit session (because every call would otherwise
-      generate a fresh timestamp and attempt to set up a new handler).
-
-    Singleton / handler policy
-    --------------------------
-    * The first call wins: it creates ``RichLogger`` with the supplied
-      ``log_file`` name (optionally timestamped) and attaches both a
-      ``RichHandler`` (console) and a ``FileHandler``.
-    * All subsequent calls return the existing instance untouched.
-    * If you need a *different* log file for a new session (e.g., a second
-      CLI invocation in the same interpreter), reset ``RichLogger._instance``
-      to ``None`` before calling ``get_logger()`` again.  This is intentional
-      and explicit rather than automatic, to avoid accidental log-file
-      proliferation.
-
-    Streamlit note
-    --------------
-    Streamlit reruns do **not** reimport already-cached modules, so the
-    singleton persists across reruns within the same server process.  A new
-    timestamped log file is therefore created only when the server process
-    starts, not on every page rerender.
-
-    Args:
-        log_file (str): Base filename used only on the *first* call.
-        timestamp (bool): If ``True`` (default), a ``YYYY-MM-DD_HH-MM-SS``
-            suffix is appended to the base filename on the first call.
-            Subsequent calls ignore this argument entirely.
-
-    Returns:
-        RichLogger: The singleton logger instance.
+    Call this once from main.py before running the pipeline.
+    This is the only function that should create or replace a FileHandler.
     """
-    # Fast path: singleton already initialised – return immediately without
-    # generating a new timestamp or adding any handlers.
-    if RichLogger._instance is not None:
-        return RichLogger._instance
-
     if log_file is None:
-        log_file = "pipeline.log"
+        resolved_log_file = None
+    else:
+        resolved_log_file = log_file
 
-    if timestamp:
-        # Generate a timestamped filename only once, at singleton creation.
-        # Format: pipeline_2023-10-27_15-30-00.log
+    if resolved_log_file and timestamp:
         ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        root, ext = os.path.splitext(log_file)
+        root, ext = os.path.splitext(resolved_log_file)
         if not ext:
             ext = ".log"
-        log_file = f"{root}_{ts}{ext}"
+        resolved_log_file = f"{root}_{ts}{ext}"
 
-    return RichLogger(log_file=log_file)
+    # If singleton does not exist, create it.
+    if RichLogger._instance is None:
+        return RichLogger(log_file=resolved_log_file, level=level)
+
+    # If singleton already exists, update the file handler explicitly.
+    inst = RichLogger._instance
+    inst.logger.setLevel(level)
+
+    if resolved_log_file:
+        inst.add_file_handler(resolved_log_file, level=level)
+
+    return inst
+
+
+def get_logger(log_file=None, timestamp=False):
+    """
+    Return the process-wide logger without creating new timestamped files.
+
+    Module-level calls should use get_logger() only.
+    File logging should be configured explicitly from main.py using configure_logger().
+    """
+    if RichLogger._instance is None:
+        # Console-only default logger.
+        RichLogger._instance = RichLogger(log_file=None)
+
+    return RichLogger._instance
+
+def get_std_logger():
+    return get_logger().logger

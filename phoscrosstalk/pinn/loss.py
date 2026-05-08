@@ -22,7 +22,7 @@ Two regularisation strategies are supported (pinn_cfg.regularize):
 
 from __future__ import annotations
 
-import logging
+from phoscrosstalk.logger import get_logger
 
 import diffrax
 import equinox as eqx
@@ -40,7 +40,7 @@ from phoscrosstalk.solver_config import (
 )
 from phoscrosstalk.pinn.rhs import make_combined_rhs
 
-_logger = logging.getLogger(__name__)
+_logger = get_logger().logger
 
 # Per-element penalty returned when the ODE solve fails.
 _FAILED_SOLVE_PENALTY: float = 1e3
@@ -48,6 +48,36 @@ _FAILED_SOLVE_PENALTY: float = 1e3
 # Upper bound for clipping R_rna (fold-change scale).
 _RNA_CLIP_UPPER: float = 20.0
 
+# ---------------------------------------------------------------------------
+# Residual standardisation helpers
+# ---------------------------------------------------------------------------
+
+def _row_std_scale(x, eps: float = 1e-6):
+    """
+    Return per-row observed-data scale for residual standardisation.
+
+    Shape:
+        x:     (rows, time)
+        scale: (rows, 1)
+
+    Rows with near-zero temporal variation fall back to scale=1.0 to avoid
+    exploding residuals for flat traces.
+    """
+    x = jnp.asarray(x, dtype=jnp.float64)
+    eps_j = jnp.asarray(eps, dtype=jnp.float64)
+
+    scale = jnp.std(x, axis=1, keepdims=True)
+    return jnp.where(scale > eps_j, scale, jnp.asarray(1.0, dtype=jnp.float64))
+
+
+def _standardized_residual(sim, obs, scale):
+    """
+    Standardized residual without mean-centering.
+
+    This preserves absolute level mismatch:
+        residual = (sim - obs) / observed_row_std
+    """
+    return (sim - obs) / scale
 
 def make_pinn_loss_fn(
     dims: ModelDims,
@@ -175,6 +205,10 @@ def make_pinn_loss_fn(
     W_data_j  = jnp.asarray(W_data,      dtype=jnp.float64)
     W_prot_j  = jnp.asarray(W_data_prot, dtype=jnp.float64)
 
+    # Observed-data scales for standardized f1/f2 residuals.
+    P_scale_j = _row_std_scale(P_data_j)
+    A_scale_j = _row_std_scale(A_scaled_j) if A_scaled.size > 0 else None
+
     has_abundance = A_scaled.size > 0
 
     has_mrna = (
@@ -190,6 +224,7 @@ def make_pinn_loss_fn(
         rna_j           = jnp.asarray(rna_data_scaled, dtype=jnp.float64)
         mrna_idx_j      = jnp.asarray(mrna_time_idx,   dtype=jnp.int32)
         rna_prot_idx_j  = jnp.asarray(rna_model_prot_idx, dtype=jnp.int32)
+        R_scale_j = _row_std_scale(rna_j)
         n_matched = len(rna_model_prot_idx)
         T_rna     = len(t_mrna)
         W_rna_base = (
@@ -200,7 +235,7 @@ def make_pinn_loss_fn(
         W_rna_j  = jnp.asarray(W_rna_base, dtype=jnp.float64)
         n_rna    = max(1, rna_data_scaled.size)
     else:
-        rna_j = mrna_idx_j = rna_prot_idx_j = W_rna_j = None
+        rna_j = mrna_idx_j = rna_prot_idx_j = W_rna_j = R_scale_j = None
         n_rna = 1
 
     has_bounds = xl is not None and xu is not None
@@ -278,13 +313,15 @@ def make_pinn_loss_fn(
         A_sim = jnp.clip(xs_prot[:, 2 * K : 3 * K], 0.0, 5.0).T  # (K, T_prot)
 
         # --- f1: phosphosite loss ---
-        diff_p = P_sim - P_data_j
+        # diff_p = P_sim - P_data_j
+        diff_p = _standardized_residual(P_sim, P_data_j, P_scale_j)
         f1 = jnp.sum(W_data_j * diff_p * diff_p) / n_p
 
         # --- f2: abundance loss ---
         if has_abundance:
             A_sim_obs = A_sim[prot_idx_j, :]
-            diff_A = A_sim_obs - A_scaled_j
+            # diff_A = A_sim_obs - A_scaled_j
+            diff_A = _standardized_residual(A_sim_obs, A_scaled_j, A_scale_j)
             f2 = jnp.sum(W_prot_j * diff_A * diff_A) / n_A
         else:
             f2 = jnp.asarray(0.0, dtype=jnp.float64)
@@ -304,7 +341,8 @@ def make_pinn_loss_fn(
             xs_rna = xs[mrna_idx_j, :]
             R_sim_rna = jnp.clip(xs_rna[:, :K], 0.0, _RNA_CLIP_UPPER).T
             R_sim_matched = R_sim_rna[rna_prot_idx_j, :]
-            diff_R = R_sim_matched - rna_j
+            # diff_R = R_sim_matched - rna_j
+            diff_R = _standardized_residual(R_sim_matched, rna_j, R_scale_j)
             f4 = jnp.sum(W_rna_j * diff_R * diff_R) / n_rna
         else:
             f4 = jnp.asarray(0.0, dtype=jnp.float64)

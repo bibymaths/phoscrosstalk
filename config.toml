@@ -129,8 +129,8 @@ output_dir        = "test_dist"
 
 crosstalk_tsv     = ""
 rna_data          = "data_timeseries/input3.csv"
-tf_net            = "data_subset/subnetwork_EGFR_MET_ERBB2/tf_mrna_subset.csv"
-kinase_tsv        = "data_subset/subnetwork_EGFR_MET_ERBB2/kinase_sites_subset.tsv"
+tf_net            = "data_interactions/tf_mrna.csv"
+kinase_tsv        = "data_interactions/kinase_sites.tsv"
 kea_ks_table      = ""
 unified_graph_pkl = "data_curated/processed/unified_kinase_graph.gpickle"
 
@@ -174,8 +174,8 @@ scale_mode              = "none"      # options: "none" | "minmax" | "log-minmax
 length_scale            = 25.0
 weight_scheme           = "uniform"   # options: uniform, early_emphasis, early_emphasis_moderate, late_emphasis, flat_no_noise
 
-receptors               = ["EGFR", "MET"]
-receptor_kinases        = ["EGFR", "ERBB2", "MET"]
+receptors               = ["ABL2", "CLK3", "EGFR", "EPHA2", "ERBB2", "GRK2", "GRK5", "GSK3A", "LYN", "MAP2K2", "MAPK1", "MAPK3", "MET", "ROCK1"]
+receptor_kinases        = ["ABL2", "CDK1", "CDK2", "CDK4", "CDK5", "CLK3", "DAPK3", "EGFR", "EPHA2", "ERBB2", "FYN", "GRK2", "GRK5", "GSK3A", "GSK3B", "LYN", "MAP2K1", "MAP2K2", "MAP2K3", "MAP2K4", "MAPK1", "MAPK3", "MAPK8", "MET", "PAK2", "ROCK1", "TTK"]
 include_tfs_as_proteins = false
 
 
@@ -528,8 +528,8 @@ root_find_max_steps = 20
 # =============================================================================
 [loss_weights]
 phospho   = 1.0
-abundance = 1.0
-mrna      = 1.0
+abundance = 5.0
+mrna      = 2.0
 reg       = 1.0
 
 
@@ -680,7 +680,7 @@ rna_relax = 0.1
 #   After fitting is stable, enable analyses one by one.
 # =============================================================================
 [analysis]
-tune            = true
+tune            = false
 run_steadystate = true
 run_knockouts   = true
 run_sensitivity = true
@@ -986,14 +986,14 @@ replace_nans_at_start   = "first_valid"   # null | "zero" | "first_valid"
 # =============================================================================
 [neural_ode]
 use_optax               = true
-optimizer               = "adam"
+optimizer               = "adabelief"
 optax_loop              = "scan"
 print_every             = 250
 
 enabled                 = true
-width                   = 16
-depth                   = 1
-steps                   = 3000
+width                   = 64
+depth                   = 2
+steps                   = 200
 learning_rate           = 1e-3
 
 prior_weight_k_act      = 1.0
@@ -1077,19 +1077,19 @@ depth                   = 2
 activation              = "tanh"  # options: "tanh" | "relu" | "gelu" | "silu" | "softplus" | "elu"
 
 # Regularisation
-lambda_pinn             = 0.1
+lambda_pinn             = 0.5
 regularize              = "residual_l2"   # options: "residual_l2" | "param_l2"
 
 # Optimisation
-max_steps               = 500
+max_steps               = 100
 learning_rate           = 1e-3
 rtol                    = 1e-8
 atol                    = 1e-8
 seed                    = 0
 verbose                 = true
-print_every             = 50
+print_every             = 1
 grad_clip               = 1.0
-optimizer               = "adam"
+optimizer               = "adabelief"
 
 # Runtime
 use_max_machine_threads = true

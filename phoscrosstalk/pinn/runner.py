@@ -11,7 +11,6 @@ run_pinn_pipeline(...)
 
 from __future__ import annotations
 
-import logging
 import os
 import time
 from types import SimpleNamespace
@@ -33,7 +32,7 @@ from phoscrosstalk.pinn.plotting import save_pinn_plots
 from phoscrosstalk.pinn.utils import pinn_param_count
 
 logger = get_logger()
-_debug_logger = logging.getLogger("phoscrosstalk.pinn.runner")
+_debug_logger = get_logger().logger
 
 # ---------------------------------------------------------------------------
 # Training loop helpers
@@ -94,19 +93,43 @@ def _run_pinn_optax(
 
         if s % print_every == 0 or s == max_steps - 1:
             loss_val.block_until_ready()
+
+            elapsed = time.perf_counter() - t0
+            avg_step_s = elapsed / max(1, s + 1)
+            remaining_steps = max_steps - s - 1
+            eta_s = avg_step_s * remaining_steps
+
             f1, f2, f3, f4, fp = tuple(float(a) for a in aux)
+
             row = {
                 "step": s,
                 "total_loss": float(loss_val),
-                "f1": f1, "f2": f2, "f3": f3, "f4": f4,
+                "f1": f1,
+                "f2": f2,
+                "f3": f3,
+                "f4": f4,
                 "f_pinn_reg": fp,
-                "elapsed_s": time.perf_counter() - t0,
+                "elapsed_s": elapsed,
+                "avg_step_s": avg_step_s,
+                "eta_s": eta_s,
             }
             history.append(row)
-            _debug_logger.info(
-                "[pinn] step=%04d  total=%.4e  f1=%.4e  f2=%.4e  "
-                "f3=%.4e  f4=%.4e  f_pinn=%.4e",
-                s, float(loss_val), f1, f2, f3, f4, fp,
+
+            logger.info(
+                "[pinn] step=%04d/%04d  total=%.4e  "
+                "f1=%.4e  f2=%.4e  f3=%.4e  f4=%.4e  f_pinn=%.4e  "
+                "elapsed=%.1fmin  avg_step=%.2fs  eta=%.1fmin",
+                s,
+                max_steps,
+                float(loss_val),
+                f1,
+                f2,
+                f3,
+                f4,
+                fp,
+                elapsed / 60.0,
+                avg_step_s,
+                eta_s / 60.0,
             )
 
     return trainable, history
@@ -489,10 +512,13 @@ def run_pinn_pipeline(
     logger.info("[pinn] All PINN outputs saved.")
 
     return {
-        "theta_opt":        theta_opt,
-        "pinn_model":       pinn_final,
-        "loss_components":  loss_components,
-        "ts":               ts_sim,
-        "ys":               ys_sim,
-        "loss_history":     loss_history,
+        "theta_opt": theta_opt,
+        "pinn_model": pinn_final,
+        "loss_components": loss_components,
+        "ts": ts_sim,
+        "ys": ys_sim,
+        "loss_history": loss_history,
+        "xl": xl,
+        "xu": xu,
+        "mode": "pinn",
     }

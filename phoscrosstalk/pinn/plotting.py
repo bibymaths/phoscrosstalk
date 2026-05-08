@@ -12,7 +12,7 @@ Provides:
 
 from __future__ import annotations
 
-import logging
+
 import os
 
 import numpy as np
@@ -21,8 +21,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from phoscrosstalk.pinn.utils import state_labels
+from phoscrosstalk.logger import get_logger
 
-_logger = logging.getLogger(__name__)
+_logger = get_logger().logger
 
 
 def plot_pinn_residual_heatmap(
@@ -59,7 +60,7 @@ def plot_pinn_residual_heatmap(
         )
         im = ax.imshow(
             abs_res[:, :n_labels].T,
-            aspect="auto",
+            aspect="equal",
             cmap="YlOrRd",
             interpolation="nearest",
         )

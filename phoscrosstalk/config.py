@@ -11,12 +11,12 @@ Provides:
   * DEFAULT_TIMEPOINTS – legacy default time-point array.
   * EPS                – small constant for numerical stability.
 """
-import logging
+
 import os
 import sys
 from dataclasses import dataclass
 from types import SimpleNamespace
-
+from phoscrosstalk.logger import get_logger
 import numpy as np
 
 try:
@@ -24,7 +24,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib  # fallback for older environments
 
-_logger = logging.getLogger(__name__)
+_logger = get_logger().logger
 
 
 # ---------------------------------------------------------------------------

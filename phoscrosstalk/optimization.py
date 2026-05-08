@@ -28,7 +28,6 @@ Residual vector structure (for optx.least_squares):
 State layout: y = [R_rna, S, A, Kdyn, p]  (dim = 3*K + M + N)
 """
 
-import logging
 import os
 import pathlib
 from functools import partial
@@ -60,7 +59,7 @@ logger = get_logger()
 
 # Module-level standard logger used by jax.debug.callback (must be a plain
 # logging.Logger — jax.debug.callback executes the callback outside the trace).
-_debug_logger = logging.getLogger("phoscrosstalk.optimization")
+_debug_logger = get_logger().logger
 
 
 def _log_residuals_step(total_loss):
@@ -1531,6 +1530,7 @@ class NetworkProblem:
         rtol=1e-6,
         atol=1e-9,
         max_steps=16384,
+        pinn_model=None,
         **kwargs,  # absorb legacy keyword args (elementwise_runner, etc.)
     ):
         # Note: ode_adjoint_kind was previously defaulted to the non-existent value
@@ -1593,6 +1593,7 @@ class NetworkProblem:
         self.rtol = rtol
         self.atol = atol
         self.max_steps = max_steps
+        self.pinn_model = pinn_model
 
     def simulate(self, x):
         """
@@ -1684,6 +1685,158 @@ class NetworkProblem:
             dims=self.dims,
             max_steps=self.max_steps,
         )
+
+    def _simulate_pinn(self, theta):
+        """
+        Run PINN-augmented simulation using the fitted PINN model.
+
+        This mirrors the normal simulate(..., return_full=True) interface, but
+        uses the combined mechanistic + PINN RHS.
+        """
+        from phoscrosstalk.pinn.rhs import make_combined_rhs
+
+        K, M, N = self.dims.K, self.dims.M, self.dims.N
+        T = self.P_data.shape[1]
+
+        A0 = build_full_A0(K, T, self.A_scaled, self.prot_idx_for_A)
+
+        x0 = np.zeros(3 * K + M + N, dtype=np.float64)
+
+        if self.R_data0 is not None:
+            r0 = np.asarray(self.R_data0, dtype=np.float64)
+            r0 = r0[:, 0] if r0.ndim > 1 else r0
+            x0[:K] = np.clip(np.nan_to_num(r0, nan=1.0), 0.0, 10.0)
+        else:
+            x0[:K] = 1.0
+
+        x0[2 * K : 3 * K] = np.clip(
+            np.nan_to_num(A0[:, 0], nan=1.0),
+            0.0,
+            5.0,
+        )
+        x0[3 * K + M :] = np.clip(
+            np.nan_to_num(self.P_data[:, 0], nan=0.0),
+            0.0,
+            None,
+        )
+
+        prev_idx = compute_prev_site_idx(
+            np.asarray(self.site_prot_idx, dtype=np.int32),
+            N,
+        )
+
+        combined_rhs = make_combined_rhs(
+            K,
+            M,
+            N,
+            self.mechanism,
+            k_act_fn=self.k_act_fn,
+            s_prod_fn=self.s_prod_fn,
+            rna_relax=self.rna_relax,
+            abundance_max=5.0,
+        )
+
+        theta_j = jnp.asarray(theta, dtype=jnp.float64)
+        y0_j = jnp.asarray(x0, dtype=jnp.float64)
+
+        # Use the same unified output grid as pinn/loss.py:
+        # protein/phosphosite outputs are read at self.t,
+        # RNA outputs are read at self.t_rna.
+        if self.t_rna is not None and len(self.t_rna) > 0:
+            all_times = np.union1d(
+                np.asarray(self.t, dtype=np.float64),
+                np.asarray(self.t_rna, dtype=np.float64),
+            )
+        else:
+            all_times = np.unique(np.asarray(self.t, dtype=np.float64))
+
+        all_times = np.sort(all_times).astype(np.float64)
+
+        self.prot_time_idx = np.searchsorted(all_times, np.asarray(self.t, dtype=np.float64))
+
+        if self.t_rna is not None and len(self.t_rna) > 0:
+            self.mrna_time_idx = np.searchsorted(
+                all_times,
+                np.asarray(self.t_rna, dtype=np.float64),
+            )
+        else:
+            self.mrna_time_idx = None
+
+        t_eval = jnp.asarray(all_times, dtype=jnp.float64)
+
+        ode_args = (
+            theta_j,
+            jnp.asarray(self.Cg, dtype=jnp.float64),
+            jnp.asarray(self.Cl, dtype=jnp.float64),
+            jnp.asarray(self.site_prot_idx, dtype=jnp.int32),
+            jnp.asarray(self.K_site_kin, dtype=jnp.float64),
+            jnp.asarray(self.R, dtype=jnp.float64),
+            jnp.asarray(self.L_alpha, dtype=jnp.float64),
+            jnp.asarray(self.kin_to_prot_idx, dtype=jnp.int32),
+            jnp.asarray(self.receptor_mask_prot, dtype=jnp.float64),
+            jnp.asarray(self.receptor_mask_kin, dtype=jnp.float64),
+            jnp.asarray(prev_idx, dtype=jnp.int32),
+            self.pinn_model,
+        )
+
+        sol = diffrax.diffeqsolve(
+            diffrax.ODETerm(combined_rhs),
+            make_diffrax_solver(
+                self.ode_solver_kind,
+                root_find_max_steps=self.ode_root_find_max_steps,
+            ),
+            t0=float(all_times[0]),
+            t1=float(all_times[-1]),
+            dt0=self.ode_dt0,
+            y0=y0_j,
+            args=ode_args,
+            saveat=diffrax.SaveAt(ts=t_eval),
+            stepsize_controller=make_stepsize_controller(
+                rtol=self.rtol,
+                atol=self.atol,
+            ),
+            max_steps=self.max_steps,
+            throw=False,
+        )
+
+        ys = np.asarray(sol.ys, dtype=np.float64)
+
+        # Diffrax returns (T_unified, state_dim).
+        if ys.shape[0] != len(all_times):
+            raise RuntimeError(
+                f"PINN simulation returned unexpected shape {ys.shape}; "
+                f"expected first dimension len(all_times)={len(all_times)}."
+            )
+
+        xs_prot = ys[self.prot_time_idx, :]  # (T_prot, state_dim)
+
+        R_sim = xs_prot[:, 0:K].T
+        S_sim = xs_prot[:, K : 2 * K].T
+        A_sim = xs_prot[:, 2 * K : 3 * K].T
+        Kdyn_sim = xs_prot[:, 3 * K : 3 * K + M].T
+        P_sim = xs_prot[:, 3 * K + M : 3 * K + M + N].T
+
+        if self.mrna_time_idx is not None:
+            xs_rna = ys[self.mrna_time_idx, :]  # (T_rna, state_dim)
+            self.R_sim_rna = xs_rna[:, 0:K].T   # (K, T_rna)
+        else:
+            self.R_sim_rna = None
+
+        return {
+            "P_sim": P_sim,
+            "A_sim": A_sim,
+            "S_sim": S_sim,
+            "Kdyn_sim": Kdyn_sim,
+            "R_sim": R_sim,
+            "R_sim_rna": self.R_sim_rna,
+            "t": np.asarray(self.t, dtype=np.float64),
+            "t_rna": (
+                np.asarray(self.t_rna, dtype=np.float64)
+                if self.t_rna is not None
+                else None
+            ),
+            "solver_times": all_times,
+        }
 
 
 # Legacy alias so that any remaining code that imports NetworkOptimizationProblem

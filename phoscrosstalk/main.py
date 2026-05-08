@@ -16,6 +16,9 @@ Entry point for the Global Phospho-Network Model orchestration.
 # top level (it uses PEP-562 lazy __getattr__), so importing runtime_env here
 # is safe — it only uses ``os`` and ``sys``.
 # ---------------------------------------------------------------------------
+from phoscrosstalk.logger import configure_logger
+
+logger = configure_logger("logs/pipeline.log", timestamp=True)
 
 import os
 import pathlib
@@ -51,16 +54,17 @@ enable_x64()  # Must be before any JAX import
 
 import argparse
 from types import SimpleNamespace
+import subprocess
+import sys
 
 import numpy as np
 import pandas as pd
 
 from phoscrosstalk import analysis, data_loader, hyperparam, knockouts, steadystate
 from phoscrosstalk.analysis import _save_preopt_snapshot_txt_csv
-from phoscrosstalk.config import ModelDims, _opt, load_config, validate_config, _read_runtime_config
+from phoscrosstalk.config import ModelDims, _opt, load_config, validate_config
 from phoscrosstalk.derived_rates import make_k_act_fn, make_s_prod_fn
 from phoscrosstalk.equations import generate_equations_report
-from phoscrosstalk.logger import get_logger
 from phoscrosstalk.logo import print_logo
 from phoscrosstalk.multistarts import run_multi_start_optimization
 from phoscrosstalk.optimization import (
@@ -68,7 +72,6 @@ from phoscrosstalk.optimization import (
 )
 from phoscrosstalk.optimization import (
     create_bounds,
-    make_residuals_fn,
     validate_problem_shapes,
 )
 from phoscrosstalk.post_processing import (
@@ -87,7 +90,7 @@ from phoscrosstalk.data_loader import (
 from phoscrosstalk.sensitivity import _generate_param_labels, run_global_sensitivity
 from phoscrosstalk.weighting import build_weight_matrices
 
-logger = get_logger("logs/pipeline.log", timestamp=True)
+# logger = get_logger("logs/pipeline.log", timestamp=True)
 
 def main():
     """
@@ -134,6 +137,78 @@ def main():
         )
         raise SystemExit(1)
 
+    # ------------------------------------------------------------------
+    # PRINT LOGO
+    # ------------------------------------------------------------------
+
+    print_logo(
+        name="PhosCrossTalk",
+        version="alpha",
+        tagline=(
+            "Global phospho-network ODE modeling with PTM crosstalk, "
+            "kinase-site priors, and TF/mRNA integration"
+        ),
+        author="Abhinav Mishra",
+        email="mishraabhinav36@gmail.com",
+        orcid="0009-0005-3179-7408",
+        website="https://bibymaths.github.io",
+        font="slant",
+        color="bright_green",
+        animate=False,
+    )
+
+    # ------------------------------------------------------------------
+    # PRE-RUN CONFIG UPDATE: receptors / receptor kinases
+    # ------------------------------------------------------------------
+    update_receptors_script = pathlib.Path("scripts/update_receptors_from_config.py")
+
+    if update_receptors_script.exists():
+        logger.info(
+            "[*] Updating receptors from config before loading pipeline config: %s",
+            update_receptors_script,
+        )
+
+        cmd = [
+            sys.executable,
+            str(update_receptors_script),
+            str(config_path),
+        ]
+
+        try:
+            result = subprocess.run(
+                cmd,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+            if result.stdout.strip():
+                logger.info("[update_receptors] stdout:\n%s", result.stdout.strip())
+
+            if result.stderr.strip():
+                logger.warning("[update_receptors] stderr:\n%s", result.stderr.strip())
+
+            logger.success("[*] Receptor config update completed successfully.")
+
+        except subprocess.CalledProcessError as exc:
+            logger.error(
+                "[!] Receptor config update failed with exit code %s.\n"
+                "Command: %s\n"
+                "stdout:\n%s\n"
+                "stderr:\n%s",
+                exc.returncode,
+                " ".join(cmd),
+                exc.stdout or "",
+                exc.stderr or "",
+            )
+            raise SystemExit(exc.returncode) from exc
+    else:
+        logger.warning(
+            "[!] Receptor update script not found: %s. Continuing without receptor update.",
+            update_receptors_script,
+        )
+
+    # Load config AFTER receptor update because the script may modify config.toml.
     cfg = load_config(config_path)
     validate_config(cfg, config_path)
 
@@ -243,26 +318,6 @@ def main():
 
     interp_mode = cfg.time.interpolation
     s_prod_fn_type = cfg.derived_rates.s_prod_fn
-
-    # ------------------------------------------------------------------
-    # PRINT LOGO
-    # ------------------------------------------------------------------
-
-    print_logo(
-        name="PhosCrossTalk",
-        version="alpha",
-        tagline=(
-            "Global phospho-network ODE modeling with PTM crosstalk, "
-            "kinase-site priors, and TF/mRNA integration"
-        ),
-        author="Abhinav Mishra",
-        email="mishraabhinav36@gmail.com",
-        orcid="0009-0005-3179-7408",
-        website="https://bibymaths.github.io",
-        font="slant",
-        color="bright_green",
-        animate=False,
-    )
 
     # ------------------------------------------------------------------
     # PRINT CONFIG SUMMARY AND RUNTIME ENVIRONMENT
@@ -495,12 +550,16 @@ def main():
     # 7. Mappings & Masks
     prot_map_all = {p: i for i, p in enumerate(proteins)}
     kin_to_prot_idx = np.array([prot_map_all.get(k, -1) for k in kinases], dtype=int)
-    dims = ModelDims.from_data(
-        P_data=P_scaled,
-        A_data=A_scaled if A_scaled.size > 0 else None,
-        kin_to_prot_idx=kin_to_prot_idx,
+
+    # K must come from the authoritative model protein list, not from A_scaled.
+    # A_scaled may contain only the subset of proteins with abundance measurements.
+    dims = ModelDims.set_dims(
+        k=len(proteins),
+        m=len(kinases),
+        n=len(sites),
     )
-    logger.success(f"[*] Model dimensions initialized successfully")
+
+    logger.success("[*] Model dimensions initialized successfully")
 
     logger.header("[*] Model network universe")
     # receptor_names / receptor_kin_names come from cfg.model
@@ -945,26 +1004,108 @@ def main():
         )
 
         logger.success("[pinn] PINN pipeline complete.")
-        logger.success("[*] Done.")
-        return
+
+        # ------------------------------------------------------------
+        # Normalize PINN result into the same objects downstream code
+        # expects from the mechanistic multistart branch.
+        # ------------------------------------------------------------
+        theta_best = np.asarray(pinn_result["theta_opt"], dtype=float)
+
+        lc = pinn_result.get("loss_components", {})
+        f1_best = float(lc.get("f1", np.nan))
+        f2_best = float(lc.get("f2", np.nan))
+        f3_best = float(lc.get("f3", np.nan))
+        f4_best = float(lc.get("f4", np.nan))
+        total_best = float(lc.get("total_loss", np.nan))
+
+        # Single-run equivalents of multistart outputs.
+        X = theta_best[None, :]
+        F = np.asarray([[f1_best, f2_best, f3_best, f4_best]], dtype=float)
+
+        f1 = F[:, 0]
+        f2 = F[:, 1]
+        f3 = F[:, 2]
+        f4 = F[:, 3]
+
+        total_losses = np.asarray([total_best], dtype=float)
+        best_idx = 0
+
+        # ------------------------------------------------------------
+        # Make the existing NetworkProblem object use the fitted PINN
+        # simulation path for all downstream functions that call:
+        #
+        #   problem.simulate(theta)
+        #   problem.simulate_full(theta)
+        #
+        # This is intentionally local to PINN mode. Mechanistic mode is
+        # untouched.
+        # ------------------------------------------------------------
+        if not hasattr(problem, "_simulate_pinn"):
+            raise RuntimeError(
+                "PINN mode is enabled, but NetworkProblem has no _simulate_pinn() "
+                "method. Add _simulate_pinn(theta) to NetworkProblem or return a "
+                "PINN-aware problem from run_pinn_pipeline()."
+            )
+
+        # Attach useful objects for problem._simulate_pinn(), if that method
+        # expects them on self.
+        problem.pinn_model = pinn_result.get("pinn_model", None)
+        problem.pinn_result = pinn_result
+        problem.pinn_enabled = True
+
+        def _pinn_simulate(theta):
+            out = problem._simulate_pinn(theta)
+            if isinstance(out, dict):
+                return out["P_sim"]
+            return out
+
+        def _pinn_simulate_full(theta):
+            out = problem._simulate_pinn(theta)
+            if isinstance(out, dict):
+                return out
+            return {
+                "P_sim": out,
+                "A_sim": None,
+                "S_sim": None,
+                "Kdyn_sim": None,
+                "R_sim": None,
+                "R_sim_rna": None,
+                "t": t,
+                "t_rna": t_rna,
+                "solver_times": t,
+            }
+
+        # Monkey-patch only this problem instance. This avoids refactoring all
+        # downstream analysis functions.
+        problem.simulate = _pinn_simulate
+        problem.simulate_full = _pinn_simulate_full
+
+        logger.info(
+            "[pinn] Downstream analysis will use problem._simulate_pinn() "
+            "via problem.simulate()/simulate_full()."
+        )
+
+    else:
+        # ------------------------------------------------------------------
+        # Optimisation: multi-start LM / configured backend.
+        # ------------------------------------------------------------------
+        res, best_idx, total_losses = run_multi_start_optimization(
+            problem, args, P_scaled
+        )
+
+        F, X = res.F, res.X
+        theta_best = X[best_idx]
+
+        # 11. Analysis & Saving
+        f1 = F[:, 0]
+        f2 = F[:, 1]
+        f3 = F[:, 2]
+        # L1: f4 (RNA loss) is in column 3 when present; assign it properly.
+        f4 = F[:, 3] if F.shape[1] > 3 else np.zeros(len(f1))
 
     # ------------------------------------------------------------------
-    # Optimisation: multi-start LM via run_multi_start_optimization
+    # 11. Shared analysis & saving
     # ------------------------------------------------------------------
-    res, best_idx, total_losses = run_multi_start_optimization(
-        problem, args, P_scaled
-    )
-
-    F, X = res.F, res.X
-    theta_best = X[best_idx]
-
-    # 11. Analysis & Saving
-    f1 = F[:, 0]
-    f2 = F[:, 1]
-    f3 = F[:, 2]
-    # L1: f4 (RNA loss) is in column 3 when present; assign it properly.
-    f4 = F[:, 3] if F.shape[1] > 3 else np.zeros(len(f1))
-
     analysis.save_derived_rates(
         outdir=outdir,
         proteins=proteins,
@@ -973,12 +1114,30 @@ def main():
         s_prod_fn=s_prod_fn,
         t_rna=t_rna,
     )
-    logger.success(f"[*] Derived rates saved successfully")
+    logger.success("[*] Derived rates saved successfully")
 
-    analysis.save_run_results(outdir, F, X, f1, f2, f3, total_losses, F[best_idx], f4=f4)
-    logger.success(f"[*] Run results saved successfully")
+    analysis.save_run_results(
+        outdir,
+        F,
+        X,
+        f1,
+        f2,
+        f3,
+        total_losses,
+        F[best_idx],
+        f4=f4,
+    )
+    logger.success("[*] Run results saved successfully")
+
     analysis.plot_run_diagnostics(outdir, F, F[best_idx], f1, f2, f3, X, f4=f4)
-    logger.success(f"[*] Run diagnostics plotted successfully")
+    logger.success("[*] Run diagnostics plotted successfully")
+
+    # In PINN mode, run_pinn_pipeline already saves PINN dense outputs.
+
+    if _pinn_enabled:
+        sim_full_override = problem.simulate_full(theta_best)
+    else:
+        sim_full_override = None
 
     analysis.save_fitted_simulation(
         outdir,
@@ -1013,16 +1172,27 @@ def main():
         simulation_cfg=getattr(cfg, "simulation", None),
         data_interpolation_cfg=getattr(cfg, "data_interpolation", None),
         t_rna=t_rna,
+        sim_full_override=sim_full_override,
     )
-    logger.success(f"[*] Fitted simulation saved successfully")
+    logger.success("[*] Fitted simulation saved successfully")
 
-    # mRNA outputs (only when RNA data was provided and RNA matched model proteins)
+    # mRNA outputs only when RNA data was provided and RNA matched model proteins.
+    # In PINN mode this now routes through problem._simulate_pinn() because
+    # problem.simulate_full was redirected above.
     if rna_matrix is not None and gene_ids is not None and len(rna_fit_genes) > 0:
-        # Use full simulation to get R_sim_rna at RNA time points
         sim_full = problem.simulate_full(theta_best)
-        R_sim_all = sim_full.get("R_sim_rna")  # (K, T_rna)
+        R_sim_all = sim_full.get("R_sim_rna")  # expected: (K, T_rna)
+
         if R_sim_all is not None and rna_model_prot_idx is not None:
-            R_sim_matched = R_sim_all[rna_model_prot_idx, :]  # (n_match, T_rna)
+            R_sim_matched = R_sim_all[rna_model_prot_idx, :]  # expected: (n_match, T_rna)
+
+            if R_sim_matched.shape != rna_obs_matched.shape:
+                logger.warning(
+                    "[!] mRNA output shape mismatch before save: observed=%s simulated=%s",
+                    rna_obs_matched.shape,
+                    R_sim_matched.shape,
+                )
+
             analysis.save_mrna_outputs(
                 outdir=outdir,
                 gene_ids=rna_fit_genes,
@@ -1030,15 +1200,42 @@ def main():
                 rna_data_obs=rna_obs_matched,
                 rna_simulated=R_sim_matched,
             )
+    # Standard fitted simulation plots require fit_timeseries.tsv.
+    # PINN mode may already have its own outputs. Only call the standard plotter
+    # if the expected file exists.
+    fit_timeseries_path = os.path.join(outdir, "fit_timeseries.tsv")
+    if os.path.exists(fit_timeseries_path):
+        analysis.plot_fitted_simulation(outdir)
+        analysis.plot_goodness_of_fit(fit_timeseries_path, outdir)
+    else:
+        logger.warning(
+            "[pinn] %s not found; skipping standard fitted simulation and "
+            "goodness-of-fit plots.",
+            fit_timeseries_path,
+        )
 
-    analysis.plot_fitted_simulation(outdir)
-    analysis.print_parameter_summary(outdir, theta_best, proteins, kinases, sites, dims=dims)
+    analysis.print_parameter_summary(
+        outdir,
+        theta_best,
+        proteins,
+        kinases,
+        sites,
+        dims=dims,
+    )
     analysis.print_biological_scores(outdir, X)
     analysis.plot_biological_scores(outdir, X, F)
-    analysis.plot_goodness_of_fit(f"{outdir}/fit_timeseries.tsv", outdir)
 
+    # ------------------------------------------------------------------
+    # Optional analyses
+    # ------------------------------------------------------------------
     if args.run_steadystate:
         _ss = getattr(cfg, "steadystate", None)
+        if _pinn_enabled:
+            logger.warning(
+                "[pinn] Steady-state analysis will use fitted PINN RHS through "
+                "problem._simulate_pinn(). Interpret as PINN-augmented relaxation, "
+                "not pure mechanistic steady state."
+            )
         steadystate.run_steadystate_analysis(
             outdir=outdir,
             dims=dims,
@@ -1065,11 +1262,27 @@ def main():
         )
 
     if args.run_knockouts:
+        if _pinn_enabled:
+            logger.warning(
+                "[pinn] Knockout screen will use fitted PINN RHS through "
+                "problem._simulate_pinn(). PINN parameters are held fixed."
+            )
         knockouts.run_knockout_screen(
-            outdir, dims, problem, theta_best, sites, proteins, kinases
+            outdir,
+            dims,
+            problem,
+            theta_best,
+            sites,
+            proteins,
+            kinases,
         )
 
     if args.run_sensitivity:
+        if _pinn_enabled:
+            logger.warning(
+                "[pinn] Sensitivity analysis will vary mechanistic theta only; "
+                "fitted PINN parameters are held fixed."
+            )
         bounds = (xl, xu)
         run_global_sensitivity(
             outdir,
@@ -1081,17 +1294,36 @@ def main():
             sites=sites,
         )
 
+    # ------------------------------------------------------------------
     # 12. Provenance & exports
+    # ------------------------------------------------------------------
     save_run_metadata(outdir, dims, args)
+
     export_network_for_cytoscape(
-        outdir, dims, theta_best, proteins, kinases, sites, K_site_kin, site_prot_idx
+        outdir,
+        dims,
+        theta_best,
+        proteins,
+        kinases,
+        sites,
+        K_site_kin,
+        site_prot_idx,
     )
 
+    # In PINN mode this calls problem._simulate_pinn() via the monkey-patched
+    # problem.simulate().
     P_best = problem.simulate(theta_best)
     plot_residual_heatmap(outdir, P_scaled, P_best, sites, t)
 
     p_labels = _generate_param_labels(dims.K, dims.M, dims.N, proteins, kinases, sites)
-    plot_parameter_clustermap(outdir, X, p_labels, top_n=50)
+
+    # Clustermap needs multiple runs. PINN mode has one run only.
+    if X.shape[0] > 1:
+        plot_parameter_clustermap(outdir, X, p_labels, top_n=50)
+    else:
+        logger.info(
+            "[pinn] Skipping parameter clustermap: only one optimisation run available."
+        )
 
     generate_equations_report(
         outdir,
@@ -1111,17 +1343,32 @@ def main():
         mechanism,
     )
 
+    # ------------------------------------------------------------------
     # 13. Optional post-fit neural latent-rate refinement
+    # ------------------------------------------------------------------
     _neural_cfg = getattr(cfg, "neural_ode", None)
-    if _neural_cfg is not None and getattr(_neural_cfg, "enabled", False):
-        from phoscrosstalk.neuralODE import run_neural_latent_rate_refinement, save_neural_ode_plots  # noqa: PLC0415
+    if (
+        not _pinn_enabled
+        and _neural_cfg is not None
+        and getattr(_neural_cfg, "enabled", False)
+    ):
+        from phoscrosstalk.neuralODE import (  # noqa: PLC0415
+            run_neural_latent_rate_refinement,
+            save_neural_ode_plots,
+        )
 
         logger.header("[*] Running post-fit neural latent-rate refinement")
         jaxpr_out_dir = None
         if getattr(cfg.debug, "save_jaxpr_reports", False):
             jaxpr_out_dir = str(pathlib.Path(outdir) / "jaxpr_reports")
 
-        _neural_ts, _neural_ys, _neural_model, _neural_loss_hist, _neural_time_hist = run_neural_latent_rate_refinement(
+        (
+            _neural_ts,
+            _neural_ys,
+            _neural_model,
+            _neural_loss_hist,
+            _neural_time_hist,
+        ) = run_neural_latent_rate_refinement(
             dims=dims,
             problem=problem,
             theta_best=theta_best,
@@ -1139,12 +1386,18 @@ def main():
             t_rna=t_rna if rna_matrix is not None else None,
             rna_obs_matched=rna_obs_matched,
             rna_model_prot_idx=rna_model_prot_idx,
-            W_data_mrna_matched=W_data_mrna_matched if len(rna_fit_genes) > 0 else None,
+            W_data_mrna_matched=(
+                W_data_mrna_matched if len(rna_fit_genes) > 0 else None
+            ),
             outdir=outdir,
             neural_cfg=_neural_cfg,
             mechanism=mechanism,
             rna_relax=cfg.derived_rates.rna_relax,
-            abundance_max=getattr(getattr(cfg, "bounds", None), "abundance_max", 5.0),
+            abundance_max=getattr(
+                getattr(cfg, "bounds", None),
+                "abundance_max",
+                5.0,
+            ),
             R_data0=R_data0,
             jaxpr_out_dir=jaxpr_out_dir,
         )
@@ -1157,6 +1410,11 @@ def main():
             time_history=_neural_time_hist,
         )
         logger.info("[*] Neural ODE visualisations saved to %s/neural_ode", outdir)
+
+    elif _pinn_enabled and _neural_cfg is not None and getattr(_neural_cfg, "enabled", False):
+        logger.info(
+            "[pinn] Skipping post-fit neuralODE because PINN mode is enabled."
+        )
 
     logger.success("[*] Done.")
 

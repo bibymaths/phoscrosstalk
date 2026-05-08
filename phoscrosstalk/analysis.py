@@ -520,6 +520,7 @@ def save_fitted_simulation(
     simulation_cfg=None,
     data_interpolation_cfg=None,
     t_rna=None,
+    sim_full_override=None,
 ):
     """
     Run a simulation with optimized parameters,
@@ -569,6 +570,9 @@ def save_fitted_simulation(
             when *R_data0* is not None and RNA data uses a different time axis
             than the phospho/protein observations (*t*).  Used exclusively for
             the diagnostic mRNA interpolation; never conflated with *t*.
+        sim_full_override (bool | None): Override the default simulation mode
+            (dense vs sparse) for PINN simulation. If None, the default mode is
+            used.
 
     Returns:
         (None): Saves 'fitted_params.npz' and 'fit_timeseries.tsv' to `outdir`.
@@ -602,30 +606,39 @@ def save_fitted_simulation(
         save_dict[name] = val
     np.savez(os.path.join(outdir, "fitted_params.npz"), **save_dict)
 
-    # Re-simulate
-    A0_full = build_full_A0(K, len(t), A_scaled, prot_idx_for_A)
+    # Re-simulate, or use externally supplied PINN/full simulation output.
+    if sim_full_override is not None:
+        sim_full = sim_full_override
 
-    P_sim, A_sim, S_sim, Kdyn_sim = simulate(
-        t,
-        P_scaled,
-        A0_full,
-        theta_opt,
-        Cg,
-        Cl,
-        site_prot_idx,
-        K_site_kin,
-        R,
-        L_alpha,
-        kin_to_prot_idx,
-        mask_p,
-        mask_k,
-        mechanism,
-        full_output=True,
-        k_act_fn=k_act_fn,
-        s_prod_fn=s_prod_fn,
-        R_data0=R_data0,
-        dims=dims,
-    )
+        P_sim = np.asarray(sim_full["P_sim"], dtype=float)
+        A_sim = np.asarray(sim_full["A_sim"], dtype=float)
+        S_sim = np.asarray(sim_full["S_sim"], dtype=float)
+        Kdyn_sim = np.asarray(sim_full["Kdyn_sim"], dtype=float)
+
+    else:
+        A0_full = build_full_A0(K, len(t), A_scaled, prot_idx_for_A)
+
+        P_sim, A_sim, S_sim, Kdyn_sim = simulate(
+            t,
+            P_scaled,
+            A0_full,
+            theta_opt,
+            Cg,
+            Cl,
+            site_prot_idx,
+            K_site_kin,
+            R,
+            L_alpha,
+            kin_to_prot_idx,
+            mask_p,
+            mask_k,
+            mechanism,
+            full_output=True,
+            k_act_fn=k_act_fn,
+            s_prod_fn=s_prod_fn,
+            R_data0=R_data0,
+            dims=dims,
+        )
 
     # Rescale Sites (model)
     Y_sim_rescaled = np.zeros_like(P_sim)
@@ -740,7 +753,7 @@ def save_fitted_simulation(
                 except Exception as exc:
                     logger.warning("[!] RNA data interpolation build failed: %s", exc)
 
-        try:
+        if _do_dense and sim_full_override is not None:
             _save_dense_simulation(
                 outdir=outdir,
                 dims=dims,
@@ -771,8 +784,10 @@ def save_fitted_simulation(
                 data_interp_R=_data_interp_R,
                 prot_idx_for_A_full=prot_idx_for_A,
             )
-        except Exception as exc:  # pragma: no cover – dense output is best-effort
-            logger.warning(f"[!] Dense simulation output skipped: {exc}")
+
+        elif _do_dense and sim_full_override is not None:
+            logger.info(
+                "[pinn] Skipping mechanistic _save_dense_simulation(); dense PINN outputs should come from run_pinn_pipeline().")
 
     records_internal = []
     T = len(t)

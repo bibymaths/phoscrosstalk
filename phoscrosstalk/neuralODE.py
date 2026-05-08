@@ -32,7 +32,6 @@ run_neural_latent_rate_refinement(...)
 from __future__ import annotations
 
 import json
-import logging
 import os
 import time
 from typing import Optional
@@ -50,12 +49,7 @@ from phoscrosstalk.logger import get_logger
 from phoscrosstalk.mechanisms import compute_prev_site_idx, make_rhs
 from phoscrosstalk.simulation import build_full_A0
 
-logger = get_logger()
-
-# Module-level standard logger for use in jax.debug.callback.  It must be a
-# plain Python logging.Logger, not the project RichLogger, because callbacks are
-# executed outside the JAX trace in a Python context.
-_debug_logger = logging.getLogger("phoscrosstalk.neural_ode")
+logger = get_logger().logger
 
 # Small constant added after softplus to guarantee strictly positive neural rates.
 _EPS: float = 1e-8
@@ -87,6 +81,7 @@ def _append_neural_loss_history(
     f_theta_prior: float = 0.0,
     f_traj_prior: float = 0.0,
     force_print: bool = False,
+    log_to_console: bool = True,
 ) -> None:
     """Append one neural training loss row and optionally print it."""
     step = len(_neural_loss_history)
@@ -104,7 +99,7 @@ def _append_neural_loss_history(
     }
     _neural_loss_history.append(row)
 
-    if force_print or step % max(1, int(_neural_log_every)) == 0:
+    if log_to_console and (force_print or step % max(1, int(_neural_log_every)) == 0):
         msg = (
             f"[neural_ode]  step={step:04d}  "
             f"loss={float(loss):.4e}  "
@@ -116,7 +111,7 @@ def _append_neural_loss_history(
             f"theta_prior={float(f_theta_prior):.4e}  "
             f"traj_prior={float(f_traj_prior):.4e}"
         )
-        _debug_logger.info(msg)
+        logger.info(msg)
 
 
 def _log_neural_loss_step(
@@ -397,9 +392,15 @@ def _train_with_optax(*, loss_fn, params, neural_cfg):
 
         if step % print_every == 0 or step == steps - 1:
             loss.block_until_ready()
+
             _dt = time.perf_counter() - _step_t0
+            elapsed = time.perf_counter() - t0
+            avg_step_s = elapsed / max(1, step + 1)
+            eta_s = avg_step_s * max(0, steps - step - 1)
+
             time_history.append(_dt)
             vals = _aux_to_floats(aux)
+
             _append_neural_loss_history(
                 loss=float(loss),
                 f_phospho=vals[0],
@@ -409,8 +410,31 @@ def _train_with_optax(*, loss_fn, params, neural_cfg):
                 f_s_prior=vals[4],
                 f_theta_prior=vals[5],
                 f_traj_prior=vals[6],
-                force_print=True,
+                force_print=False,
+                log_to_console=False,
             )
+
+            logger.info(
+                "[neural_ode] step=%04d/%04d  "
+                "loss=%.4e  phospho=%.4e  abund=%.4e  mrna=%.4e  "
+                "k_prior=%.4e  s_prior=%.4e  theta_prior=%.4e  traj_prior=%.4e  "
+                "step_t=%.2fs  avg_step=%.2fs  elapsed=%.1fmin  eta=%.1fmin",
+                step,
+                steps,
+                float(loss),
+                vals[0],
+                vals[1],
+                vals[2],
+                vals[3],
+                vals[4],
+                vals[5],
+                vals[6],
+                _dt,
+                avg_step_s,
+                elapsed / 60.0,
+                eta_s / 60.0,
+            )
+
         else:
             time_history.append(time.perf_counter() - _step_t0)
 
@@ -502,6 +526,7 @@ def _train_with_optax_scan(*, loss_fn, params, neural_cfg):
                 f_theta_prior=row[6],
                 f_traj_prior=row[7],
                 force_print=True,
+                log_to_console=False,
             )
         else:
             _neural_loss_history.append(

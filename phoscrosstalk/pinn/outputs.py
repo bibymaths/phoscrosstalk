@@ -11,15 +11,15 @@ names; PINN-specific files use distinct names.
 from __future__ import annotations
 
 import json
-import logging
 import os
 
 import numpy as np
 import pandas as pd
 
+from phoscrosstalk.logger import get_logger
 from phoscrosstalk.pinn.utils import state_labels, safe_to_numpy
 
-_logger = logging.getLogger(__name__)
+_logger = get_logger().logger
 
 
 def save_pinn_outputs(
