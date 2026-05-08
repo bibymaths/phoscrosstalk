@@ -1158,6 +1158,7 @@ def run_single_optimisation(
         Diagnostic loss components.
     """
     # Construct solver and adjoint from simple string flags.
+    # Default ls_solver="lm" → optx.LevenbergMarquardt(rtol=rtol, atol=atol).
     solver = make_ls_solver(ls_solver, rtol=rtol, atol=atol, verbose=verbose)
     adjoint = make_optx_adjoint(optx_adjoint)
 
