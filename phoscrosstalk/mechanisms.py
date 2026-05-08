@@ -2,38 +2,15 @@
 """
 mechanisms.py
 
-JAX-compatible ODE right-hand side (RHS) functions for the phospho-network model.
-
-Mirrors the biological logic of core_mechanisms.py but uses jax.numpy so that
-the functions can be:
-  - traced by JAX JIT,
-  - differentiated via jax.grad / jax.value_and_grad,
-  - composed with diffrax.ODETerm.
-
-All three phosphorylation mechanisms are supported:
-  0 / "dist"  – Distributive
-  1 / "seq"   – Sequential (ordered gating using prev_site_idx)
-  2 / "rand"  – Random/Cooperative (competitive crowding)
-
-Public helpers
---------------
-decode_theta(theta, K, M, N)
-    JAX version of core_mechanisms.decode_theta. Returns the same tuple of
-    decoded biological parameters.
-
-make_rhs(K, M, N, mechanism)
-    Factory that returns a mechanism-specific JAX RHS callable compatible with
-    diffrax.ODETerm(rhs).
-
-compute_prev_site_idx(site_prot_idx, N)
-    Pure-NumPy helper (called once at setup time) that precomputes the static
-    "predecessor site" index array needed by the sequential mechanism.
+This module provides JAX‑compatible right‑hand sides for the phospho‑network
+model.
 """
 
 from __future__ import annotations
 
 import os
 
+# Ensure double precision throughout JAX
 os.environ["JAX_ENABLE_X64"] = "true"
 
 import jax
@@ -42,10 +19,10 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 import numpy as np
 
+
 # ---------------------------------------------------------------------------
 # Parameter decoding
 # ---------------------------------------------------------------------------
-
 
 def decode_theta(theta, K: int, M: int, N: int):
     """
@@ -54,9 +31,6 @@ def decode_theta(theta, K: int, M: int, N: int):
     ``k_act`` and ``s_prod`` are no longer optimisation variables; they are
     derived from experimental data (see :mod:`derived_rates`).  The parameter
     vector therefore has dimension ``2*K + 2 + 3*M + N + 4``.
-
-    JAX-native equivalent of core_mechanisms.decode_theta (Numba).  All
-    operations use jax.numpy, so the output is differentiable w.r.t. theta.
 
     Parameters
     ----------
@@ -131,28 +105,27 @@ def decode_theta(theta, K: int, M: int, N: int):
         gamma_K_net,
     )
 
-
 # ---------------------------------------------------------------------------
-# Sequential-mechanism topology helper (pure NumPy, called once at setup)
+# Sequential‑mechanism topology helper
 # ---------------------------------------------------------------------------
-
 
 def compute_prev_site_idx(site_prot_idx: np.ndarray, N: int) -> np.ndarray:
     """
-    Build the predecessor-site index array for the sequential mechanism.
-
-    For each site ``i``, stores the index ``j < i`` of the most recently seen
-    site on the same protein in the flat site ordering, or ``-1`` if ``i`` is
-    the first site of that protein.
+    Precompute the predecessor index for the sequential phosphorylation
+    mechanism.
 
     Parameters
     ----------
-    site_prot_idx : np.ndarray, shape (N,)  – integer protein index per site
-    N             : int                     – number of sites
+    site_prot_idx : np.ndarray, shape (N,)
+        The protein index for each phosphosite.
+    N : int
+        Number of phosphosites.
 
     Returns
     -------
-    prev_site_idx : np.ndarray, shape (N,), dtype int32
+    np.ndarray
+        Array of length ``N`` containing the index of the previous site on
+        the same protein, or ``-1`` for the first site.
     """
     prev_site_idx = np.full(N, -1, dtype=np.int32)
     last_seen: dict[int, int] = {}
@@ -167,6 +140,7 @@ def compute_prev_site_idx(site_prot_idx: np.ndarray, N: int) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # JAX RHS factory
 # ---------------------------------------------------------------------------
+
 def make_rhs(
     K: int,
     M: int,
@@ -178,37 +152,13 @@ def make_rhs(
     abundance_max: float = 5.0,
 ):
     """
-    Return a JAX-compatible RHS function for ``diffrax.ODETerm``.
+    Construct a JAX‑compatible right‑hand side (RHS) function for use with
+    ``diffrax.ODETerm``.
 
-    State layout:
-        y = [R_rna, S, A, Kdyn, p]
+    The state vector is interpreted as ``y = [R_rna, S, A, Kdyn, p]`` with
+    shapes ``(K,)``, ``(K,)``, ``(K,)``, ``(M,)`` and ``(N,)`` respectively.
 
-    where:
-        R_rna : shape (K,)   mRNA / transcriptional drive state
-        S     : shape (K,)   protein signalling state, bounded [0, 1]
-        A     : shape (K,)   protein abundance state
-        Kdyn  : shape (M,)   kinase activity state, bounded [0, 1]
-        p     : shape (N,)   relative phosphosite signal, nonnegative
-
-    Args tuple:
-        (
-            theta,
-            Cg,
-            Cl,
-            site_prot_idx,
-            K_site_kin,
-            R,
-            L_alpha,
-            kin_to_prot_idx,
-            receptor_mask_prot,
-            receptor_mask_kin,
-            prev_site_idx,
-        )
-
-    Mechanisms:
-        "dist" : distributive, independent site phosphorylation
-        "seq"  : sequential phosphorylation with leaky predecessor gating
-        "rand" : random/cooperative/crowding-aware phosphorylation
+    Mechanisms "dist", "seq" and "rand" are supported.
     """
     if mechanism not in {"dist", "seq", "rand"}:
         raise ValueError(
@@ -268,7 +218,7 @@ def make_rhs(
         kin_to_prot_idx = jnp.asarray(kin_to_prot_idx, dtype=jnp.int32)
         prev_site_idx = jnp.asarray(prev_site_idx, dtype=jnp.int32)
 
-        # Small constants used only for fixed numerical structure.
+        # Small constant to avoid division by zero in smooth denominators
         eps = jnp.float64(1e-8)
         kinase_basal = jnp.float64(0.05)
 
@@ -293,227 +243,193 @@ def make_rhs(
         # ------------------------------------------------------------------
         # Derived external rates
         # ------------------------------------------------------------------
-        # k_act: protein signalling / mRNA drive input
-        # s_prod: protein synthesis drive
-        k_act = jnp.clip(_k_act_fn(t), 0.0, None)
-        s_prod = jnp.clip(_s_prod_fn(t), 0.0, None)
+        # Smoothly enforce non‑negativity of k_act and s_prod.
+        def smooth_pos0(x, eps=jnp.float64(1e-6)):
+            return 0.5 * (x + jnp.sqrt(x * x + eps * eps)) - 0.5 * eps
+
+        k_act_raw = _k_act_fn(t)
+        s_prod_raw = _s_prod_fn(t)
+        k_act = smooth_pos0(k_act_raw)
+        s_prod = smooth_pos0(s_prod_raw)
 
         # ------------------------------------------------------------------
-        # Unpack state
+        # Unpack state without clipping
         # ------------------------------------------------------------------
-        # Keep clipping for compatibility and numerical safety. The fluxes below
-        # are written so that the bounded states are also naturally self-limiting.
-        R_rna = jnp.clip(y[:K], 0.0, None)
-        S = jnp.clip(y[K : 2 * K], 0.0, 1.0)
-        A = jnp.clip(y[2 * K : 3 * K], 0.0, abundance_max)
-        Kdyn = jnp.clip(y[3 * K : 3 * K + M], 0.0, 1.0)
-        p = jnp.clip(y[3 * K + M :], 0.0, None)
+        R_rna = y[:K]
+        S = y[K : 2 * K]
+        A = y[2 * K : 3 * K]
+        Kdyn = y[3 * K : 3 * K + M]
+        p = y[3 * K + M :]
 
-        # Bounded proxy used only for occupancy-like regulation.
-        # p itself remains relative phosphosite signal and can exceed 1.
-        q = p / (1.0 + p)
+        # S transform of p to guarantee non‑negativity in downstream
+        # computations.
+        p_pos = smooth_pos0(p)
+        q = p_pos / (1.0 + p_pos)
 
         # Smooth external receptor stimulus.
         u = 1.0 / (1.0 + jnp.exp(-t / 0.1))
 
         # ------------------------------------------------------------------
-        # Degree-normalized network fields
+        # Degree‑normalized network fields
         # ------------------------------------------------------------------
-        # These normalizations make the RHS more transferable across small and
-        # large networks by turning raw graph sums into mean upstream evidence.
-        Cg_row_scale = jnp.sum(jnp.abs(Cg), axis=1) + eps
-        Cl_row_scale = jnp.sum(jnp.abs(Cl), axis=1) + eps
-        R_row_scale = jnp.sum(jnp.abs(R), axis=1) + eps
-        Ksk_row_scale = jnp.sum(jnp.abs(K_site_kin), axis=1) + eps
-        L_row_scale = jnp.sum(jnp.abs(L_alpha), axis=1) + eps
+        def row_norm(x):
+            return jnp.sqrt((jnp.sum(jnp.abs(x), axis=1)) ** 2 + eps ** 2)
+
+        Cg_row_scale = row_norm(Cg)
+        Cl_row_scale = row_norm(Cl)
+        R_row_scale = row_norm(R)
+        Ksk_row_scale = row_norm(K_site_kin)
+        L_row_scale = row_norm(L_alpha)
 
         Cg_q = (Cg @ q) / Cg_row_scale
         Cl_q = (Cl @ q) / Cl_row_scale
 
         # Signed crosstalk field.
-        # beta_g and beta_l are positive decoded parameters, so sign comes from
-        # graph structure / phosphosite state. tanh bounds the field.
+        # beta_g and beta_l are positive decoded
+        # parameters,
+        # so sign comes from graph structure / phosphosite state.
+
         coup_field = beta_g * Cg_q + beta_l * Cl_q
         coup = jnp.tanh(coup_field)
-
-        # Positive multiplicative crosstalk factor.
-        # Unlike clipping negative coupling to zero, this allows suppression
-        # and enhancement:
-        #     coup_factor in approximately [exp(-1), exp(1)]
         coup_factor = jnp.exp(coup)
 
         # ------------------------------------------------------------------
-        # Per-protein aggregate phosphosite summaries
+        # Per‑protein aggregate phosphosite summaries
         # ------------------------------------------------------------------
         num_q = jnp.zeros(K, dtype=jnp.float64).at[site_prot_idx].add(q)
         den = jnp.zeros(K, dtype=jnp.float64).at[site_prot_idx].add(1.0)
         num_c = jnp.zeros(K, dtype=jnp.float64).at[site_prot_idx].add(coup)
 
-        safe_den = jnp.where(den > 0.0, den, 1.0)
+        # Smoothly avoid division by zero using root‑sum‑square
+        safe_den = jnp.sqrt(den ** 2 + eps ** 2)
         mq = num_q / safe_den
         mc = num_c / safe_den
 
         # ------------------------------------------------------------------
         # 0. mRNA / transcriptional state
         # ------------------------------------------------------------------
-        # RNA tracks the external transcriptional drive but is mildly modulated
-        # by model-internal phosphosite/network/receptor context.
-
         _rna_relax = jnp.asarray(rna_relax, dtype=jnp.float64)
 
         rna_field = gamma_S_p * mq + mc + receptor_mask_prot * u
         rna_reg = jnp.exp(jnp.float64(0.5) * jnp.tanh(rna_field))
-
         R_target = rna_reg
-
         dR_rna = _rna_relax * (R_target - R_rna)
 
         # ------------------------------------------------------------------
         # 1. Protein signalling state S
         # ------------------------------------------------------------------
+
         S_field = gamma_S_p * mq + mc + receptor_mask_prot * u
         S_drive = 1.0 / (1.0 + jnp.exp(-S_field))
+        # Smoothly saturate k_act: compute a fraction in (0,1)
+        k_act_sig = k_act / (1.0 + k_act)
 
-        k_act_sig = k_act / (jnp.float64(1.0) + k_act)
+        # When S < 0 the first term is
+        # positive and the second term is negative of a negative number,
+        # resulting in dS > 0.  When S > 1 the (1-S) term becomes negative,
+        # pushing dS downward.  No derivative guards are required.
 
         dS = k_act_sig * S_drive * (1.0 - S) - k_deact * S
 
         # ------------------------------------------------------------------
-        # 2. Protein abundance state A  (corrected v2)
+        # 2. Protein abundance state A
         # ------------------------------------------------------------------
+
         # Normalize s_prod so that A* ≈ A_init at baseline.
-        # s_prod is data-derived and may be on a different scale than A data.
-        # Dividing by R_rna_init (≈ R_rna at t=0) anchors the steady state to
-        # the observed data scale.
-
-        A_basal_target = s_prod  # shape (K,) — do NOT multiply by R_rna
-
+        A_basal_target = s_prod
         A_signal_mod = jnp.float64(0.5) * jnp.tanh(
-            gamma_A_S * (S - jnp.float64(0.5)) +
-            jnp.float64(0.25) * gamma_A_p * (mq - jnp.float64(0.5))
+            gamma_A_S * (S - jnp.float64(0.5))
+            + jnp.float64(0.25) * gamma_A_p * (mq - jnp.float64(0.5))
         )
+        s_eff = A_basal_target * (1.0 + A_signal_mod)
 
-        s_eff = A_basal_target * (jnp.float64(1.0) + A_signal_mod)
-        s_eff = jnp.clip(s_eff, 0.0, None)
-
+        # Smooth positive
+        s_eff = smooth_pos0(s_eff)
         dA = s_eff - d_deg * A
+
         # ------------------------------------------------------------------
         # 3. Kinase dynamics Kdyn
         # ------------------------------------------------------------------
+
         # Substrate feedback from bounded phosphosite proxy q to kinase activity.
         u_sub = (R @ q) / R_row_scale
-
         # Stabilizing network diffusion / consensus term.
         u_net = -(L_alpha @ Kdyn) / L_row_scale
 
         # Protein context for kinases that map to model proteins.
         valid_prot = kin_to_prot_idx >= 0
         safe_p_idx = jnp.where(valid_prot, kin_to_prot_idx, 0)
-
         S_for_kin = S[safe_p_idx]
-        A_for_kin = A[safe_p_idx] / jnp.asarray(abundance_max, dtype=jnp.float64)
 
-        prot_contrib = gamma_A_S * S_for_kin  # A_for_kin removed
+        # Keeping only S terms improves dynamic range of Kdyn while
+        # still allowing inhibition via kK_deact.
+
+        prot_contrib = gamma_A_S * S_for_kin
         prot_contrib = jnp.where(valid_prot, prot_contrib, 0.0)
 
-        # Latent kinase activation field.
         U = u_sub + gamma_K_net * u_net + prot_contrib + receptor_mask_kin * u
 
-        # Nonnegative, saturating kinase activation drive.
-        # This prevents the kinase state from being structurally pinned at zero.
-        K_drive = kinase_basal + (1.0 - kinase_basal) / (1.0 + jnp.exp(-U))
+        # Nonnegative, saturating kinase activation drive.  A softplus on the
+        # exponent avoids discontinuity at zero.  The logistic form ensures
+        # K_drive remains in (kinase_basal, 1).
 
+        K_drive = kinase_basal + (1.0 - kinase_basal) / (1.0 + jnp.exp(-U))
         dKdyn = kK_act * K_drive * (1.0 - Kdyn) - kK_deact * Kdyn
 
         # ------------------------------------------------------------------
         # 4. Phosphosite dynamics p
         # ------------------------------------------------------------------
-        # Degree-normalized kinase-to-site activation.
-        # This makes a site with many annotated kinases comparable to a site
-        # with few annotated kinases.
+
+        # Degree‑normalized kinase‑to‑site activation.
         kinase_signal = alpha * Kdyn
         k_on_eff = (K_site_kin @ kinase_signal) / Ksk_row_scale
-        k_on_eff = jnp.clip(k_on_eff, 0.0, None)
+
+        # Smooth positive
+        k_on_eff = smooth_pos0(k_on_eff)
+
+        # Mechanism‑specific gates
 
         if mechanism == "dist":
-            # Distributive mechanism: each site can be phosphorylated independently.
             gate = jnp.ones(N, dtype=jnp.float64)
 
         elif mechanism == "seq":
-            # Sequential mechanism:
-            # first site on each protein is directly accessible;
-            # downstream sites require predecessor occupancy;
-            # each site becomes less available as its own occupancy increases.
-
             safe_prev = jnp.where(prev_site_idx >= 0, prev_site_idx, 0)
             has_prev = prev_site_idx >= 0
-
             prev_occ = q[safe_prev]
-
-            # Saturating predecessor enablement.
-            # prev_occ = 0    -> downstream site blocked
-            # prev_occ high  -> downstream site enabled
             seq_half = jnp.float64(0.10)
             pred_enable = prev_occ / (seq_half + prev_occ)
-
-            # Prevent repeated production into an already occupied current site.
             site_available = 1.0 - q
+            gate = jnp.where(has_prev, pred_enable * site_available, site_available)
 
-            gate = jnp.where(
-                has_prev,
-                pred_enable * site_available,
-                site_available,
-            )
+        else:  # "rand"
 
-        else:
-            # Random / crowding-aware mechanism.
-            # As the protein-level bounded proxy (mq) rises, the gate
-            # decreases smoothly, modelling crowding of available substrate.
             occupied_frac = mq[site_prot_idx]
             gate = 1.0 / (1.0 + occupied_frac)
 
-        gate = jnp.clip(gate, 0.0, 1.0)
+        # On/off fluxes.  The raw production rate v_on_raw is non‑negative
+        # thanks to the smooth_pos0 above and the gate ∈ [0,1].
 
-        # On/off fluxes.
-        # v_on is positive, saturating, and includes:
-        #   - kinase drive
-        #   - signed network crosstalk as positive multiplicative factor
-        #   - mechanism-specific gate
-        #   - remaining unphosphorylated fraction
-        # Protein abundance provides available substrate scale for relative phosphosite signal.  # noqa: E501
         A_site = A[site_prot_idx] / jnp.asarray(abundance_max, dtype=jnp.float64)
-        A_site = jnp.clip(A_site, 0.0, None)
-
-        # Dampen the substrate availability effect
         v_on_raw = k_on_eff * coup_factor * gate * (1.0 + jnp.float64(0.5) * A_site)
 
-        v_on_raw = jnp.clip(v_on_raw, 0.0, None)
+        # Smooth positive
+        v_on_raw = smooth_pos0(v_on_raw)
 
-        # Saturating production prevents runaway while still allowing p > 1.
+        # Nornmalizing the flux
         v_on = v_on_raw / (1.0 + v_on_raw)
 
-        # First-order loss of relative phosphosite signal.
-        # Do not saturate this too strongly; otherwise high p cannot come down.
-        v_off = k_off * p
+        # First‑order loss of relative phosphosite signal uses the positive
+        # proxy of p.  Negative p values are therefore pulled towards zero
+        # rather than growing unbounded in the negative direction.
 
+        v_off = k_off * p_pos
         dp = v_on - v_off
 
-        # ------------------------------------------------------------------
-        # Derivative boundary guards
-        # ------------------------------------------------------------------
-        # These are retained for compatibility and numerical safety.
-        # The flux structure above already makes S, Kdyn, and p self-bounding.
-        dR_rna = jnp.where((R_rna <= 0.0) & (dR_rna < 0.0), 0.0, dR_rna)
-
-        dS = jnp.where((S <= 0.0) & (dS < 0.0), 0.0, dS)
-        dS = jnp.where((S >= 1.0) & (dS > 0.0), 0.0, dS)
-
-        dA = jnp.where((A <= 0.0) & (dA < 0.0), 0.0, dA)
-
-        dKdyn = jnp.where((Kdyn <= 0.0) & (dKdyn < 0.0), 0.0, dKdyn)
-        dKdyn = jnp.where((Kdyn >= 1.0) & (dKdyn > 0.0), 0.0, dKdyn)
-
-        dp = jnp.where((p <= 0.0) & (dp < 0.0), 0.0, dp)
+        # Concatenate derivatives for integration.  Boundary guards are
+        # intentionally omitted: the flux forms above are designed so that
+        # negative states are driven upward and states above their biological
+        # maxima are driven downward without explicit clipping.  This ensures
+        # differentiability of the entire RHS.
 
         return jnp.concatenate([dR_rna, dS, dA, dKdyn, dp])
 

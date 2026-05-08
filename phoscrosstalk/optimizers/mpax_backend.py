@@ -77,7 +77,7 @@ from typing import Callable
 
 from phoscrosstalk.logger import get_logger
 
-logger = get_logger(__name__)
+logger = get_logger()
 
 # Hessian regularisation added to the diagonal for positive-definiteness.
 _HESS_REG: float = 1e-5

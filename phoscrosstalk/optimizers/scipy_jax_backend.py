@@ -59,7 +59,7 @@ from typing import Callable
 
 from phoscrosstalk.logger import get_logger
 
-logger = get_logger(__name__)
+logger = get_logger()
 
 # Coefficient for the quadratic out-of-bounds penalty ("penalty" strategy).
 _PENALTY_COEFF: float = 1e4
