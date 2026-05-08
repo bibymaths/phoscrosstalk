@@ -178,6 +178,12 @@ def main():
         max_steps=cfg.optimisation.max_steps,
         lambda_net=cfg.optimisation.lambda_net,
         reg_lambda=cfg.optimisation.reg_lambda,
+        # Backend selection — resolved once here; propagated into multistarts.
+        # Default "optimistix" keeps full backward-compatible behaviour.
+        optimizer_backend=getattr(cfg.optimisation, "optimizer_backend", "optimistix"),
+        optimizer_backend_kwargs=dict(
+            getattr(cfg.optimisation, "optimizer_backend_kwargs", None) or {}
+        ),
         # Optimistix least-squares controls
         ls_solver=getattr(cfg.optimisation, "ls_solver", "lm"),
         optx_adjoint=getattr(cfg.optimisation, "optx_adjoint", "implicit"),
@@ -803,7 +809,11 @@ def main():
 
     # 11. Optimisation
     logger.info(
-        f"[*] Initialising Optimistix problem ({args.n_starts} starts, "
+        "[*] Optimizer backend: %s",
+        getattr(args, "optimizer_backend", "optimistix"),
+    )
+    logger.info(
+        f"[*] Initialising optimisation problem ({args.n_starts} starts, "
         f"max_steps={args.max_steps})"
     )
 

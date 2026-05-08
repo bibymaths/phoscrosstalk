@@ -41,7 +41,6 @@ Old pymoo-specific flags (--gen, --pop-size, --algorithm) are mapped:
 """
 
 import multiprocessing as mp
-import pathlib
 import pickle
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -79,14 +78,17 @@ def _run_single_start_worker(task):
     Worker function for parallel multi-start execution.
 
     Must be defined at module level so it is picklable by ProcessPoolExecutor.
-    Applies per-worker CPU thread caps before any JAX usage, then rebuilds
-    the residuals closure from picklable ``residual_kwargs``.
+    Applies per-worker CPU thread caps before any JAX usage, then delegates to
+    :func:`_run_one_start` which rebuilds the correct callable (residuals_fn for
+    ``"optimistix"`` or loss_fn for gradient-based backends) from picklable
+    ``residual_kwargs``.
 
     Parameters
     ----------
     task : tuple
         (i, theta0, residual_kwargs, max_steps, opt_rtol, opt_atol,
-         opt_verbose, optx_adjoint, ls_solver, jac_mode, threads_per_run)
+         opt_verbose, optx_adjoint, ls_solver, jac_mode, threads_per_run,
+         backend, backend_kwargs)
 
     Returns
     -------
@@ -105,6 +107,8 @@ def _run_single_start_worker(task):
         ls_solver,
         jac_mode,
         threads_per_run,
+        backend,
+        backend_kwargs,
     ) = task
 
     # Cap BLAS/OMP/XLA threads per worker BEFORE any JAX import.
@@ -115,42 +119,21 @@ def _run_single_start_worker(task):
 
     runtime_env.apply_cpu_env(threads_per_run, overwrite=True)
 
-    # JAX-heavy imports come AFTER apply_cpu_env so that XLA picks up the
-    # correct intra-op thread count on the first import in this process.
-    from phoscrosstalk.derived_rates import (  # noqa: PLC0415
-        make_k_act_fn,
-        make_s_prod_fn,
-    )
-    from phoscrosstalk.optimization import (  # noqa: PLC0415
-        make_residuals_fn,
-        run_single_optimisation,
-    )
-
+    # JAX-heavy work happens inside _run_one_start (deferred imports), so
+    # XLA picks up the correct intra-op thread count on first import.
     try:
-        # Build a clean kwargs dict for make_residuals_fn, reconstructing
-        # k_act_fn and s_prod_fn from their picklable rebuild kwargs if present.
-        mkwargs = dict(residual_kwargs)
-
-        if "_k_act_rebuild_kwargs" in mkwargs:
-            k_act_rebuild = mkwargs.pop("_k_act_rebuild_kwargs")
-            mkwargs["k_act_fn"] = make_k_act_fn(**k_act_rebuild)
-
-        if "_s_prod_rebuild_kwargs" in mkwargs:
-            s_prod_rebuild = mkwargs.pop("_s_prod_rebuild_kwargs")
-            mkwargs["s_prod_fn"] = make_s_prod_fn(**s_prod_rebuild)
-
-        residuals_fn = make_residuals_fn(**mkwargs)
-
-        theta_opt, total_loss, f1, f2, f3, f4 = run_single_optimisation(
-            residuals_fn,
-            theta0,
+        theta_opt, total_loss, f1, f2, f3, f4 = _run_one_start(
+            backend=backend,
+            theta0=theta0,
+            residual_kwargs=residual_kwargs,
             max_steps=max_steps,
-            rtol=opt_rtol,
-            atol=opt_atol,
-            verbose=opt_verbose,
+            opt_rtol=opt_rtol,
+            opt_atol=opt_atol,
+            opt_verbose=opt_verbose,
             optx_adjoint=optx_adjoint,
             ls_solver=ls_solver,
             jac_mode=jac_mode,
+            backend_kwargs=backend_kwargs,
         )
         return (i, True, theta_opt, total_loss, f1, f2, f3, f4, None)
     except Exception as exc:
@@ -346,6 +329,126 @@ def _residuals_fn_from_kwargs(residual_kwargs: dict):
     return make_residuals_fn(**mkwargs)
 
 
+def _residuals_fn_to_loss_fn(residuals_fn):
+    """
+    Adapt a residuals_fn to the scalar loss_fn interface.
+
+    Gradient-based backends (jaxopt, optax, scipy_jax, mpax) expect::
+
+        loss_fn(theta, args) -> (scalar_loss, (f1, f2, f3, f4))
+
+    The canonical ``"optimistix"`` backend expects::
+
+        residuals_fn(theta, args) -> (residuals_1d, (f1, f2, f3, f4))
+
+    This adapter wraps the residuals_fn to produce a scalar by computing
+    ``jnp.sum(residuals ** 2)``, which equals ``f1+f2+f3+f4`` because each
+    residual block is the sqrt-weighted loss term.  The (f1, f2, f3, f4)
+    auxiliary values are passed through unchanged.
+    """
+    def loss_fn(theta, args):
+        import jax.numpy as jnp  # noqa: PLC0415
+        residuals, aux = residuals_fn(theta, args)
+        return jnp.sum(residuals ** 2), aux
+
+    return loss_fn
+
+
+def _run_one_start(
+    backend: str,
+    theta0,
+    residual_kwargs: dict,
+    max_steps: int,
+    opt_rtol: float,
+    opt_atol: float,
+    opt_verbose: bool,
+    optx_adjoint: str,
+    ls_solver: str,
+    jac_mode: str,
+    backend_kwargs: dict,
+    jaxpr_out_dir=None,
+):
+    """
+    Central single-start dispatch: builds the correct callable for the
+    selected backend, then calls ``dispatch_optimisation``.
+
+    Callable contracts
+    ------------------
+    ``"optimistix"``
+        Expects a *residuals_fn*: ``(theta, args) -> (residuals_1d, aux)``.
+        Passes Optimistix-specific kwargs (ls_solver, optx_adjoint, jac_mode).
+
+    All other backends
+        Expect a *loss_fn*: ``(theta, args) -> (scalar_loss, aux)``.
+        The residuals_fn is adapted via :func:`_residuals_fn_to_loss_fn`.
+        ``max_steps`` is forwarded; for ``"mpax"`` it is mapped to
+        ``max_sqp_steps`` unless overridden in ``backend_kwargs``.
+
+    ``backend_kwargs`` (from ``args.optimizer_backend_kwargs``) can override
+    any of the auto-forwarded kwargs for fine-grained per-backend tuning.
+
+    Parameters
+    ----------
+    backend : str
+        Backend key from AVAILABLE_BACKENDS.
+    theta0 : np.ndarray
+        Starting parameter vector.
+    residual_kwargs : dict
+        Picklable kwargs for ``make_residuals_fn``; must contain ``"xl"`` and
+        ``"xu"`` keys for bounds.
+    max_steps : int
+        Iteration cap forwarded to the solver.
+    opt_rtol, opt_atol : float
+        Optimistix convergence tolerances (ignored for non-optimistix backends).
+    opt_verbose : bool
+        Enable solver verbosity.
+    optx_adjoint, ls_solver, jac_mode : str
+        Optimistix-specific settings (ignored for non-optimistix backends).
+    backend_kwargs : dict
+        Extra kwargs forwarded to the solver; override auto-injected values.
+    jaxpr_out_dir : str or None
+        Directory for jaxpr reports (optimistix backend only).
+
+    Returns
+    -------
+    tuple
+        (theta_opt, total_loss, f1, f2, f3, f4)
+    """
+    from phoscrosstalk.optimizers.dispatch import dispatch_optimisation  # noqa: PLC0415
+
+    residuals_fn = _residuals_fn_from_kwargs(residual_kwargs)
+    xl = residual_kwargs.get("xl")
+    xu = residual_kwargs.get("xu")
+
+    if backend == "optimistix":
+        # Canonical residual-based path: pass residuals_fn directly.
+        # dispatch_optimisation ignores xl/xu for this backend.
+        kw = dict(
+            max_steps=max_steps,
+            rtol=opt_rtol,
+            atol=opt_atol,
+            verbose=opt_verbose,
+            ls_solver=ls_solver,
+            optx_adjoint=optx_adjoint,
+            jac_mode=jac_mode,
+            jaxpr_out_dir=jaxpr_out_dir,
+        )
+        kw.update(backend_kwargs)
+        return dispatch_optimisation("optimistix", residuals_fn, theta0, xl, xu, **kw)
+    else:
+        # Gradient-based backends: adapt residuals_fn to scalar loss_fn.
+        loss_fn = _residuals_fn_to_loss_fn(residuals_fn)
+        if backend == "mpax":
+            # MPAX uses max_sqp_steps instead of max_steps.
+            kw = {"verbose": opt_verbose}
+            if "max_sqp_steps" not in backend_kwargs:
+                kw["max_sqp_steps"] = max_steps
+        else:
+            kw = {"max_steps": max_steps, "verbose": opt_verbose}
+        kw.update(backend_kwargs)
+        return dispatch_optimisation(backend, loss_fn, theta0, xl, xu, **kw)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -400,6 +503,11 @@ def run_multi_start_optimization(problem, args, P_scaled):
             f"[!] --gen ({args.gen}) is deprecated; use --max-steps instead."
         )
 
+    # Read backend selection from args (resolved once in main.py).
+    # Default to "optimistix" for full backward-compatibility.
+    backend = getattr(args, "optimizer_backend", "optimistix")
+    backend_kwargs = dict(getattr(args, "optimizer_backend_kwargs", None) or {})
+
     w_phospho = getattr(args, "loss_weight_phospho", 1.0)
     w_abundance = getattr(args, "loss_weight_abundance", 1.0)
     w_reg = getattr(args, "loss_weight_reg", 1.0)
@@ -443,24 +551,27 @@ def run_multi_start_optimization(problem, args, P_scaled):
     )
     topo = cpu_plan.topo
 
-    logger.header("[*] Starting Multi-Start Optimistix Optimisation")
-    logger.info(f"    Optimizer: Optimistix LevenbergMarquardt(verbose={opt_verbose})")
+    logger.header("[*] Starting Multi-Start Optimisation")
+    logger.info(f"    Backend: {backend}")
+    if backend == "optimistix":
+        logger.info(f"    Optimizer: Optimistix LevenbergMarquardt(verbose={opt_verbose})")
+        logger.info(
+            "    Optimistix: "
+            f"{getattr(args, 'ls_solver', 'lm')} "
+            f"+ jac={getattr(args, 'jac_mode', 'fwd')} "
+            f"+ adjoint={getattr(args, 'optx_adjoint', 'implicit')}"
+        )
     logger.info(
         "    ODE solver: "
         f"Diffrax {getattr(args, 'ode_solver', 'tsit5')} "
         f"+ PIDController + {getattr(args, 'ode_adjoint', 'forward')} adjoint"
     )
-    logger.info(
-        "    Optimistix: "
-        f"{getattr(args, 'ls_solver', 'lm')} "
-        f"+ jac={getattr(args, 'jac_mode', 'fwd')} "
-        f"+ adjoint={getattr(args, 'optx_adjoint', 'implicit')}"
-    )
     logger.info(f"    {len(starts)} starting points, max_steps={max_steps} each")
     logger.info(
         f"    weights: phospho={w_phospho}, abundance={w_abundance}, reg={w_reg}, mrna={w_mrna}"  # noqa: E501
     )
-    logger.info(f"    Optimistix rtol={opt_rtol}, atol={opt_atol}")
+    if backend == "optimistix":
+        logger.info(f"    Optimistix rtol={opt_rtol}, atol={opt_atol}")
     logger.info(
         f"    ODE rtol={getattr(args, 'rtol', 1e-6)}, atol={getattr(args, 'atol', 1e-9)}, max_steps={getattr(args, 'solver_max_steps', 16384)}"  # noqa: E501
     )
@@ -497,7 +608,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
 
     if use_parallel:
         logger.info(
-            "[runtime] Multiprocessing strategy: workers rebuild residuals_fn from residual_kwargs."  # noqa: E501
+            "[runtime] Multiprocessing strategy: workers rebuild callable from residual_kwargs."  # noqa: E501
         )
 
     all_X, all_F, all_total = [], [], []
@@ -521,6 +632,8 @@ def run_multi_start_optimization(problem, args, P_scaled):
                 getattr(args, "ls_solver", "lm"),
                 getattr(args, "jac_mode", "fwd"),
                 cpu_plan.threads_per_run,
+                backend,
+                backend_kwargs,
             )
             for i, theta0 in enumerate(starts)
         ]
@@ -560,13 +673,8 @@ def run_multi_start_optimization(problem, args, P_scaled):
                 f"[runtime] ProcessPoolExecutor failed ({exc}); "
                 "falling back to serial execution."
             )
-            # Rebuild residuals_fn for serial fallback path
-            residuals_fn = _residuals_fn_from_kwargs(residual_kwargs)
-            from phoscrosstalk.optimization import (
-                run_single_optimisation,  # noqa: PLC0415
-            )
 
-            # Fall back: run any missing starts serially
+            # Fall back: run any missing starts serially using _run_one_start.
             for i, theta0 in enumerate(starts):
                 if i in results_map:
                     continue
@@ -576,16 +684,18 @@ def run_multi_start_optimization(problem, args, P_scaled):
                 )
                 t_start = time.perf_counter()
                 try:
-                    theta_opt, total_loss, f1, f2, f3, f4 = run_single_optimisation(
-                        residuals_fn,
-                        theta0,
+                    theta_opt, total_loss, f1, f2, f3, f4 = _run_one_start(
+                        backend=backend,
+                        theta0=theta0,
+                        residual_kwargs=residual_kwargs,
                         max_steps=max_steps,
-                        rtol=opt_rtol,
-                        atol=opt_atol,
-                        verbose=opt_verbose,
+                        opt_rtol=opt_rtol,
+                        opt_atol=opt_atol,
+                        opt_verbose=opt_verbose,
                         optx_adjoint=getattr(args, "optx_adjoint", "implicit"),
                         ls_solver=getattr(args, "ls_solver", "lm"),
                         jac_mode=getattr(args, "jac_mode", "fwd"),
+                        backend_kwargs=backend_kwargs,
                     )
                     elapsed = time.perf_counter() - t_start
                     results_map[i] = (
@@ -648,15 +758,10 @@ def run_multi_start_optimization(problem, args, P_scaled):
                 logger.warning(f"    -> Run {i + 1} failed: {err}")
 
     else:
-        # Serial execution: build residuals_fn in parent process
-        residuals_fn = _residuals_fn_from_kwargs(residual_kwargs)
-        from phoscrosstalk.optimization import run_single_optimisation  # noqa: PLC0415
-
-        # Determine jaxpr output directory from args (set by main.py when
-        # cfg.debug.save_jaxpr_reports is True; None otherwise).
-        _jaxpr_out_dir = None
-        if getattr(args.debug, "save_jaxpr_reports", False):
-            _jaxpr_out_dir = str(pathlib.Path(args.outdir) / "jaxpr_reports")
+        # Serial execution: use _run_one_start which builds the correct callable.
+        # _jaxpr_out_dir is stored on args._jaxpr_out_dir by main.py when
+        # cfg.debug.save_jaxpr_reports is True; None otherwise.
+        _jaxpr_out_dir = getattr(args, "_jaxpr_out_dir", None)
 
         _best_loss_serial = float("inf")
         for i, theta0 in enumerate(starts):
@@ -666,16 +771,18 @@ def run_multi_start_optimization(problem, args, P_scaled):
             )
             t_start = time.perf_counter()
             try:
-                theta_opt, total_loss, f1, f2, f3, f4 = run_single_optimisation(
-                    residuals_fn,
-                    theta0,
+                theta_opt, total_loss, f1, f2, f3, f4 = _run_one_start(
+                    backend=backend,
+                    theta0=theta0,
+                    residual_kwargs=residual_kwargs,
                     max_steps=max_steps,
-                    rtol=opt_rtol,
-                    atol=opt_atol,
-                    verbose=opt_verbose,
+                    opt_rtol=opt_rtol,
+                    opt_atol=opt_atol,
+                    opt_verbose=opt_verbose,
                     optx_adjoint=getattr(args, "optx_adjoint", "implicit"),
                     ls_solver=getattr(args, "ls_solver", "lm"),
                     jac_mode=getattr(args, "jac_mode", "fwd"),
+                    backend_kwargs=backend_kwargs,
                     jaxpr_out_dir=_jaxpr_out_dir if i == 0 else None,
                 )
                 elapsed = time.perf_counter() - t_start
