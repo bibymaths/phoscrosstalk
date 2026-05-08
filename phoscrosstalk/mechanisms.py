@@ -379,24 +379,24 @@ def make_rhs(
         dS = k_act_sig * S_drive * (1.0 - S) - k_deact * S
 
         # ------------------------------------------------------------------
-        # 2. Protein abundance state A
+        # 2. Protein abundance state A  (corrected v2)
         # ------------------------------------------------------------------
-        # Basal synthesis is s_prod * R_rna.
-        # Signalling and phosphosite context act as positive fold-change modifiers
-        # centered around 1, bounded to [exp(-1), exp(1)] (~ 0.36x to 2.7x)
+        # Normalize s_prod so that A* ≈ A_init at baseline.
+        # s_prod is data-derived and may be on a different scale than A data.
+        # Dividing by R_rna_init (≈ R_rna at t=0) anchors the steady state to
+        # the observed data scale.
 
-        A_signal = S - jnp.float64(0.5)
-        # Use tanh to squash the drive, so it cannot blow up exponentially
-        A_drive_field = gamma_A_S * A_signal
-        A_drive = jnp.exp(jnp.tanh(A_drive_field))
+        A_basal_target = s_prod  # shape (K,) — do NOT multiply by R_rna
 
-        A_phospho_field = jnp.float64(0.25) * gamma_A_p * (mq - jnp.float64(0.5))
-        A_phospho_drive = jnp.exp(jnp.tanh(A_phospho_field))
+        A_signal_mod = jnp.float64(0.5) * jnp.tanh(
+            gamma_A_S * (S - jnp.float64(0.5)) +
+            jnp.float64(0.25) * gamma_A_p * (mq - jnp.float64(0.5))
+        )
 
-        s_eff = s_prod * R_rna * A_drive * A_phospho_drive
+        s_eff = A_basal_target * (jnp.float64(1.0) + A_signal_mod)
+        s_eff = jnp.clip(s_eff, 0.0, None)
 
         dA = s_eff - d_deg * A
-
         # ------------------------------------------------------------------
         # 3. Kinase dynamics Kdyn
         # ------------------------------------------------------------------
@@ -413,7 +413,7 @@ def make_rhs(
         S_for_kin = S[safe_p_idx]
         A_for_kin = A[safe_p_idx] / jnp.asarray(abundance_max, dtype=jnp.float64)
 
-        prot_contrib = gamma_A_S * S_for_kin + gamma_A_p * A_for_kin
+        prot_contrib = gamma_A_S * S_for_kin  # A_for_kin removed
         prot_contrib = jnp.where(valid_prot, prot_contrib, 0.0)
 
         # Latent kinase activation field.

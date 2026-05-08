@@ -251,7 +251,7 @@ include_tfs_as_proteins = false
 # =============================================================================
 [optimisation]
 n_starts      = 3
-max_steps     = 2000
+max_steps     = 10000
 
 ls_solver     = "lm"         # options: "lm" | "gauss_newton" | "dogleg" | "indirect_lm"
 
@@ -375,7 +375,7 @@ optimizer_backend = "jaxopt_lbfgsb"
 ode_solver          = "tsit5"
 ode_adjoint         = "direct"
 
-rtol                = 1e-4
+rtol                = 1e-7
 atol                = 1e-7
 max_steps           = 131072
 dt0                 = 1e-4
@@ -566,7 +566,7 @@ reg       = 1.0
 [bounds]
 rate_min                = 1e-4     # raised from 1e-5: log(1e-5)=-11.5 is numerically marginal
 rate_max                = 10.0     # lowered from 100: no RTK-pathway rate realistically > 10 min⁻¹
-protein_degradation_max = 0.1     # → min half-life ~35 min; realistic for EGFR/MET/ERBB2
+protein_degradation_max = 10.0     # → min half-life ~35 min; realistic for EGFR/MET/ERBB2
 kinase_rate_max         = 5.0      # lowered from 10: EGFR/MET kinase dynamics on minute timescale
 phosphatase_rate_max    = 5.0      # same reasoning as kinase
 gamma_abs_max           = 4.0      # tanh(4)≈1; keeps gradients alive across full range
