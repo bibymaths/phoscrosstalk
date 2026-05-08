@@ -267,6 +267,10 @@ reg_lambda    = 0.0001
 rtol          = 1e-6
 atol          = 1e-6
 
+# Optimizer backend. Options: "optimistix" (default), "jaxopt_lbfgsb", "jaxopt_pgd",
+# "scipy_jax", "scipy_jax_pen", "optax_adam", "optax_sgd", "optax_lbfgs", "mpax".
+optimizer_backend = "optimistix"
+
 
 # =============================================================================
 # [solver] – Diffrax ODE solver configuration
