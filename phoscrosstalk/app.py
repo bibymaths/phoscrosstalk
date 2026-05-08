@@ -493,6 +493,576 @@ def _plot_ss_results(
             )
         else:
             st.caption("Final-step convergence metric is NaN/Inf.")
+# Configure & Run panel
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def _render_pipeline_panel() -> None:  # noqa: C901 (complexity accepted for a dashboard)
+    """
+    Render the *Configure & Run* dashboard mode.
+
+    Provides:
+    - Config Editor: edit and save config.toml
+    - Run Pipeline: launch, monitor, and stop phoscrosstalk
+    - Run History: browse previous runs
+    - Help: usage guide
+    """
+    from phoscrosstalk.config_editor import load_toml_to_dict, render_config_editor, save_dict_to_toml
+    from phoscrosstalk.pipeline_runner import (
+        append_log,
+        build_command,
+        find_phoscrosstalk_executable,
+        get_log_path,
+        is_process_alive,
+        read_log_tail,
+        read_pid_file,
+        render_console,
+        start_pipeline,
+        stop_pipeline,
+    )
+    from phoscrosstalk.run_registry import (
+        create_run,
+        list_runs,
+        load_run_metadata,
+        mark_run_ended,
+        update_run,
+    )
+
+    # ── Sidebar controls ──────────────────────────────────────────────────
+    st.sidebar.title("⚙️ Pipeline Control")
+
+    runs_base = st.sidebar.text_input(
+        "Runs base directory",
+        value=st.session_state.get("runs_base_dir", "runs"),
+        help="Parent directory where each run gets its own sub-folder.",
+    )
+    st.session_state["runs_base_dir"] = runs_base
+
+    config_path_input = st.sidebar.text_input(
+        "Config file path",
+        value=st.session_state.get("pipeline_config_path", "config.toml"),
+        help="Path to the config.toml to load / edit / run.",
+    )
+    st.session_state["pipeline_config_path"] = config_path_input
+
+    auto_refresh = st.sidebar.checkbox(
+        "Auto-refresh while running (3 s)",
+        value=st.session_state.get("pipeline_auto_refresh", False),
+        help="Automatically rerun the dashboard every 3 seconds while the pipeline is active.",
+    )
+    st.session_state["pipeline_auto_refresh"] = auto_refresh
+
+    st.sidebar.divider()
+    st.sidebar.markdown(
+        "**How to use:**\n"
+        "1. Edit config in the **Config Editor** tab.\n"
+        "2. Click **Save config.toml**.\n"
+        "3. Open the **Run Pipeline** tab and click **▶ Run**.\n"
+        "4. Watch live output in the console.\n"
+        "5. View results in **Explore Results** mode."
+    )
+
+    # ── Main tabs ─────────────────────────────────────────────────────────
+    tab_cfg, tab_run, tab_history, tab_help = st.tabs(
+        ["📝 Config Editor", "▶ Run Pipeline", "📋 Run History", "❓ Help"]
+    )
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Config Editor tab
+    # ──────────────────────────────────────────────────────────────────────
+    with tab_cfg:
+        st.header("Config Editor")
+        st.caption(
+            "Edit all `config.toml` options below. "
+            "Click **Save config.toml** to write the file."
+        )
+
+        config_path = Path(config_path_input)
+
+        # Load current config
+        cfg = load_toml_to_dict(config_path)
+
+        # Determine a suggested save path
+        col_save_l, col_save_r = st.columns([3, 1])
+        with col_save_l:
+            save_path_input = st.text_input(
+                "Save config to",
+                value=str(config_path),
+                help=(
+                    "Path where the edited config.toml will be written. "
+                    "You can also save into a run directory, e.g. "
+                    f"`{runs_base}/my_run/config.toml`."
+                ),
+            )
+        with col_save_r:
+            st.markdown("&nbsp;", unsafe_allow_html=True)
+            save_btn = st.button("💾 Save config.toml", type="primary", use_container_width=True)
+
+        # Render the editor and get updated cfg
+        updated_cfg = render_config_editor(cfg, default_output_dir=cfg.get("paths", {}).get("output_dir", "results"))
+
+        if save_btn:
+            save_path = Path(save_path_input)
+            try:
+                save_dict_to_toml(updated_cfg, save_path)
+                st.success(f"✅ Saved config to `{save_path}`")
+                # Update session state so Run Pipeline picks it up
+                st.session_state["pipeline_config_path"] = str(save_path)
+                st.info(
+                    "Note: this file was regenerated from the editor. "
+                    "Original comments are not preserved in the generated file."
+                )
+            except Exception as exc:
+                st.error(f"❌ Could not save config: {exc}")
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Run Pipeline tab
+    # ──────────────────────────────────────────────────────────────────────
+    with tab_run:
+        st.header("Run PhosCrosstalk Pipeline")
+
+        # ── Executable check ──────────────────────────────────────────────
+        exe = find_phoscrosstalk_executable()
+        if exe is None:
+            st.error(
+                "❌ Could not find `phoscrosstalk` on PATH.\n\n"
+                "**Remediation:** install the package in the active Python "
+                "environment:\n```\npip install -e .\n```\nor activate the "
+                "correct conda/venv environment before launching the dashboard."
+            )
+            st.stop()
+
+        cfg_path = Path(st.session_state.get("pipeline_config_path", config_path_input))
+        runs_dir = Path(st.session_state.get("runs_base_dir", runs_base))
+
+        # ── Current run status ────────────────────────────────────────────
+        active_run_dir = st.session_state.get("active_run_dir")
+        active_meta = None
+        run_is_alive = False
+        _proc_for_status = st.session_state.get("active_process")
+
+        if active_run_dir:
+            active_run_dir = Path(active_run_dir)
+            active_meta = load_run_metadata(active_run_dir)
+
+            # Poll the stored Popen object first: this reaps zombie processes so
+            # that os.kill(pid, 0) in is_process_alive() does not give a false
+            # positive for an already-exited child.
+            if _proc_for_status is not None:
+                try:
+                    _poll_rc = _proc_for_status.poll()
+                except Exception:
+                    _poll_rc = None
+                run_is_alive = _poll_rc is None
+            else:
+                # No Popen object in session (e.g. after a server restart).
+                # Fall back to PID file presence + signal(0) check.
+                _fallback_pid = read_pid_file(active_run_dir)
+                if _fallback_pid is not None:
+                    run_is_alive = is_process_alive(_fallback_pid)
+
+            # If process ended, update metadata
+            if active_meta and active_meta.get("status") == "running" and not run_is_alive:
+                rc = None
+                if _proc_for_status is not None:
+                    try:
+                        rc = _proc_for_status.poll()
+                    except Exception:
+                        rc = None
+                status = "completed" if rc == 0 else "failed"
+                mark_run_ended(active_run_dir, rc, status)
+                active_meta = load_run_metadata(active_run_dir)
+                # Clean up PID file
+                pid_path = active_run_dir / "pipeline.pid"
+                pid_path.unlink(missing_ok=True)
+
+        # ── Run configuration summary ──────────────────────────────────────
+        col_cfg_l, col_cfg_r = st.columns(2)
+
+        with col_cfg_l:
+            st.subheader("Run configuration")
+            st.markdown(f"**Config file:** `{cfg_path}`")
+            if not cfg_path.exists():
+                st.warning(f"⚠️ Config file `{cfg_path}` does not exist. Save it in the Config Editor first.")
+
+            output_dir_preview = "unknown"
+            if cfg_path.exists():
+                try:
+                    _preview_cfg = load_toml_to_dict(cfg_path)
+                    output_dir_preview = _preview_cfg.get("paths", {}).get("output_dir", "results")
+                except Exception:
+                    pass
+            st.markdown(f"**Output directory:** `{output_dir_preview}`")
+            st.markdown(f"**Executable:** `{exe}`")
+
+        with col_cfg_r:
+            st.subheader("Command preview")
+            try:
+                cmd_preview = build_command(cfg_path)
+                st.code(" ".join(str(c) for c in cmd_preview), language="bash")
+            except FileNotFoundError:
+                st.code(f"phoscrosstalk --config {cfg_path}", language="bash")
+
+        st.divider()
+
+        # ── Run / Stop buttons ────────────────────────────────────────────
+        col_run, col_stop, col_status = st.columns([1, 1, 3])
+
+        run_disabled = run_is_alive or not cfg_path.exists()
+        stop_disabled = not run_is_alive
+
+        with col_run:
+            run_btn = st.button(
+                "▶ Run",
+                type="primary",
+                disabled=run_disabled,
+                use_container_width=True,
+            )
+
+        with col_stop:
+            stop_btn = st.button(
+                "⏹ Stop",
+                type="secondary",
+                disabled=stop_disabled,
+                use_container_width=True,
+            )
+
+        with col_status:
+            if active_meta:
+                status_val = active_meta.get("status", "unknown")
+                started = active_meta.get("started_at", "")
+                ended = active_meta.get("ended_at", "")
+                rc = active_meta.get("return_code")
+
+                if status_val == "running":
+                    elapsed = ""
+                    if started:
+                        try:
+                            dt = datetime.fromisoformat(started)
+                            elapsed_s = (datetime.now() - dt).total_seconds()
+                            elapsed = f" · ⏱ {int(elapsed_s // 60)}m {int(elapsed_s % 60)}s"
+                        except Exception:
+                            pass
+                    st.info(f"🔄 **Running**{elapsed}  \nRun ID: `{active_meta.get('run_id')}`")
+                elif status_val == "completed":
+                    st.success(f"✅ **Completed** (return code: {rc})  \nEnded: `{ended}`")
+                elif status_val == "failed":
+                    st.error(f"❌ **Failed** (return code: {rc})  \nEnded: `{ended}`")
+                elif status_val == "stopped":
+                    st.warning(f"⛔ **Stopped by user**  \nEnded: `{ended}`")
+                else:
+                    st.info(f"Status: `{status_val}`")
+            else:
+                st.info("No active run. Click **▶ Run** to start the pipeline.")
+
+        # ── Launch new run ────────────────────────────────────────────────
+        if run_btn and cfg_path.exists():
+            try:
+                cmd = build_command(cfg_path)
+                run_id, run_dir = create_run(
+                    runs_base_dir=runs_dir,
+                    config_path=cfg_path,
+                    output_dir=Path(output_dir_preview),
+                    command=cmd,
+                )
+                proc = start_pipeline(cmd, run_dir)
+                st.session_state["active_process"] = proc
+                st.session_state["active_run_dir"] = str(run_dir)
+                append_log(run_dir, f"Run started by dashboard. Command: {' '.join(cmd)}")
+                st.success(f"🚀 Pipeline started! Run ID: `{run_id}`")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"❌ Could not start pipeline: {exc}")
+
+        # ── Stop active run ───────────────────────────────────────────────
+        if stop_btn and active_run_dir is not None:
+            proc = st.session_state.get("active_process")
+            try:
+                stop_pipeline(proc, active_run_dir)
+                mark_run_ended(active_run_dir, None, "stopped")
+                append_log(active_run_dir, "Run stopped by user via dashboard.")
+                st.session_state["active_process"] = None
+                st.warning("⛔ Pipeline stop signal sent.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Could not stop pipeline: {exc}")
+
+        st.divider()
+
+        # ── Live console ──────────────────────────────────────────────────
+        st.subheader("Shell console")
+
+        console_col_l, console_col_r = st.columns([4, 1])
+        with console_col_r:
+            n_lines = st.number_input(
+                "Lines to show", min_value=20, max_value=2000, value=500, step=50,
+                key="console_n_lines",
+            )
+            refresh_btn = st.button("🔄 Refresh console", use_container_width=True)
+            if active_run_dir is not None:
+                log_path = get_log_path(Path(active_run_dir))
+                if log_path.exists():
+                    with open(log_path, "rb") as _lf:
+                        _log_bytes = _lf.read()
+                    st.download_button(
+                        "⬇ Download full log",
+                        data=_log_bytes,
+                        file_name=log_path.name,
+                        use_container_width=True,
+                    )
+
+        with console_col_l:
+            if active_run_dir is not None:
+                log_path = get_log_path(Path(active_run_dir))
+                log_text = read_log_tail(log_path, n_lines=int(n_lines))
+                if log_text:
+                    st.markdown(render_console(log_text, max_lines=int(n_lines)), unsafe_allow_html=True)
+                elif run_is_alive:
+                    st.info("⏳ Waiting for output…")
+                else:
+                    st.info("No log output yet.")
+            else:
+                st.markdown(
+                    render_console("No active run. Start a pipeline to see output here."),
+                    unsafe_allow_html=True,
+                )
+
+        # ── Live result preview ───────────────────────────────────────────
+        if active_meta and output_dir_preview and output_dir_preview != "unknown":
+            out_dir = Path(output_dir_preview)
+            if out_dir.is_dir():
+                st.divider()
+                st.subheader("Live result preview")
+                st.caption(f"Polling `{out_dir}` for result files.")
+                _render_live_results(out_dir)
+
+        # ── Auto-refresh ──────────────────────────────────────────────────
+        if auto_refresh and run_is_alive:
+            time.sleep(3)
+            st.rerun()
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Run History tab
+    # ──────────────────────────────────────────────────────────────────────
+    with tab_history:
+        st.header("Run History")
+        st.caption(f"Runs stored in: `{runs_base}`")
+
+        col_hist_r, col_hist_l = st.columns([1, 5])
+        with col_hist_r:
+            if st.button("🔄 Refresh", use_container_width=True):
+                st.rerun()
+
+        runs_list = list_runs(runs_base)
+
+        if not runs_list:
+            st.info(f"No runs found in `{runs_base}`. Start a pipeline to see history here.")
+        else:
+            for meta in runs_list:
+                run_id = meta.get("run_id", "unknown")
+                status = meta.get("status", "unknown")
+                started = meta.get("started_at", "")
+                ended = meta.get("ended_at", "")
+                rc = meta.get("return_code")
+
+                status_icon = {
+                    "running": "🔄",
+                    "completed": "✅",
+                    "failed": "❌",
+                    "stopped": "⛔",
+                }.get(status, "❓")
+
+                with st.expander(f"{status_icon} Run `{run_id}` — {status}", expanded=False):
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.markdown(
+                            f"**Status:** `{status}`  \n"
+                            f"**Started:** `{started}`  \n"
+                            f"**Ended:** `{ended or 'N/A'}`  \n"
+                            f"**Return code:** `{rc}`"
+                        )
+                        cmd_str = " ".join(meta.get("command", []))
+                        st.markdown(f"**Command:**")
+                        st.code(cmd_str, language="bash")
+
+                    with c2:
+                        cfg_p = meta.get("config_path", "")
+                        out_p = meta.get("output_dir", "")
+                        log_p = meta.get("log_path", "")
+                        st.markdown(
+                            f"**Config:** `{cfg_p}`  \n"
+                            f"**Output dir:** `{out_p}`  \n"
+                            f"**Log:** `{log_p}`"
+                        )
+
+                    # Downloads
+                    _dl_cols = st.columns(3)
+                    with _dl_cols[0]:
+                        if cfg_p and Path(cfg_p).exists():
+                            with open(cfg_p, "rb") as _cf:
+                                st.download_button(
+                                    "⬇ Config",
+                                    data=_cf.read(),
+                                    file_name="config.toml",
+                                    key=f"dl_cfg_{run_id}",
+                                )
+                    with _dl_cols[1]:
+                        if log_p and Path(log_p).exists():
+                            with open(log_p, "rb") as _lf:
+                                st.download_button(
+                                    "⬇ Log",
+                                    data=_lf.read(),
+                                    file_name="phoscrosstalk.log",
+                                    key=f"dl_log_{run_id}",
+                                )
+                    with _dl_cols[2]:
+                        if out_p and Path(out_p).is_dir():
+                            st.button(
+                                "📊 View results",
+                                key=f"view_res_{run_id}",
+                                help=f"Switch to Explore Results mode and enter: {out_p}",
+                            )
+
+                    # Log tail
+                    if log_p and Path(log_p).exists():
+                        with st.expander("Last 50 log lines"):
+                            tail = read_log_tail(Path(log_p), n_lines=50)
+                            st.code(tail, language="bash")
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Help tab
+    # ──────────────────────────────────────────────────────────────────────
+    with tab_help:
+        st.header("Dashboard Help")
+        st.markdown(
+            """
+### Quick start
+
+1. **Choose or edit config options** in the **Config Editor** tab.
+2. **Click Save config.toml** to write the configuration file.
+3. **Open the Run Pipeline tab** and verify the command preview.
+4. **Click ▶ Run** to start the `phoscrosstalk` pipeline.
+5. **Watch shell output** in the terminal console panel.
+6. **View results** by switching to *🔬 Explore Results* mode and entering the output directory.
+7. **Browse prior runs** in the **Run History** tab.
+
+---
+
+### File locations
+
+| Item | Default location |
+|------|-----------------|
+| Config file | `config.toml` (editable in sidebar) |
+| Run directories | `runs/<timestamp>/` |
+| Log file | `runs/<timestamp>/phoscrosstalk.log` |
+| Results | as set in `[paths] output_dir` |
+| Run metadata | `runs/<timestamp>/run_metadata.json` |
+
+---
+
+### Stopping a run
+
+Click **⏹ Stop** in the Run Pipeline tab.
+
+- The dashboard first sends SIGTERM to the process group.
+- If the process does not exit within 10 seconds, SIGKILL is sent.
+- The run status is updated to `stopped`.
+
+---
+
+### Troubleshooting
+
+**"Could not find `phoscrosstalk` on PATH"**
+
+The dashboard calls the exact `phoscrosstalk` CLI command. Make sure the package is
+installed in the same Python environment as the dashboard:
+
+```bash
+pip install -e .
+# or
+uv sync
+```
+
+Then relaunch:
+```bash
+phoscrosstalk-app
+```
+
+**Run fails immediately**
+
+- Check the log in the **Run History** tab.
+- Verify all required paths in the config (`data`, `ptm_intra`, `ptm_inter`).
+- Make sure the output directory is writable.
+
+**Results not appearing**
+
+- Results are written to the directory specified in `[paths] output_dir`.
+- Switch to **🔬 Explore Results** mode and enter that directory.
+- Allow the pipeline to finish or check partial files in **Run Pipeline → Live result preview**.
+"""
+        )
+
+
+def _render_live_results(output_dir: Path) -> None:
+    """
+    Show a lightweight live preview of result files as they appear in *output_dir*.
+
+    Reuses the existing cached loaders from the module scope where possible.
+    """
+    from phoscrosstalk.dashboard import validate_run_directory
+
+    checks = {
+        "fitted_params.npz": "Parameter estimates",
+        "fit_timeseries.tsv": "Fit timeseries",
+        "fit_timeseries_dense.tsv": "Dense timeseries",
+        "pareto_points.tsv": "Pareto solutions",
+        "network_cytoscape_edges.csv": "Network edges",
+        "run_config.json": "Run config",
+    }
+
+    found_any = False
+    cols = st.columns(3)
+    for i, (fname, label) in enumerate(checks.items()):
+        fpath = output_dir / fname
+        c = cols[i % 3]
+        if fpath.exists():
+            c.success(f"✅ {label}")
+            found_any = True
+        else:
+            c.info(f"⏳ {label}")
+
+    if not found_any:
+        st.info("Waiting for result files to appear…")
+        return
+
+    # Show quick previews for available files
+    param_path = output_dir / "fitted_params.npz"
+    if param_path.exists():
+        try:
+            npz = np.load(param_path)
+            st.caption(f"Fitted params: {len(npz.files)} arrays — {list(npz.files)}")
+        except Exception:
+            pass
+
+    ts_path = output_dir / "fit_timeseries.tsv"
+    if ts_path.exists():
+        try:
+            df_ts = pd.read_csv(ts_path, sep="\t", nrows=5)
+            with st.expander("Fit timeseries preview (first 5 rows)"):
+                st.dataframe(df_ts, use_container_width=True)
+        except Exception as exc:
+            st.info(f"fit_timeseries.tsv is being written: {exc}")
+
+    pareto_path = output_dir / "pareto_points.tsv"
+    if pareto_path.exists():
+        try:
+            df_par = pd.read_csv(pareto_path, sep="\t")
+            with st.expander(f"Pareto solutions ({len(df_par)} rows)"):
+                st.dataframe(df_par.head(20), use_container_width=True)
+        except Exception as exc:
+            st.info(f"pareto_points.tsv is being written: {exc}")
+
+
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -2865,562 +3435,6 @@ with tab_neural:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# Configure & Run panel
-# ──────────────────────────────────────────────────────────────────────────
-
-
-def _render_pipeline_panel() -> None:  # noqa: C901 (complexity accepted for a dashboard)
-    """
-    Render the *Configure & Run* dashboard mode.
-
-    Provides:
-    - Config Editor: edit and save config.toml
-    - Run Pipeline: launch, monitor, and stop phoscrosstalk
-    - Run History: browse previous runs
-    - Help: usage guide
-    """
-    from phoscrosstalk.config_editor import load_toml_to_dict, render_config_editor, save_dict_to_toml
-    from phoscrosstalk.pipeline_runner import (
-        append_log,
-        build_command,
-        find_phoscrosstalk_executable,
-        get_log_path,
-        is_process_alive,
-        read_log_tail,
-        read_pid_file,
-        render_console,
-        start_pipeline,
-        stop_pipeline,
-    )
-    from phoscrosstalk.run_registry import (
-        create_run,
-        list_runs,
-        load_run_metadata,
-        mark_run_ended,
-        update_run,
-    )
-
-    # ── Sidebar controls ──────────────────────────────────────────────────
-    st.sidebar.title("⚙️ Pipeline Control")
-
-    runs_base = st.sidebar.text_input(
-        "Runs base directory",
-        value=st.session_state.get("runs_base_dir", "runs"),
-        help="Parent directory where each run gets its own sub-folder.",
-    )
-    st.session_state["runs_base_dir"] = runs_base
-
-    config_path_input = st.sidebar.text_input(
-        "Config file path",
-        value=st.session_state.get("pipeline_config_path", "config.toml"),
-        help="Path to the config.toml to load / edit / run.",
-    )
-    st.session_state["pipeline_config_path"] = config_path_input
-
-    auto_refresh = st.sidebar.checkbox(
-        "Auto-refresh while running (3 s)",
-        value=st.session_state.get("pipeline_auto_refresh", False),
-        help="Automatically rerun the dashboard every 3 seconds while the pipeline is active.",
-    )
-    st.session_state["pipeline_auto_refresh"] = auto_refresh
-
-    st.sidebar.divider()
-    st.sidebar.markdown(
-        "**How to use:**\n"
-        "1. Edit config in the **Config Editor** tab.\n"
-        "2. Click **Save config.toml**.\n"
-        "3. Open the **Run Pipeline** tab and click **▶ Run**.\n"
-        "4. Watch live output in the console.\n"
-        "5. View results in **Explore Results** mode."
-    )
-
-    # ── Main tabs ─────────────────────────────────────────────────────────
-    tab_cfg, tab_run, tab_history, tab_help = st.tabs(
-        ["📝 Config Editor", "▶ Run Pipeline", "📋 Run History", "❓ Help"]
-    )
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Config Editor tab
-    # ──────────────────────────────────────────────────────────────────────
-    with tab_cfg:
-        st.header("Config Editor")
-        st.caption(
-            "Edit all `config.toml` options below. "
-            "Click **Save config.toml** to write the file."
-        )
-
-        config_path = Path(config_path_input)
-
-        # Load current config
-        cfg = load_toml_to_dict(config_path)
-
-        # Determine a suggested save path
-        col_save_l, col_save_r = st.columns([3, 1])
-        with col_save_l:
-            save_path_input = st.text_input(
-                "Save config to",
-                value=str(config_path),
-                help=(
-                    "Path where the edited config.toml will be written. "
-                    "You can also save into a run directory, e.g. "
-                    f"`{runs_base}/my_run/config.toml`."
-                ),
-            )
-        with col_save_r:
-            st.markdown("&nbsp;", unsafe_allow_html=True)
-            save_btn = st.button("💾 Save config.toml", type="primary", use_container_width=True)
-
-        # Render the editor and get updated cfg
-        updated_cfg = render_config_editor(cfg, default_output_dir=cfg.get("paths", {}).get("output_dir", "results"))
-
-        if save_btn:
-            save_path = Path(save_path_input)
-            try:
-                save_dict_to_toml(updated_cfg, save_path)
-                st.success(f"✅ Saved config to `{save_path}`")
-                # Update session state so Run Pipeline picks it up
-                st.session_state["pipeline_config_path"] = str(save_path)
-                st.info(
-                    "Note: this file was regenerated from the editor. "
-                    "Original comments are not preserved in the generated file."
-                )
-            except Exception as exc:
-                st.error(f"❌ Could not save config: {exc}")
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Run Pipeline tab
-    # ──────────────────────────────────────────────────────────────────────
-    with tab_run:
-        st.header("Run PhosCrosstalk Pipeline")
-
-        # ── Executable check ──────────────────────────────────────────────
-        exe = find_phoscrosstalk_executable()
-        if exe is None:
-            st.error(
-                "❌ Could not find `phoscrosstalk` on PATH.\n\n"
-                "**Remediation:** install the package in the active Python "
-                "environment:\n```\npip install -e .\n```\nor activate the "
-                "correct conda/venv environment before launching the dashboard."
-            )
-            st.stop()
-
-        cfg_path = Path(st.session_state.get("pipeline_config_path", config_path_input))
-        runs_dir = Path(st.session_state.get("runs_base_dir", runs_base))
-
-        # ── Current run status ────────────────────────────────────────────
-        active_run_dir = st.session_state.get("active_run_dir")
-        active_pid = None
-        active_meta = None
-        run_is_alive = False
-
-        if active_run_dir:
-            active_run_dir = Path(active_run_dir)
-            active_meta = load_run_metadata(active_run_dir)
-            active_pid = read_pid_file(active_run_dir)
-            if active_pid is not None:
-                run_is_alive = is_process_alive(active_pid)
-            # If process ended, update metadata
-            if active_meta and active_meta.get("status") == "running" and not run_is_alive:
-                proc = st.session_state.get("active_process")
-                rc = None
-                if proc is not None:
-                    try:
-                        rc = proc.poll()
-                    except Exception:
-                        rc = None
-                status = "completed" if rc == 0 else "failed"
-                mark_run_ended(active_run_dir, rc, status)
-                active_meta = load_run_metadata(active_run_dir)
-                # Clean up PID file
-                pid_path = active_run_dir / "pipeline.pid"
-                pid_path.unlink(missing_ok=True)
-
-        # ── Run configuration summary ──────────────────────────────────────
-        col_cfg_l, col_cfg_r = st.columns(2)
-
-        with col_cfg_l:
-            st.subheader("Run configuration")
-            st.markdown(f"**Config file:** `{cfg_path}`")
-            if not cfg_path.exists():
-                st.warning(f"⚠️ Config file `{cfg_path}` does not exist. Save it in the Config Editor first.")
-
-            output_dir_preview = "unknown"
-            if cfg_path.exists():
-                try:
-                    _preview_cfg = load_toml_to_dict(cfg_path)
-                    output_dir_preview = _preview_cfg.get("paths", {}).get("output_dir", "results")
-                except Exception:
-                    pass
-            st.markdown(f"**Output directory:** `{output_dir_preview}`")
-            st.markdown(f"**Executable:** `{exe}`")
-
-        with col_cfg_r:
-            st.subheader("Command preview")
-            try:
-                cmd_preview = build_command(cfg_path)
-                st.code(" ".join(str(c) for c in cmd_preview), language="bash")
-            except FileNotFoundError:
-                st.code(f"phoscrosstalk --config {cfg_path}", language="bash")
-
-        st.divider()
-
-        # ── Run / Stop buttons ────────────────────────────────────────────
-        col_run, col_stop, col_status = st.columns([1, 1, 3])
-
-        run_disabled = run_is_alive or not cfg_path.exists()
-        stop_disabled = not run_is_alive
-
-        with col_run:
-            run_btn = st.button(
-                "▶ Run",
-                type="primary",
-                disabled=run_disabled,
-                use_container_width=True,
-            )
-
-        with col_stop:
-            stop_btn = st.button(
-                "⏹ Stop",
-                type="secondary",
-                disabled=stop_disabled,
-                use_container_width=True,
-            )
-
-        with col_status:
-            if active_meta:
-                status_val = active_meta.get("status", "unknown")
-                started = active_meta.get("started_at", "")
-                ended = active_meta.get("ended_at", "")
-                rc = active_meta.get("return_code")
-
-                if status_val == "running":
-                    elapsed = ""
-                    if started:
-                        try:
-                            dt = datetime.fromisoformat(started)
-                            elapsed_s = (datetime.now() - dt).total_seconds()
-                            elapsed = f" · ⏱ {int(elapsed_s // 60)}m {int(elapsed_s % 60)}s"
-                        except Exception:
-                            pass
-                    st.info(f"🔄 **Running**{elapsed}  \nRun ID: `{active_meta.get('run_id')}`")
-                elif status_val == "completed":
-                    st.success(f"✅ **Completed** (return code: {rc})  \nEnded: `{ended}`")
-                elif status_val == "failed":
-                    st.error(f"❌ **Failed** (return code: {rc})  \nEnded: `{ended}`")
-                elif status_val == "stopped":
-                    st.warning(f"⛔ **Stopped by user**  \nEnded: `{ended}`")
-                else:
-                    st.info(f"Status: `{status_val}`")
-            else:
-                st.info("No active run. Click **▶ Run** to start the pipeline.")
-
-        # ── Launch new run ────────────────────────────────────────────────
-        if run_btn and cfg_path.exists():
-            try:
-                cmd = build_command(cfg_path)
-                run_id, run_dir = create_run(
-                    runs_base_dir=runs_dir,
-                    config_path=cfg_path,
-                    output_dir=Path(output_dir_preview),
-                    command=cmd,
-                )
-                proc = start_pipeline(cmd, run_dir)
-                st.session_state["active_process"] = proc
-                st.session_state["active_run_dir"] = str(run_dir)
-                append_log(run_dir, f"Run started by dashboard. Command: {' '.join(cmd)}")
-                st.success(f"🚀 Pipeline started! Run ID: `{run_id}`")
-                st.rerun()
-            except Exception as exc:
-                st.error(f"❌ Could not start pipeline: {exc}")
-
-        # ── Stop active run ───────────────────────────────────────────────
-        if stop_btn and active_run_dir is not None:
-            proc = st.session_state.get("active_process")
-            try:
-                stop_pipeline(proc, active_run_dir)
-                mark_run_ended(active_run_dir, None, "stopped")
-                append_log(active_run_dir, "Run stopped by user via dashboard.")
-                st.session_state["active_process"] = None
-                st.warning("⛔ Pipeline stop signal sent.")
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Could not stop pipeline: {exc}")
-
-        st.divider()
-
-        # ── Live console ──────────────────────────────────────────────────
-        st.subheader("Shell console")
-
-        console_col_l, console_col_r = st.columns([4, 1])
-        with console_col_r:
-            n_lines = st.number_input(
-                "Lines to show", min_value=20, max_value=2000, value=500, step=50,
-                key="console_n_lines",
-            )
-            refresh_btn = st.button("🔄 Refresh console", use_container_width=True)
-            if active_run_dir is not None:
-                log_path = get_log_path(Path(active_run_dir))
-                if log_path.exists():
-                    with open(log_path, "rb") as _lf:
-                        _log_bytes = _lf.read()
-                    st.download_button(
-                        "⬇ Download full log",
-                        data=_log_bytes,
-                        file_name=log_path.name,
-                        use_container_width=True,
-                    )
-
-        with console_col_l:
-            if active_run_dir is not None:
-                log_path = get_log_path(Path(active_run_dir))
-                log_text = read_log_tail(log_path, n_lines=int(n_lines))
-                if log_text:
-                    st.markdown(render_console(log_text, max_lines=int(n_lines)), unsafe_allow_html=True)
-                elif run_is_alive:
-                    st.info("⏳ Waiting for output…")
-                else:
-                    st.info("No log output yet.")
-            else:
-                st.markdown(
-                    render_console("No active run. Start a pipeline to see output here."),
-                    unsafe_allow_html=True,
-                )
-
-        # ── Live result preview ───────────────────────────────────────────
-        if active_meta and output_dir_preview and output_dir_preview != "unknown":
-            out_dir = Path(output_dir_preview)
-            if out_dir.is_dir():
-                st.divider()
-                st.subheader("Live result preview")
-                st.caption(f"Polling `{out_dir}` for result files.")
-                _render_live_results(out_dir)
-
-        # ── Auto-refresh ──────────────────────────────────────────────────
-        if auto_refresh and run_is_alive:
-            time.sleep(3)
-            st.rerun()
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Run History tab
-    # ──────────────────────────────────────────────────────────────────────
-    with tab_history:
-        st.header("Run History")
-        st.caption(f"Runs stored in: `{runs_base}`")
-
-        col_hist_r, col_hist_l = st.columns([1, 5])
-        with col_hist_r:
-            if st.button("🔄 Refresh", use_container_width=True):
-                st.rerun()
-
-        runs_list = list_runs(runs_base)
-
-        if not runs_list:
-            st.info(f"No runs found in `{runs_base}`. Start a pipeline to see history here.")
-        else:
-            for meta in runs_list:
-                run_id = meta.get("run_id", "unknown")
-                status = meta.get("status", "unknown")
-                started = meta.get("started_at", "")
-                ended = meta.get("ended_at", "")
-                rc = meta.get("return_code")
-
-                status_icon = {
-                    "running": "🔄",
-                    "completed": "✅",
-                    "failed": "❌",
-                    "stopped": "⛔",
-                }.get(status, "❓")
-
-                with st.expander(f"{status_icon} Run `{run_id}` — {status}", expanded=False):
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        st.markdown(
-                            f"**Status:** `{status}`  \n"
-                            f"**Started:** `{started}`  \n"
-                            f"**Ended:** `{ended or 'N/A'}`  \n"
-                            f"**Return code:** `{rc}`"
-                        )
-                        cmd_str = " ".join(meta.get("command", []))
-                        st.markdown(f"**Command:**")
-                        st.code(cmd_str, language="bash")
-
-                    with c2:
-                        cfg_p = meta.get("config_path", "")
-                        out_p = meta.get("output_dir", "")
-                        log_p = meta.get("log_path", "")
-                        st.markdown(
-                            f"**Config:** `{cfg_p}`  \n"
-                            f"**Output dir:** `{out_p}`  \n"
-                            f"**Log:** `{log_p}`"
-                        )
-
-                    # Downloads
-                    _dl_cols = st.columns(3)
-                    with _dl_cols[0]:
-                        if cfg_p and Path(cfg_p).exists():
-                            with open(cfg_p, "rb") as _cf:
-                                st.download_button(
-                                    "⬇ Config",
-                                    data=_cf.read(),
-                                    file_name="config.toml",
-                                    key=f"dl_cfg_{run_id}",
-                                )
-                    with _dl_cols[1]:
-                        if log_p and Path(log_p).exists():
-                            with open(log_p, "rb") as _lf:
-                                st.download_button(
-                                    "⬇ Log",
-                                    data=_lf.read(),
-                                    file_name="phoscrosstalk.log",
-                                    key=f"dl_log_{run_id}",
-                                )
-                    with _dl_cols[2]:
-                        if out_p and Path(out_p).is_dir():
-                            st.button(
-                                "📊 View results",
-                                key=f"view_res_{run_id}",
-                                help=f"Switch to Explore Results mode and enter: {out_p}",
-                            )
-
-                    # Log tail
-                    if log_p and Path(log_p).exists():
-                        with st.expander("Last 50 log lines"):
-                            tail = read_log_tail(Path(log_p), n_lines=50)
-                            st.code(tail, language="bash")
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Help tab
-    # ──────────────────────────────────────────────────────────────────────
-    with tab_help:
-        st.header("Dashboard Help")
-        st.markdown(
-            """
-### Quick start
-
-1. **Choose or edit config options** in the **Config Editor** tab.
-2. **Click Save config.toml** to write the configuration file.
-3. **Open the Run Pipeline tab** and verify the command preview.
-4. **Click ▶ Run** to start the `phoscrosstalk` pipeline.
-5. **Watch shell output** in the terminal console panel.
-6. **View results** by switching to *🔬 Explore Results* mode and entering the output directory.
-7. **Browse prior runs** in the **Run History** tab.
-
----
-
-### File locations
-
-| Item | Default location |
-|------|-----------------|
-| Config file | `config.toml` (editable in sidebar) |
-| Run directories | `runs/<timestamp>/` |
-| Log file | `runs/<timestamp>/phoscrosstalk.log` |
-| Results | as set in `[paths] output_dir` |
-| Run metadata | `runs/<timestamp>/run_metadata.json` |
-
----
-
-### Stopping a run
-
-Click **⏹ Stop** in the Run Pipeline tab.
-
-- The dashboard first sends SIGTERM to the process group.
-- If the process does not exit within 10 seconds, SIGKILL is sent.
-- The run status is updated to `stopped`.
-
----
-
-### Troubleshooting
-
-**"Could not find `phoscrosstalk` on PATH"**
-
-The dashboard calls the exact `phoscrosstalk` CLI command. Make sure the package is
-installed in the same Python environment as the dashboard:
-
-```bash
-pip install -e .
-# or
-uv sync
-```
-
-Then relaunch:
-```bash
-phoscrosstalk-app
-```
-
-**Run fails immediately**
-
-- Check the log in the **Run History** tab.
-- Verify all required paths in the config (`data`, `ptm_intra`, `ptm_inter`).
-- Make sure the output directory is writable.
-
-**Results not appearing**
-
-- Results are written to the directory specified in `[paths] output_dir`.
-- Switch to **🔬 Explore Results** mode and enter that directory.
-- Allow the pipeline to finish or check partial files in **Run Pipeline → Live result preview**.
-"""
-        )
-
-
-def _render_live_results(output_dir: Path) -> None:
-    """
-    Show a lightweight live preview of result files as they appear in *output_dir*.
-
-    Reuses the existing cached loaders from the module scope where possible.
-    """
-    from phoscrosstalk.dashboard import validate_run_directory
-
-    checks = {
-        "fitted_params.npz": "Parameter estimates",
-        "fit_timeseries.tsv": "Fit timeseries",
-        "fit_timeseries_dense.tsv": "Dense timeseries",
-        "pareto_points.tsv": "Pareto solutions",
-        "network_cytoscape_edges.csv": "Network edges",
-        "run_config.json": "Run config",
-    }
-
-    found_any = False
-    cols = st.columns(3)
-    for i, (fname, label) in enumerate(checks.items()):
-        fpath = output_dir / fname
-        c = cols[i % 3]
-        if fpath.exists():
-            c.success(f"✅ {label}")
-            found_any = True
-        else:
-            c.info(f"⏳ {label}")
-
-    if not found_any:
-        st.info("Waiting for result files to appear…")
-        return
-
-    # Show quick previews for available files
-    param_path = output_dir / "fitted_params.npz"
-    if param_path.exists():
-        try:
-            npz = np.load(param_path)
-            st.caption(f"Fitted params: {len(npz.files)} arrays — {list(npz.files)}")
-        except Exception:
-            pass
-
-    ts_path = output_dir / "fit_timeseries.tsv"
-    if ts_path.exists():
-        try:
-            df_ts = pd.read_csv(ts_path, sep="\t", nrows=5)
-            with st.expander("Fit timeseries preview (first 5 rows)"):
-                st.dataframe(df_ts, use_container_width=True)
-        except Exception as exc:
-            st.info(f"fit_timeseries.tsv is being written: {exc}")
-
-    pareto_path = output_dir / "pareto_points.tsv"
-    if pareto_path.exists():
-        try:
-            df_par = pd.read_csv(pareto_path, sep="\t")
-            with st.expander(f"Pareto solutions ({len(df_par)} rows)"):
-                st.dataframe(df_par.head(20), use_container_width=True)
-        except Exception as exc:
-            st.info(f"pareto_points.tsv is being written: {exc}")
-
 
 def _render_plotly_network(df_net: pd.DataFrame, src_col: str, tgt_col: str) -> None:
     """Render a small network as Plotly scatter-with-lines."""
@@ -3490,99 +3504,3 @@ def _render_plotly_network(df_net: pd.DataFrame, src_col: str, tgt_col: str) -> 
     st.plotly_chart(fig_net, use_container_width=True)
 
 
-def _plot_ss_results(
-    t,
-    P_sim,
-    A_sim,
-    S_sim,
-    Kdyn_sim,
-    proteins,
-    sites,
-    kinases,
-    snap,
-    selected_protein,
-    use_logx,
-):
-    """Plot long-horizon simulation results."""
-    if selected_protein and selected_protein in proteins:
-        p_idx = proteins.index(selected_protein)
-        spi = np.asarray(snap.get("site_prot_idx", []))
-        site_idxs = list(np.where(spi == p_idx)[0])
-        kin_to_prot = np.asarray(snap.get("kin_to_prot_idx", []))
-        rel_kins = list(np.where(kin_to_prot == p_idx)[0])
-    else:
-        p_idx = 0
-        site_idxs = list(range(min(5, len(sites))))
-        rel_kins = []
-
-    fig_ss = make_subplots(
-        rows=2,
-        cols=2,
-        subplot_titles=(
-            "Relative phosphosite signal",
-            "Protein abundance",
-            "S \u2013 activity fraction",
-            "Kdyn \u2013 kinase activity fraction",
-        ),
-    )
-    colors = px.colors.qualitative.Plotly
-
-    for i, si in enumerate(site_idxs[:8]):
-        sname = sites[si] if si < len(sites) else str(si)
-        y = np.where(np.isfinite(P_sim[si]), P_sim[si], np.nan)
-        fig_ss.add_trace(
-            go.Scatter(
-                x=t,
-                y=y,
-                mode="lines",
-                name=sname,
-                line=dict(color=colors[i % len(colors)]),
-            ),
-            row=1,
-            col=1,
-        )
-
-    y_a = np.where(np.isfinite(A_sim[p_idx]), A_sim[p_idx], np.nan)
-    fig_ss.add_trace(
-        go.Scatter(
-            x=t, y=y_a, mode="lines", name="A", line=dict(width=2, color="black")
-        ),
-        row=1,
-        col=2,
-    )
-    y_s = np.where(np.isfinite(S_sim[p_idx]), S_sim[p_idx], np.nan)
-    fig_ss.add_trace(
-        go.Scatter(
-            x=t, y=y_s, mode="lines", name="S", line=dict(width=2, color="purple")
-        ),
-        row=2,
-        col=1,
-    )
-    for ri, ki in enumerate(rel_kins[:5]):
-        kname = kinases[ki] if ki < len(kinases) else str(ki)
-        y_k = np.where(np.isfinite(Kdyn_sim[ki]), Kdyn_sim[ki], np.nan)
-        fig_ss.add_trace(
-            go.Scatter(
-                x=t,
-                y=y_k,
-                mode="lines",
-                name=f"Kdyn {kname}",
-                line=dict(color=colors[ri % len(colors)]),
-            ),
-            row=2,
-            col=2,
-        )
-
-    fig_ss.update_xaxes(title_text="Time (min)")
-    fig_ss.update_yaxes(title_text="Relative phosphosite signal", row=1, col=1)
-    fig_ss.update_yaxes(title_text="Protein abundance", row=1, col=2)
-    fig_ss.update_yaxes(title_text="Activity fraction [0-1]", row=2, col=1)
-    fig_ss.update_yaxes(title_text="Activity fraction [0-1]", row=2, col=2)
-    fig_ss.update_layout(
-        height=700,
-        template="plotly_white",
-        title=f"Long-horizon relaxation \u2014 {selected_protein or (proteins[0] if proteins else '')}",  # noqa: E501
-    )
-    if use_logx:
-        fig_ss.update_xaxes(type="log")
-    st.plotly_chart(fig_ss, use_container_width=True)
