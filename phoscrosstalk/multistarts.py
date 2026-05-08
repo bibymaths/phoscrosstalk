@@ -368,6 +368,7 @@ def _run_one_start(
     jac_mode: str,
     backend_kwargs: dict,
     jaxpr_out_dir=None,
+    opt_log_every: int = 100,
 ):
     """
     Central single-start dispatch: builds the correct callable for the
@@ -409,6 +410,9 @@ def _run_one_start(
         Extra kwargs forwarded to the solver; override auto-injected values.
     jaxpr_out_dir : str or None
         Directory for jaxpr reports (optimistix backend only).
+    opt_log_every : int
+        For optax-style backends: log diagnostics every this many steps when
+        verbose is True.  Ignored by other backends.
 
     Returns
     -------
@@ -446,6 +450,9 @@ def _run_one_start(
                 kw["max_sqp_steps"] = max_steps
         else:
             kw = {"max_steps": max_steps, "verbose": opt_verbose}
+            # Forward log_every for optax-style backends that support it.
+            if backend.startswith("optax_") and "log_every" not in backend_kwargs:
+                kw["log_every"] = opt_log_every
         kw.update(backend_kwargs)
         return dispatch_optimisation(backend, loss_fn, theta0, xl, xu, **kw)
 
@@ -518,6 +525,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
     opt_rtol = getattr(args, "opt_rtol", getattr(args, "rtol", 1e-8))
     opt_atol = getattr(args, "opt_atol", getattr(args, "atol", 1e-8))
     opt_verbose = getattr(args, "opt_verbose", False)
+    opt_log_every = getattr(args, "opt_log_every", 100)
 
     # Warn if evolutionary algorithm flags were passed
     algo = getattr(args, "algorithm", None)
@@ -697,6 +705,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
                         ls_solver=getattr(args, "ls_solver", "lm"),
                         jac_mode=getattr(args, "jac_mode", "fwd"),
                         backend_kwargs=backend_kwargs,
+                        opt_log_every=opt_log_every,
                     )
                     elapsed = time.perf_counter() - t_start
                     results_map[i] = (
@@ -785,6 +794,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
                     jac_mode=getattr(args, "jac_mode", "fwd"),
                     backend_kwargs=backend_kwargs,
                     jaxpr_out_dir=_jaxpr_out_dir if i == 0 else None,
+                    opt_log_every=opt_log_every,
                 )
                 elapsed = time.perf_counter() - t_start
                 all_X.append(theta_opt)

@@ -259,6 +259,7 @@ optx_adjoint  = "implicit"   # options: "implicit" | "checkpoint"
 jac_mode      = "bwd"        # options: "fwd" | "bwd"
 
 verbose       = true
+log_every     = 100          # log diagnostics every N steps for optax-style backends
 loss_type     = "mse"
 
 lambda_net    = 0.001
@@ -536,42 +537,71 @@ reg       = 1.0
 # [bounds] – parameter bounds used by create_bounds()
 # =============================================================================
 #
-# All values must be positive except gamma internals if represented separately.
+# All values must be positive.
 #
 # rate_min:
-#   Lower bound for positive kinetic rates after exponentiation.
+#   Log-space floor for ALL positive kinetic rate parameters.
 #
 # rate_max:
-#   Generic upper bound for kinetic rates.
+#   Generic ceiling; only used where no dedicated ceiling exists.
+#
+# k_deact_max:
+#   Upper bound for k_deact (protein deactivation rates).
+#   Kept separate from rate_max so it can be constrained tightly.
 #
 # protein_degradation_max:
-#   Upper bound for protein degradation rates.
-#   Keep biologically conservative.
+#   Upper bound for d_deg (protein degradation rates).
+#
+# beta_coupling_max:
+#   Upper bound for beta_g and beta_l (crosstalk coupling scalars).
+#   Separate from rate_max to prevent unrealistically large coupling.
+#
+# alpha_min:
+#   Lower bound for alpha (kinase-site activation strengths).
+#   Prevents collapse near zero, which would silence kinase contributions.
 #
 # kinase_rate_max:
-#   Upper bound for kinase activation/deactivation rates.
+#   Upper bound for kK_act and kK_deact.
 #
 # phosphatase_rate_max:
-#   Upper bound for phosphosite off-rates / dephosphorylation-like terms.
+#   Upper bound for k_off (phosphosite dephosphorylation rates).
 #
 # gamma_abs_max:
-#   Intended absolute cap for gamma-like coupling coefficients if used by bounds.
+#   Absolute bound for raw gamma parameters (tanh-encoded; NOT log-space).
 #
 # rna_max:
-#   Biological/numerical upper guide for RNA fold-change.
+#   Hard clip for R_rna in make_rhs(); NOT a parameter bound for create_bounds().
 #
 # abundance_max:
-#   Biological/numerical upper guide for protein abundance fold-change.
+#   Hard clip for protein abundance A in make_rhs() / simulation;
+#   NOT a parameter bound for create_bounds().
 # =============================================================================
 [bounds]
-rate_min                = 1e-4     # raised from 1e-5: log(1e-5)=-11.5 is numerically marginal
-rate_max                = 10.0     # lowered from 100: no RTK-pathway rate realistically > 10 min⁻¹
-protein_degradation_max = 10.0     # → min half-life ~35 min; realistic for EGFR/MET/ERBB2
-kinase_rate_max         = 5.0      # lowered from 10: EGFR/MET kinase dynamics on minute timescale
-phosphatase_rate_max    = 5.0      # same reasoning as kinase
-gamma_abs_max           = 4.0      # tanh(4)≈1; keeps gradients alive across full range
-rna_max                 = 10.0     # lowered from 100: mRNA fold-changes rarely exceed 10x in 16h
-abundance_max           = 5.0      # already set in simulation.py clip; keep consistent
+# ── Floor / generic ceiling ──────────────────────────────────────────────────
+rate_min                = 1e-4    # log-space floor for ALL positive rate params
+rate_max                = 10.0    # generic ceiling; only used where no dedicated ceiling exists
+
+# ── Protein parameters ───────────────────────────────────────────────────────
+k_deact_max             = 2.0     # k_deact ceiling, separate from rate_max
+                                  # half-life floor = ln2/2 ≈ 0.35 min
+protein_degradation_max = 10.0    # d_deg ceiling
+
+# ── Crosstalk coupling ───────────────────────────────────────────────────────
+beta_coupling_max       = 3.0     # ceiling for beta_g and beta_l
+
+# ── Kinase parameters ────────────────────────────────────────────────────────
+alpha_min               = 0.01    # alpha lower bound; prevents collapse near zero
+kinase_rate_max         = 1.0     # kK_act / kK_deact ceiling
+
+# ── Phosphosite parameters ───────────────────────────────────────────────────
+phosphatase_rate_max    = 5.0     # k_off ceiling
+
+# ── Gamma parameters, tanh raw, NOT log-encoded ──────────────────────────────
+gamma_abs_max           = 4.0     # raw input to 2*tanh(); decoded range ≈ (-2, +2)
+
+# ── make_rhs() / simulation clip values, NOT create_bounds() parameter bounds ─
+rna_max                 = 10.0    # R_rna hard clip in make_rhs(); not a param bound
+abundance_max           = 5.0     # A hard clip in make_rhs() / simulation; not a param bound
 
 
 # =============================================================================

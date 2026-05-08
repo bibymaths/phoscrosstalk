@@ -109,6 +109,7 @@ _DEFAULTS = {
         "loss_type": "mse",
         "lambda_net": 0.0001,
         "reg_lambda": 0.0001,
+        "log_every": 100,
         "optimizer_backend": "optimistix",
         "optimizer_backend_kwargs": {},
     },
@@ -139,11 +140,14 @@ _DEFAULTS = {
         "rate_min": 1e-5,
         "rate_max": 10.0,
         "protein_degradation_max": 0.5,
+        "k_deact_max": 2.0,        # upper bound for k_deact, separate from rate_max
         "kinase_rate_max": 3.0,
         "phosphatase_rate_max": 5.0,
+        "beta_coupling_max": 3.0,  # upper bound for beta_g / beta_l
+        "alpha_min": 0.01,         # lower bound for alpha, prevents collapse near zero
         "gamma_abs_max": 2.0,
-        "rna_max": 10.0,
-        "abundance_max": 5.0,
+        "rna_max": 10.0,        # used in make_rhs() R_rna clip; NOT in create_bounds()
+        "abundance_max": 5.0,   # used in make_rhs() A clip / simulation; NOT in create_bounds()
     },
     "analysis": {
         "tune": False,
@@ -704,8 +708,11 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
             "rate_min",
             "rate_max",
             "protein_degradation_max",
+            "k_deact_max",
             "kinase_rate_max",
             "phosphatase_rate_max",
+            "beta_coupling_max",
+            "alpha_min",
             "gamma_abs_max",
             "rna_max",
             "abundance_max",
