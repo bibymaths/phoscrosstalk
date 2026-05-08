@@ -29,6 +29,7 @@ from phoscrosstalk.runtime_env import (  # noqa: E402
     plan_cpu_runtime,
     setup_cpu_env,
 )
+from phoscrosstalk.utils.helpers import namespace_to_dict
 
 _runtime_cfg = _read_runtime_config()
 _cpu_plan = plan_cpu_runtime(
@@ -181,8 +182,8 @@ def main():
         # Backend selection — resolved once here; propagated into multistarts.
         # Default "optimistix" keeps full backward-compatible behaviour.
         optimizer_backend=getattr(cfg.optimisation, "optimizer_backend", "optimistix"),
-        optimizer_backend_kwargs=dict(
-            getattr(cfg.optimisation, "optimizer_backend_kwargs", None) or {}
+        optimizer_backend_kwargs=namespace_to_dict(
+            getattr(cfg.optimisation, "optimizer_backend_kwargs", None)
         ),
         # Optimistix least-squares controls
         ls_solver=getattr(cfg.optimisation, "ls_solver", "lm"),

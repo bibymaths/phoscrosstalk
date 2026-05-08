@@ -129,8 +129,8 @@ output_dir        = "test_dist"
 
 crosstalk_tsv     = ""
 rna_data          = "data_timeseries/input3.csv"
-tf_net            = "data_subset/subnetwork_ABL2_CLK3_GRK5_GSK3A/tf_mrna_subset.csv"
-kinase_tsv        = "data_subset/subnetwork_ABL2_CLK3_GRK5_GSK3A/kinase_sites_subset.tsv"
+tf_net            = "data_subset/subnetwork_EGFR_MET_ERBB2/tf_mrna_subset.csv"
+kinase_tsv        = "data_subset/subnetwork_EGFR_MET_ERBB2/kinase_sites_subset.tsv"
 kea_ks_table      = ""
 unified_graph_pkl = "data_curated/processed/unified_kinase_graph.gpickle"
 
@@ -174,8 +174,8 @@ scale_mode              = "none"      # options: "none" | "minmax" | "log-minmax
 length_scale            = 25.0
 weight_scheme           = "uniform"   # options: uniform, early_emphasis, early_emphasis_moderate, late_emphasis, flat_no_noise
 
-receptors               = ["ABL2", "CLK3", "GRK5", "GSK3A"]
-receptor_kinases        = ["ABL2", "CLK3", "GRK5", "GSK3A"]
+receptors               = ["EGFR", "MET"]
+receptor_kinases        = ["EGFR", "ERBB2", "MET"]
 include_tfs_as_proteins = false
 
 
@@ -250,18 +250,18 @@ include_tfs_as_proteins = false
 #   These are not ODE tolerances.
 # =============================================================================
 [optimisation]
-n_starts      = 10
+n_starts      = 3
 max_steps     = 500
 
 ls_solver     = "lm"         # options: "lm" | "gauss_newton" | "dogleg" | "indirect_lm"
 
 optx_adjoint  = "implicit"   # options: "implicit" | "checkpoint"
-jac_mode      = "fwd"        # options: "fwd" | "bwd"
+jac_mode      = "bwd"        # options: "fwd" | "bwd"
 
 verbose       = false
 loss_type     = "mse"
 
-lambda_net    = 0.0
+lambda_net    = 0.001
 reg_lambda    = 0.0001
 
 rtol          = 1e-6
@@ -269,7 +269,7 @@ atol          = 1e-6
 
 # Optimizer backend. Options: "optimistix" (default), "jaxopt_lbfgsb", "jaxopt_pgd",
 # "scipy_jax", "scipy_jax_pen", "optax_adam", "optax_sgd", "optax_lbfgs", "mpax".
-optimizer_backend = "optimistix"
+optimizer_backend = "mpax"
 
 
 # =============================================================================
@@ -372,8 +372,8 @@ optimizer_backend = "optimistix"
 #   Diffrax ode_adjoint = "forward"
 # ---------------------------------------------------------------------------
 [solver]
-ode_solver          = "tsit5"    # best default for likely stiff biochemical ODEs
-ode_adjoint         = "forward"     # required because [optimisation] jac_mode = "fwd"
+ode_solver          = "tsit5"
+ode_adjoint         = "direct"
 
 rtol                = 1e-4
 atol                = 1e-7
