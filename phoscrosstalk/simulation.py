@@ -105,37 +105,16 @@ def simulate(
             R_rna state is initialized from first column (or vector). Defaults 1.0.
 
     Returns:
-        dict | tuple:
-            Simulation outputs. The returned object depends on the requested output mode.
-
-            If ``return_full`` is ``True``, returns a dictionary with the following keys:
-
-            - ``P_sim``: simulated phosphosite matrix with shape ``(N_sites, T)``.
-            - ``A_sim``: simulated protein abundance matrix with shape ``(K, T)``.
-            - ``S_sim``: simulated protein signalling-state matrix with shape ``(K, T)``.
-            - ``Kdyn_sim``: simulated kinase-state matrix with shape ``(M, T)``.
-            - ``R_sim``: simulated RNA/transcriptional state on the main solver time grid.
-            - ``R_sim_rna``: simulated RNA/transcriptional state on the RNA time grid.
-            - ``t``: main simulation time points.
-            - ``t_rna``: RNA simulation time points, if available.
-            - ``solver_times``: internal solver time points or diagnostic solver times.
-
-            If ``full_output`` is ``True`` and ``return_full`` is ``False``, returns:
-
-            ``(P_sim, A_sim, S_sim, Kdyn_sim)``
-
-            where ``P_sim`` has shape ``(N_sites, T)``, ``A_sim`` has shape
-            ``(K, T)``, ``S_sim`` has shape ``(K, T)``, and ``Kdyn_sim`` has shape
-            ``(M, T)``.
-
-            Otherwise, returns:
-
-            ``(P_sim, A_sim)``
-
-            where ``P_sim`` has shape ``(N_sites, T)`` and ``A_sim`` has shape
-            ``(K, T)``.
-
-            If integration fails, the returned arrays contain ``NaN`` values.
+        (dict | tuple): Simulation outputs depending on the requested output mode.
+            If ``return_full`` is ``True``, returns a dictionary with keys
+            ``P_sim`` (N_sites x T), ``A_sim`` (K x T), ``S_sim`` (K x T),
+            ``Kdyn_sim`` (M x T), ``R_sim``, ``R_sim_rna``, ``t``, ``t_rna``,
+            and ``solver_times``.
+            If ``full_output`` is ``True`` and ``return_full`` is ``False``,
+            returns ``(P_sim, A_sim, S_sim, Kdyn_sim)``.
+            Otherwise returns ``(P_sim, A_sim)``. Protein arrays have shape (K, T)
+            and phosphosite arrays have shape (N_sites, T).
+            Arrays contain ``NaN`` values if integration fails.
     """
     if dims is None:
         dims = ModelDims.from_data(P_data0, A_data0, kin_to_prot_idx)
@@ -402,7 +381,7 @@ def build_full_A0(K, T, A_scaled, prot_idx_for_A):
         prot_idx_for_A (np.ndarray): Indices mapping observations to the full protein list.
 
     Returns:
-        np.ndarray: Full abundance matrix (K x T).
+        (np.ndarray): Full abundance matrix (K x T).
     """  # noqa: E501
     A0_full = np.zeros((K, T), dtype=float)
     if A_scaled.size > 0:
@@ -458,15 +437,18 @@ def simulate_dense(
         A_data0 (np.ndarray): Initial protein abundance data (K x T_init) for t=0 IC.
             Only the first column is used.
         theta (np.ndarray): Fitted parameter vector.
-        Cg, Cl (np.ndarray): Global and local coupling matrices.
+        Cg (np.ndarray): Global coupling matrix.
+        Cl (np.ndarray): Local coupling matrix.
         site_prot_idx (np.ndarray): Site-to-protein mapping.
         K_site_kin (np.ndarray): Kinase-site interaction matrix.
         R (np.ndarray): Receptor/kinase input matrix.
         L_alpha (np.ndarray): Kinase network Laplacian.
         kin_to_prot_idx (np.ndarray): Kinase-to-protein mapping.
-        receptor_mask_prot, receptor_mask_kin (np.ndarray): Input masks.
+        receptor_mask_prot (np.ndarray): Input mask for substrate proteins.
+        receptor_mask_kin (np.ndarray): Input mask for kinases.
         mechanism (str): Kinetic mechanism ('dist', 'seq', 'rand').
-        rtol, atol (float): Solver tolerances.
+        rtol (float): Solver relative tolerance.
+        atol (float): Solver absolute tolerance.
         max_steps (int): Maximum solver steps.
         dt0 (float): Initial step size.
         ode_solver_kind (str): ODE solver type.
@@ -479,16 +461,12 @@ def simulate_dense(
         ode_adjoint_kind (str): Adjoint method for ODE differentiation.
 
     Returns:
-        dict with keys:
-            ``t``         – dense time array used for the solve (= ``t_dense``)
-            ``P_sim``     – (N_sites, T_dense) phosphosite states
-            ``A_sim``     – (K, T_dense) protein abundance states
-            ``S_sim``     – (K, T_dense) protein activity states
-            ``Kdyn_sim``  – (M, T_dense) kinase activity states
-            ``R_sim``     – (K, T_dense) mRNA states (at ``t_dense``)
-            ``solver_times`` – unified solver time grid
-            ``success``   – True if solve completed without NaN states
-        Returns ``success=False`` with NaN-filled arrays if the solve fails.
+        (dict): Simulation results with keys ``t`` (dense time array equal to ``t_dense``),
+            ``P_sim`` (N_sites x T_dense), ``A_sim`` (K x T_dense), ``S_sim`` (K x T_dense),
+            ``Kdyn_sim`` (M x T_dense), ``R_sim`` (K x T_dense), ``solver_times``
+            (unified solver time grid), and ``success`` (True if solve completed without
+            NaN states). Returns with ``success=False`` and NaN-filled arrays if the solve
+            fails.
     """
     if dims is None:
         dims = ModelDims.from_data(P_data0, A_data0, kin_to_prot_idx)

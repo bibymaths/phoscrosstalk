@@ -109,6 +109,8 @@ _DEFAULTS = {
         "loss_type": "mse",
         "lambda_net": 0.0001,
         "reg_lambda": 0.0001,
+        "optimizer_backend": "optimistix",
+        "optimizer_backend_kwargs": {},
     },
     "loss_weights": {
         "phospho": 1.0,
@@ -364,6 +366,13 @@ def _read_runtime_config():
 # Config validator
 # ---------------------------------------------------------------------------
 
+_VALID_BACKENDS = [
+    "optimistix", "jaxopt_lbfgsb", "jaxopt_pgd",
+    "scipy_jax", "scipy_jax_pen",
+    "optax_adam", "optax_sgd", "optax_lbfgs",
+    "mpax",
+]
+
 _VALID_MECHANISMS = {"dist", "seq", "rand"}
 _VALID_INTERP = {"piecewise_constant", "linear"}
 _VALID_SCALE = {"none", "minmax", "log-minmax"}
@@ -573,6 +582,12 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
     reg_lambda = getattr(cfg.optimisation, "reg_lambda", 0.0001)
     if not isinstance(reg_lambda, (int, float)) or reg_lambda < 0:
         errors.append(f"  [optimisation] reg_lambda = {reg_lambda!r} must be >= 0.")
+
+    backend = getattr(cfg.optimisation, "optimizer_backend", "optimistix")
+    if backend not in _VALID_BACKENDS:
+        errors.append(
+            f"  [optimisation] optimizer_backend={backend!r} not in {_VALID_BACKENDS}"
+        )
 
     # -------------------------------------------------------------------
     # Solver tolerances

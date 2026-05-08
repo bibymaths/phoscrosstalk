@@ -12,7 +12,7 @@
 
 ::: phoscrosstalk.hyperparam
 
-::: phoscrosstalk.neural_ode
+::: phoscrosstalk.neuralODE
 
 ## Configuration modules
 

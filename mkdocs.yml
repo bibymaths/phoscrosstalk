@@ -116,6 +116,7 @@ nav:
       - Neural ODE: api/neural_ode.md
       - Simulation: api/simulation.md
       - Optimisation: api/optimization.md
+      - Optimizer Backends: api/optimizers.md
       - Derived Rates: api/derived_rates.md
       - Weighting: api/weighting.md
       - Analysis: api/analysis.md

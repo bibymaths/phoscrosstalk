@@ -39,7 +39,7 @@ def save_run_results(outdir, F, X, f1, f2, f3, J, F_best, f4=None, dims: ModelDi
             but accepted for a consistent call-site signature.
 
     Returns:
-        None: Files are written to `outdir`.  Output filenames are preserved for
+        (None): Files are written to `outdir`.  Output filenames are preserved for
               backward compatibility with external readers (pareto_stats.tsv,
               pareto_front_with_J.tsv, pareto_points.tsv, pareto_front.npz).
     """
@@ -105,7 +105,7 @@ def plot_run_diagnostics(outdir, F, F_best, f1, f2, f3, X, f4=None):
             When *None* (or all-zero), the RNA panel is skipped.
 
     Returns:
-        None: Saves 'pareto_f1_f2.png', 'pareto_param_corr.png', and
+        (None): Saves 'pareto_f1_f2.png', 'pareto_param_corr.png', and
               (when f4 is non-trivial) 'pareto_f1_f4.png' to `outdir`.
               Output filenames are preserved for backward compatibility.
     """
@@ -164,7 +164,7 @@ def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites, dims: M
         sites (list): List of phosphorylation site names.
 
     Returns:
-        None: Writes summary TSV/TXT files to `outdir` and prints summaries to console.
+        (None): Writes summary TSV/TXT files to `outdir` and prints summaries to console.
     """
     if dims is None:
         dims = ModelDims.set_dims(len(proteins), len(kinases), len(sites))
@@ -545,13 +545,15 @@ def save_fitted_simulation(
         A_bases (np.ndarray): Baselines for rescaling proteins.
         A_amps (np.ndarray): Amplitudes for rescaling proteins.
         mechanism (str): The specific kinetic mechanism used in simulation.
-        Cg, Cl (np.ndarray): Global and Local connectivity matrices.
+        Cg (np.ndarray): Global connectivity matrix.
+        Cl (np.ndarray): Local connectivity matrix.
         site_prot_idx (np.ndarray): Mapping of sites to proteins.
         K_site_kin (np.ndarray): Kinase-site interaction matrix.
         R (np.ndarray): Receptor/Input matrix.
         L_alpha (np.ndarray): Laplacian or interaction matrix for alpha term.
         kin_to_prot_idx (np.ndarray): Mapping of kinases to protein indices.
-        mask_p, mask_k (np.ndarray): Boolean masks for proteins and kinases.
+        mask_p (np.ndarray): Boolean mask for proteins.
+        mask_k (np.ndarray): Boolean mask for kinases.
         kinases (list | None): List of kinase names.  When provided, Kdyn_sim
             rows in ``internal_states.tsv`` use real kinase names instead of
             generic ``Kinase_0, Kinase_1, …`` labels.
@@ -569,7 +571,7 @@ def save_fitted_simulation(
             the diagnostic mRNA interpolation; never conflated with *t*.
 
     Returns:
-        None: Saves 'fitted_params.npz' and 'fit_timeseries.tsv' to `outdir`.
+        (None): Saves 'fitted_params.npz' and 'fit_timeseries.tsv' to `outdir`.
     """
     if dims is None:
         dims = ModelDims.set_dims(len(proteins), len(kin_to_prot_idx), len(sites))
@@ -814,7 +816,7 @@ def plot_internal_states(outdir, t, S_sim, Kdyn_sim, proteins, kinases=None):
             labels use real kinase names instead of generic ``Kinase_N``.
 
     Returns:
-        None
+        (None): Saves plots to disk.
     """
 
     fig, (axS, axK) = plt.subplots(1, 2, figsize=(16, 6), sharex=True)
@@ -869,7 +871,7 @@ def plot_fitted_simulation(outdir):
         outdir (str): Directory containing output TSV files.
 
     Returns:
-        None: Saves per-protein PNG files to *outdir*.
+        (None): Saves per-protein PNG files to *outdir*.
     """
 
     # Load protein/phosphosite fit data
@@ -1080,7 +1082,7 @@ def print_biological_scores(outdir, X):
         X (np.ndarray): Matrix of parameter vectors (n_points x n_params).
 
     Returns:
-        None: Writes 'biological_scores.tsv' to disk and prints scores to console.
+        (None): Writes 'biological_scores.tsv' to disk and prints scores to console.
     """
     bio_scores = np.array([bio_score(theta) for theta in X])
 
@@ -1104,7 +1106,7 @@ def plot_biological_scores(outdir, X, F):
         F (np.ndarray): Objective function values (f1, f2, f3).
 
     Returns:
-        None: Saves 'biological_scores.png' to `outdir`.
+        (None): Saves 'biological_scores.png' to `outdir`.
     """
     bio_scores = np.array([bio_score(theta) for theta in X])
     plt.figure(figsize=(7, 6))
@@ -1131,7 +1133,7 @@ def plot_goodness_of_fit(file, outdir):
         outdir (str): Directory to save the plot.
 
     Returns:
-        None: Saves 'goodness_of_fit.png' to `outdir`.
+        (None): Saves 'goodness_of_fit.png' to `outdir`.
     """  # noqa: E501
     df = pd.read_csv(file, sep="\t")
 
@@ -1422,18 +1424,23 @@ def _save_preopt_snapshot_txt_csv(
         P_scaled, Y (np.ndarray): Phosphorylation data matrices.
         A_scaled, A_data (np.ndarray): Protein abundance data matrices.
         A_proteins (list): Proteins with abundance data.
-        W_data, W_data_prot (np.ndarray): Weight matrices.
-        Cg, Cl (np.ndarray): Topology matrices.
-        site_prot_idx, kin_to_prot_idx (np.ndarray): Index mapping arrays.
+        W_data (np.ndarray): Phosphosite weight matrix.
+        W_data_prot (np.ndarray): Protein weight matrix.
+        Cg (np.ndarray): Global connectivity matrix.
+        Cl (np.ndarray): Local connectivity matrix.
+        site_prot_idx (np.ndarray): Site-to-protein index mapping.
+        kin_to_prot_idx (np.ndarray): Kinase-to-protein index mapping.
         K_site_kin (np.ndarray): Kinase-substrate relationship matrix.
         R (np.ndarray): Receptor input.
         L_alpha (np.ndarray): Laplacian matrix.
-        receptor_mask_prot, receptor_mask_kin (np.ndarray): Receptor boolean masks.
-        xl, xu (np.ndarray): Lower and upper bounds for parameters.
+        receptor_mask_prot (np.ndarray): Receptor boolean mask for proteins.
+        receptor_mask_kin (np.ndarray): Receptor boolean mask for kinases.
+        xl (np.ndarray): Lower bounds for parameters.
+        xu (np.ndarray): Upper bounds for parameters.
         args (Namespace): Parsed command-line arguments or configuration object.
 
     Returns:
-        None: Creates a 'preopt_snapshot' folder containing metadata and data files.
+        (None): Creates a 'preopt_snapshot' folder containing metadata and data files.
     """  # noqa: E501
     snap_dir = os.path.join(outdir, "preopt_snapshot")
     os.makedirs(snap_dir, exist_ok=True)
@@ -1595,10 +1602,25 @@ def save_preopt_snapshot_npz(
 
     Args:
         snap_dir (str): Path to the ``preopt_snapshot/`` directory.
-        t, Y, P_scaled, A_data, A_scaled, Cg, Cl, K_site_kin, R, L_alpha,
-        W_data, W_data_prot, site_prot_idx, kin_to_prot_idx,
-        receptor_mask_prot, receptor_mask_kin, positions, xl, xu:
-            Model input arrays.
+        t (np.ndarray): Pre-optimisation time vector.
+        Y (np.ndarray): Phosphosite data matrix.
+        P_scaled (np.ndarray): Scaled phosphosite data.
+        A_data (np.ndarray): Protein abundance data.
+        A_scaled (np.ndarray): Scaled protein abundance data.
+        Cg (np.ndarray): Global connectivity matrix.
+        Cl (np.ndarray): Local connectivity matrix.
+        K_site_kin (np.ndarray): Kinase-site interaction matrix.
+        R (np.ndarray): Receptor/input matrix.
+        L_alpha (np.ndarray): Laplacian matrix for alpha term.
+        W_data (np.ndarray): Phosphosite weight matrix.
+        W_data_prot (np.ndarray): Protein weight matrix.
+        site_prot_idx (np.ndarray): Site-to-protein index mapping.
+        kin_to_prot_idx (np.ndarray): Kinase-to-protein index mapping.
+        receptor_mask_prot (np.ndarray): Receptor mask for proteins.
+        receptor_mask_kin (np.ndarray): Receptor mask for kinases.
+        positions (np.ndarray): Initial positions array.
+        xl (np.ndarray): Lower bounds for parameters.
+        xu (np.ndarray): Upper bounds for parameters.
     """
     out_path = os.path.join(snap_dir, "preopt_snapshot.npz")
     if os.path.exists(out_path):
@@ -1655,8 +1677,8 @@ def save_mrna_outputs(outdir, gene_ids, t_rna, rna_data_obs, rna_simulated):
             Must not be None; must match shape of rna_data_obs.
 
     Returns:
-        None: Writes ``mrna_fit_timeseries.tsv`` and ``mrna_diagnostics.tsv``
-        to *outdir*.
+        (None): Writes ``mrna_fit_timeseries.tsv`` and ``mrna_diagnostics.tsv``
+            to *outdir*.
     """
     if rna_simulated is None:
         logger.warning(
@@ -1781,7 +1803,7 @@ def plot_mrna_fit(outdir, gene_ids=None, max_genes=12):
         max_genes (int): Maximum number of genes to include in one figure.
 
     Returns:
-        None: Saves ``mrna_fit_panel.png`` to *outdir*.
+        (None): Saves ``mrna_fit_panel.png`` to *outdir*.
     """
     tsv_path = os.path.join(outdir, "mrna_fit_timeseries.tsv")
     if not os.path.exists(tsv_path):

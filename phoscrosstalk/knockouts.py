@@ -56,15 +56,13 @@ def run_live_knockout(
         a_proteins (list[str] | None): Names of proteins that have abundance data,
             in the same row order as ``snap["A_scaled"]``. Used to build the initial
             protein-abundance state vector.  If ``None``, A₀ is initialised to zeros.
-        k_act_fn: Optional JAX closure for derived k_act(t).
-        s_prod_fn: Optional JAX closure for derived s_prod(t).
+        k_act_fn (callable | None): Optional JAX closure for derived k_act(t).
+        s_prod_fn (callable | None): Optional JAX closure for derived s_prod(t).
 
     Returns:
-        dict with keys:
-          ``wt`` (dict), ``ko`` (dict), each containing:
-            ``P_sim``, ``A_sim``, ``S_sim``, ``Kdyn_sim``  (shape: entities × T)
-          ``t_eval`` (np.ndarray)
-          ``ko_type``, ``ko_target``
+        (dict): Keys ``"wt"`` and ``"ko"`` (each a dict with ``"P_sim"``,
+            ``"A_sim"``, ``"S_sim"``, ``"Kdyn_sim"`` of shape entities × T),
+            plus ``"t_eval"`` (np.ndarray), ``"ko_type"``, and ``"ko_target"``.
     """
     K = len(proteins)
     M = len(kinases)
@@ -203,7 +201,7 @@ def run_knockout_screen(outdir, dims: ModelDims, problem, theta_opt, sites, prot
         kinases (list): List of kinase IDs.
 
     Returns:
-        None: Saves 'knockout_l2fc.tsv' and 'knockout_clustermap.png' to disk.
+        (None): Saves 'knockout_l2fc.tsv' and 'knockout_clustermap.png' to disk.
     """  # noqa: E501
     logger.info("\n[*] Running Systematic Knockout Screen (Fold Change)...")
     ko_dir = os.path.join(outdir, "knockouts")
