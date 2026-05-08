@@ -372,8 +372,8 @@ optimizer_backend = "jaxopt_lbfgsb"
 #   Diffrax ode_adjoint = "forward"
 # ---------------------------------------------------------------------------
 [solver]
-ode_solver          = "tsit5"
-ode_adjoint         = "direct"
+ode_solver          = "kvaerno4"
+ode_adjoint         = "checkpoint"
 
 rtol                = 1e-7
 atol                = 1e-7

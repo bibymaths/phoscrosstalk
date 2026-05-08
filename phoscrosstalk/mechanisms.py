@@ -362,9 +362,9 @@ def make_rhs(
         _rna_relax = jnp.asarray(rna_relax, dtype=jnp.float64)
 
         rna_field = gamma_S_p * mq + mc + receptor_mask_prot * u
-        rna_reg = jnp.exp(jnp.float64(0.25) * jnp.tanh(rna_field))
+        rna_reg = jnp.exp(jnp.float64(0.5) * jnp.tanh(rna_field))
 
-        R_target = k_act * rna_reg
+        R_target = rna_reg
 
         dR_rna = _rna_relax * (R_target - R_rna)
 
