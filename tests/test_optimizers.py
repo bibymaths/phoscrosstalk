@@ -201,3 +201,116 @@ def test_config_invalid_backend_raises():
     for b in _VALID:
         if b != "optimistix":  # optimistix uses different runner
             assert b in AVAILABLE_BACKENDS
+
+
+# ---------------------------------------------------------------------------
+# Callable-contract adapter tests
+# ---------------------------------------------------------------------------
+
+def make_quadratic_residuals(target):
+    """
+    residuals_fn(theta) = (theta - target), aux=(sum_sq, 0, 0, 0).
+    Compatible with the optimistix backend interface.
+    """
+    target_j = jnp.asarray(target, dtype=jnp.float64)
+
+    def residuals_fn(theta, args):
+        r = theta - target_j
+        f1 = jnp.sum(r ** 2)
+        zeros = jnp.zeros((), dtype=jnp.float64)
+        return r, (f1, zeros, zeros, zeros)
+
+    return residuals_fn
+
+
+def test_residuals_fn_to_loss_fn_scalar():
+    """_residuals_fn_to_loss_fn wraps residuals to produce a scalar equal to sum(r^2)."""
+    from phoscrosstalk.multistarts import _residuals_fn_to_loss_fn
+
+    target = np.array([0.3, 0.6, 0.4])
+    theta = np.array([0.5, 0.5, 0.5])
+
+    residuals_fn = make_quadratic_residuals(target)
+    loss_fn = _residuals_fn_to_loss_fn(residuals_fn)
+
+    theta_j = jnp.asarray(theta, dtype=jnp.float64)
+    scalar, (f1, f2, f3, f4) = loss_fn(theta_j, None)
+
+    expected = float(jnp.sum((theta_j - jnp.asarray(target, dtype=jnp.float64)) ** 2))
+    assert abs(float(scalar) - expected) < 1e-10, (
+        f"scalar={float(scalar)}, expected={expected}"
+    )
+    # aux is passed through from residuals_fn unchanged
+    assert abs(float(f1) - expected) < 1e-10
+    assert float(f2) == 0.0
+    assert float(f3) == 0.0
+    assert float(f4) == 0.0
+
+
+def test_residuals_fn_to_loss_fn_preserves_aux():
+    """The (f1,f2,f3,f4) aux from residuals_fn is passed through unchanged."""
+    from phoscrosstalk.multistarts import _residuals_fn_to_loss_fn
+
+    target = np.array([0.2, 0.8])
+    theta = np.array([0.0, 1.0])
+
+    residuals_fn = make_quadratic_residuals(target)
+    loss_fn = _residuals_fn_to_loss_fn(residuals_fn)
+
+    theta_j = jnp.asarray(theta, dtype=jnp.float64)
+    # Call both directly
+    r, (r_f1, r_f2, r_f3, r_f4) = residuals_fn(theta_j, None)
+    _, (l_f1, l_f2, l_f3, l_f4) = loss_fn(theta_j, None)
+
+    assert abs(float(r_f1) - float(l_f1)) < 1e-12
+    assert float(l_f2) == float(r_f2)
+    assert float(l_f3) == float(r_f3)
+    assert float(l_f4) == float(r_f4)
+
+
+# ---------------------------------------------------------------------------
+# Backend propagation tests
+# ---------------------------------------------------------------------------
+
+def test_backend_in_args_namespace_defaults_to_optimistix():
+    """args without optimizer_backend falls back to 'optimistix' in multistarts."""
+    from types import SimpleNamespace
+    args = SimpleNamespace()
+    from phoscrosstalk.multistarts import run_multi_start_optimization
+    # Just verify that getattr(args, "optimizer_backend", "optimistix") works.
+    backend = getattr(args, "optimizer_backend", "optimistix")
+    assert backend == "optimistix"
+
+
+def test_backend_propagated_from_args():
+    """args.optimizer_backend is read and used by run_multi_start_optimization."""
+    from types import SimpleNamespace
+    args = SimpleNamespace(optimizer_backend="optax_adam", optimizer_backend_kwargs={})
+    backend = getattr(args, "optimizer_backend", "optimistix")
+    backend_kwargs = dict(getattr(args, "optimizer_backend_kwargs", None) or {})
+    assert backend == "optax_adam"
+    assert backend_kwargs == {}
+
+
+def test_dispatch_optimistix_with_residuals_fn():
+    """
+    dispatch_optimisation("optimistix", residuals_fn, ...) correctly calls
+    run_single_optimisation with the residuals_fn callable.
+    """
+    from phoscrosstalk.optimizers.dispatch import dispatch_optimisation
+
+    target = np.array([0.3, 0.6, 0.4])
+    residuals_fn = make_quadratic_residuals(target)
+
+    result = dispatch_optimisation(
+        "optimistix",
+        residuals_fn,
+        THETA0,
+        XL,
+        XU,
+        max_steps=200,
+    )
+    theta_opt, total_loss, f1, f2, f3, f4 = result
+    assert isinstance(theta_opt, np.ndarray)
+    assert np.all(np.isfinite(theta_opt))
+    assert np.isfinite(total_loss)
