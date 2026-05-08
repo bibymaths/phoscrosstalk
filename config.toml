@@ -250,7 +250,7 @@ include_tfs_as_proteins = false
 #   These are not ODE tolerances.
 # =============================================================================
 [optimisation]
-n_starts      = 3
+n_starts      = 10
 max_steps     = 10000
 
 ls_solver     = "lm"         # options: "lm" | "gauss_newton" | "dogleg" | "indirect_lm"
@@ -259,7 +259,7 @@ optx_adjoint  = "implicit"   # options: "implicit" | "checkpoint"
 jac_mode      = "bwd"        # options: "fwd" | "bwd"
 
 verbose       = true
-log_every     = 100          # log diagnostics every N steps for optax-style backends
+log_every     = 1          # log diagnostics every N steps for optax-style backends
 loss_type     = "mse"
 
 lambda_net    = 0.001
@@ -680,10 +680,10 @@ rna_relax = 0.1
 #   After fitting is stable, enable analyses one by one.
 # =============================================================================
 [analysis]
-tune            = false
+tune            = true
 run_steadystate = true
 run_knockouts   = true
-run_sensitivity = false
+run_sensitivity = true
 
 
 # =============================================================================
@@ -842,7 +842,7 @@ parallel_frechet = "auto"
 #   true  – raise RuntimeError on non-finite results.
 # =============================================================================
 [steadystate]
-t_end                    = 50000.0
+t_end                    = 100000.0
 early_end                = 100.0
 n_early                  = 100
 n_late                   = 80
@@ -986,10 +986,10 @@ replace_nans_at_start   = "first_valid"   # null | "zero" | "first_valid"
 # =============================================================================
 [neural_ode]
 use_optax               = true
-optimizer               = "adabelief"
+optimizer               = "adam"
 optax_loop              = "scan"
-print_every             = 10
-enabled                 = false
+print_every             = 1
+enabled                 = true
 width                   = 32
 depth                   = 2
 steps                   = 10000
@@ -1005,7 +1005,7 @@ atol                    = 1e-7
 dt0                     = 0.01
 max_steps               = 65536
 save_dense              = true
-dense_n_points          = 200
+dense_n_points          = 1000
 
 [debug]
 save_jaxpr_reports = true
