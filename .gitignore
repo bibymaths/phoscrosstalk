@@ -304,3 +304,4 @@ data_subset/subnetwork_ABL2_CLK3_GRK5_GSK3A/tf_mrna_subset.csv
 data_subset/subnetwork_ABL2_CLK3_GRK5_GSK3A/kinase_sites_subset.tsv
 data_curated/processed/unified_kinase_graph.gpickle
 # <<< end auto-generated <<<
+*.dispatch

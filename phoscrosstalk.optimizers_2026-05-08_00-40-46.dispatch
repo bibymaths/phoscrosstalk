@@ -1,4 +1,0 @@
-2026-05-08 00:40:46 - PhosCrosstalk - INFO - dispatch_optimisation: backend=jaxopt_lbfgsb  extra_kwargs={'solver_kind': 'lbfgsb', 'max_steps': 200}
-2026-05-08 00:40:47 - PhosCrosstalk - INFO - [jaxopt/lbfgsb] final loss=0.0000e+00  f1=0.000e+00 f2=0.000e+00 f3=0.000e+00 f4=0.000e+00
-2026-05-08 00:40:47 - PhosCrosstalk - INFO - dispatch_optimisation: backend=jaxopt_lbfgsb  extra_kwargs={'solver_kind': 'lbfgsb', 'max_steps': 200}
-2026-05-08 00:40:47 - PhosCrosstalk - INFO - [jaxopt/lbfgsb] final loss=1.5000e+00  f1=1.500e+00 f2=0.000e+00 f3=0.000e+00 f4=0.000e+00
