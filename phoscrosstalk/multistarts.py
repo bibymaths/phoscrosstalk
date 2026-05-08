@@ -346,8 +346,9 @@ def _residuals_fn_to_loss_fn(residuals_fn):
     residual block is the sqrt-weighted loss term.  The (f1, f2, f3, f4)
     auxiliary values are passed through unchanged.
     """
+    import jax.numpy as jnp  # noqa: PLC0415 — deferred to avoid premature JAX init
+
     def loss_fn(theta, args):
-        import jax.numpy as jnp  # noqa: PLC0415
         residuals, aux = residuals_fn(theta, args)
         return jnp.sum(residuals ** 2), aux
 
