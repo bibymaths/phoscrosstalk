@@ -12,6 +12,25 @@ import os
 from pathlib import Path
 from typing import Any
 
+# ---------------------------------------------------------------------------
+# Path safety helper (kept local to avoid circular imports)
+# ---------------------------------------------------------------------------
+
+_BLOCKED_PATH_PREFIXES = (
+    "/etc/", "/bin/", "/sbin/", "/usr/bin/", "/usr/sbin/",
+    "/proc/", "/sys/", "/dev/", "/boot/",
+)
+
+
+def _check_path_safety(path: Path, label: str = "path") -> None:
+    """Raise ``ValueError`` if *path* resolves to a restricted system location."""
+    resolved = str(path.resolve())
+    for prefix in _BLOCKED_PATH_PREFIXES:
+        if resolved.startswith(prefix):
+            raise ValueError(
+                f"{label} resolves to a restricted system path: {resolved}"
+            )
+
 
 # ---------------------------------------------------------------------------
 # TOML read / write  (stdlib tomllib for read, manual write for save)
@@ -27,6 +46,7 @@ def load_toml_to_dict(path: str | Path) -> dict[str, Any]:
     from phoscrosstalk.config import _DEFAULTS, _deep_merge
 
     path = Path(path)
+    _check_path_safety(path, label="config path")
     if not path.exists():
         return _deep_merge({}, _DEFAULTS)
 
@@ -40,8 +60,6 @@ def load_toml_to_dict(path: str | Path) -> dict[str, Any]:
             toml_data = tomllib.load(fh)
         return _deep_merge(_DEFAULTS, toml_data)
     except Exception:
-        from phoscrosstalk.config import _DEFAULTS, _deep_merge
-
         return _deep_merge({}, _DEFAULTS)
 
 
@@ -54,6 +72,7 @@ def save_dict_to_toml(cfg: dict[str, Any], path: str | Path) -> None:
     the original file are not preserved; the output is clean structured TOML.
     """
     path = Path(path)
+    _check_path_safety(path, label="save path")
     path.parent.mkdir(parents=True, exist_ok=True)
 
     lines: list[str] = [

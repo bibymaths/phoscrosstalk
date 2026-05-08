@@ -3422,7 +3422,7 @@ def _render_live_results(output_dir: Path) -> None:
             st.info(f"pareto_points.tsv is being written: {exc}")
 
 
-
+def _render_plotly_network(df_net: pd.DataFrame, src_col: str, tgt_col: str) -> None:
     """Render a small network as Plotly scatter-with-lines."""
     G = _nx.DiGraph()
     weight_col = (
