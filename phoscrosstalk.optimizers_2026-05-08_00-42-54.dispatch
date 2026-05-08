@@ -1,0 +1,19 @@
+2026-05-08 00:42:54 - PhosCrosstalk - INFO - dispatch_optimisation: backend=jaxopt_lbfgsb  extra_kwargs={'solver_kind': 'lbfgsb', 'max_steps': 200}
+2026-05-08 00:42:55 - PhosCrosstalk - INFO - [jaxopt/lbfgsb] final loss=0.0000e+00  f1=0.000e+00 f2=0.000e+00 f3=0.000e+00 f4=0.000e+00
+2026-05-08 00:42:55 - PhosCrosstalk - INFO - dispatch_optimisation: backend=jaxopt_lbfgsb  extra_kwargs={'solver_kind': 'lbfgsb', 'max_steps': 200}
+2026-05-08 00:42:55 - PhosCrosstalk - INFO - [jaxopt/lbfgsb] final loss=1.5000e+00  f1=1.500e+00 f2=0.000e+00 f3=0.000e+00 f4=0.000e+00
+2026-05-08 00:42:55 - PhosCrosstalk - INFO - dispatch_optimisation: backend=jaxopt_pgd  extra_kwargs={'solver_kind': 'projected_gradient', 'max_steps': 500, 'stepsize': 0.1}
+2026-05-08 00:42:55 - PhosCrosstalk - INFO - [jaxopt/projected_gradient] final loss=3.5791e-12  f1=3.579e-12 f2=0.000e+00 f3=0.000e+00 f4=0.000e+00
+2026-05-08 00:42:55 - PhosCrosstalk - INFO - dispatch_optimisation: backend=scipy_jax  extra_kwargs={'bounds_strategy': 'reparameterize', 'max_steps': 200}
+2026-05-08 00:42:56 - PhosCrosstalk - INFO - [scipy_jax/BFGS/reparameterize] final loss=3.5549e-10  f1=3.555e-10 f2=0.000e+00 f3=0.000e+00 f4=0.000e+00
+2026-05-08 00:42:56 - PhosCrosstalk - INFO - dispatch_optimisation: backend=scipy_jax_pen  extra_kwargs={'bounds_strategy': 'penalty', 'max_steps': 200}
+2026-05-08 00:42:57 - PhosCrosstalk - INFO - [scipy_jax/BFGS/penalty] final loss=0.0000e+00  f1=0.000e+00 f2=0.000e+00 f3=0.000e+00 f4=0.000e+00
+2026-05-08 00:42:57 - PhosCrosstalk - INFO - dispatch_optimisation: backend=optax_adam  extra_kwargs={'optimizer_kind': 'adam', 'max_steps': 500, 'learning_rate': 0.1}
+2026-05-08 00:42:58 - PhosCrosstalk - INFO - [optax/adam] converged at step 82
+2026-05-08 00:42:58 - PhosCrosstalk - INFO - [optax/adam] final loss=1.7647e-06  f1=1.765e-06 f2=0.000e+00 f3=0.000e+00 f4=0.000e+00
+2026-05-08 00:42:58 - PhosCrosstalk - INFO - dispatch_optimisation: backend=optax_sgd  extra_kwargs={'optimizer_kind': 'sgd', 'max_steps': 500, 'learning_rate': 0.05}
+2026-05-08 00:42:58 - PhosCrosstalk - INFO - [optax/sgd] converged at step 103
+2026-05-08 00:42:58 - PhosCrosstalk - INFO - [optax/sgd] final loss=8.6914e-07  f1=8.691e-07 f2=0.000e+00 f3=0.000e+00 f4=0.000e+00
+2026-05-08 00:42:58 - PhosCrosstalk - INFO - dispatch_optimisation: backend=optax_lbfgs  extra_kwargs={'optimizer_kind': 'lbfgs', 'max_steps': 200}
+2026-05-08 00:43:00 - PhosCrosstalk - INFO - [optax/lbfgs] converged at step 2
+2026-05-08 00:43:00 - PhosCrosstalk - INFO - [optax/lbfgs] final loss=0.0000e+00  f1=0.000e+00 f2=0.000e+00 f3=0.000e+00 f4=0.000e+00
