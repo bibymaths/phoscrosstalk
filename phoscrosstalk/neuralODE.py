@@ -2143,7 +2143,7 @@ def run_neural_latent_rate_refinement(
         json.dump(metadata, fh, indent=2)
     logger.info("[neural_ode] Saved %s", meta_path)
 
-    logger.success(
+    logger.info(
         "[neural_ode] Neural latent-rate refinement complete. Outputs saved to %s/",
         neural_outdir,
     )
