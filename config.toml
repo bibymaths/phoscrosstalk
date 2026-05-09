@@ -125,7 +125,7 @@
 data              = "data_timeseries/input1.csv"
 ptm_intra         = "data_curated/processed/ptm_intra.db"
 ptm_inter         = "data_curated/processed/ptm_inter.db"
-output_dir        = "test_dist"
+output_dir        = "test_dist_pinn"
 
 crosstalk_tsv     = ""
 rna_data          = "data_timeseries/input3.csv"
@@ -1069,7 +1069,7 @@ dense_n_points          = 100
 #   through the existing runtime planning infrastructure.
 # =============================================================================
 [pinn]
-enabled                 = false   # set to true to activate PINN mode
+enabled                 = true   # set to true to activate PINN mode
 
 # Architecture
 width_size              = 64
@@ -1081,7 +1081,7 @@ lambda_pinn             = 0.5
 regularize              = "residual_l2"   # options: "residual_l2" | "param_l2"
 
 # Optimisation
-max_steps               = 100
+max_steps               = 500
 learning_rate           = 1e-3
 rtol                    = 1e-8
 atol                    = 1e-8

@@ -1,0 +1,113 @@
+services:
+  phoscrosstalk:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    image: phoscrosstalk:latest
+    container_name: phoscrosstalk
+
+    working_dir: /app
+
+    command: ["--config", "config.toml"]
+
+    volumes:
+      - ./config.toml:/app/config.toml:ro
+
+      - ./data_timeseries:/app/data_timeseries:ro
+      - ./data_curated:/app/data_curated:ro
+      - ./data_interactions:/app/data_interactions:ro
+
+      - ./scripts:/app/scripts:ro
+      - ./phoscrosstalk:/app/phoscrosstalk:ro
+
+      - ./test_dist:/app/test_dist
+      - ./logs:/app/logs
+
+    environment:
+      JAX_PLATFORMS: cpu
+      MPLBACKEND: Agg
+
+      OMP_NUM_THREADS: "4"
+      OPENBLAS_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
+      NUMEXPR_NUM_THREADS: "4"
+
+    cpus: 8
+    mem_limit: 16g
+
+    restart: "no"
+
+  phoscrosstalk-app:
+    image: phoscrosstalk:latest
+
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: phoscrosstalk-app
+
+    working_dir: /app
+
+    entrypoint: ["phoscrosstalk-app"]
+
+    ports:
+      - "8501:8501"
+
+    volumes:
+      - ./config.toml:/app/config.toml:ro
+
+      - ./data_timeseries:/app/data_timeseries:ro
+      - ./data_curated:/app/data_curated:ro
+      - ./data_interactions:/app/data_interactions:ro
+
+      - ./scripts:/app/scripts:ro
+      - ./phoscrosstalk:/app/phoscrosstalk:ro
+
+      - ./test_dist:/app/test_dist
+      - ./logs:/app/logs
+
+    environment:
+      JAX_PLATFORMS: cpu
+      MPLBACKEND: Agg
+
+    restart: "no"
+
+  phoscrosstalk-script:
+    image: phoscrosstalk:latest
+
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: phoscrosstalk-script
+
+    working_dir: /app
+
+    # Override this at runtime with:
+    # docker compose run --rm phoscrosstalk-script python scripts/name_of_script.py
+    entrypoint: ["python"]
+
+    volumes:
+      - ./config.toml:/app/config.toml:ro
+
+      - ./data_timeseries:/app/data_timeseries:ro
+      - ./data_curated:/app/data_curated:ro
+      - ./data_interactions:/app/data_interactions:ro
+
+      - ./scripts:/app/scripts:ro
+      - ./phoscrosstalk:/app/phoscrosstalk:ro
+
+      - ./test_dist:/app/test_dist
+      - ./logs:/app/logs
+
+    environment:
+      JAX_PLATFORMS: cpu
+      MPLBACKEND: Agg
+
+      OMP_NUM_THREADS: "4"
+      OPENBLAS_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
+      NUMEXPR_NUM_THREADS: "4"
+
+    restart: "no"
