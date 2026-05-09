@@ -20,6 +20,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+import optimistix as optx
 
 from phoscrosstalk.config import ModelDims
 from phoscrosstalk.logger import get_logger
@@ -37,7 +38,33 @@ _debug_logger = get_logger().logger
 # ---------------------------------------------------------------------------
 # Training loop helpers
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Optimistix / bounded-theta helpers
+# ---------------------------------------------------------------------------
 
+def _theta_to_unconstrained(theta, xl, xu, eps: float = 1e-6):
+    """
+    Map bounded theta in [xl, xu] to unconstrained coordinates.
+
+    Optimistix.LBFGS has no native box bounds, so theta is optimised through
+    this smooth transform instead of relying on hard clipping.
+    """
+    theta = jnp.asarray(theta, dtype=jnp.float64)
+    xl = jnp.asarray(xl, dtype=jnp.float64)
+    xu = jnp.asarray(xu, dtype=jnp.float64)
+
+    z = (theta - xl) / (xu - xl)
+    z = jnp.clip(z, eps, 1.0 - eps)
+    return jnp.log(z) - jnp.log1p(-z)
+
+
+def _theta_from_unconstrained(theta_u, xl, xu):
+    """
+    Map unconstrained theta_u back into [xl, xu].
+    """
+    xl = jnp.asarray(xl, dtype=jnp.float64)
+    xu = jnp.asarray(xu, dtype=jnp.float64)
+    return xl + (xu - xl) * jax.nn.sigmoid(theta_u)
 
 def _run_pinn_optax(
     *,
@@ -134,6 +161,148 @@ def _run_pinn_optax(
 
     return trainable, history
 
+def _run_pinn_optimistix_lbfgs_polish(
+    *,
+    loss_fn,
+    trainable,
+    pinn_cfg: SimpleNamespace,
+    xl,
+    xu,
+    step_offset: int = 0,
+) -> tuple:
+    """
+    Polish an already-trained (theta, pinn_model) with Optimistix L-BFGS.
+
+    This is intended as a post-Adam refinement stage.
+
+    Notes
+    -----
+    - Optimistix.LBFGS does not provide native box bounds.
+    - We optimise theta in unconstrained coordinates and map it smoothly into
+      [xl, xu] before evaluating the PINN loss.
+    - Progress is logged every `print_every` by running L-BFGS in chunks.
+      This resets L-BFGS memory between chunks, but keeps logging simple and
+      robust.
+    """
+    polish_steps = int(getattr(pinn_cfg, "lbfgs_polish_steps", 50))
+    if polish_steps <= 0:
+        logger.info("[pinn/lbfgs] Skipping L-BFGS polish: lbfgs_polish_steps <= 0.")
+        return trainable, []
+
+    print_every = max(1, int(getattr(pinn_cfg, "print_every", 50)))
+    chunk_steps = min(print_every, polish_steps)
+
+    rtol = float(getattr(pinn_cfg, "lbfgs_rtol", 1e-6))
+    atol = float(getattr(pinn_cfg, "lbfgs_atol", 1e-6))
+    history_length = int(getattr(pinn_cfg, "lbfgs_history_length", 10))
+
+    theta0, pinn_model0 = trainable
+
+    xl_j = jnp.asarray(xl, dtype=jnp.float64)
+    xu_j = jnp.asarray(xu, dtype=jnp.float64)
+
+    theta_u0 = _theta_to_unconstrained(theta0, xl_j, xu_j)
+
+    # Optimistix optimises only array leaves. Equinox static leaves such as
+    # activation functions must be partitioned out.
+    opt_trainable = (theta_u0, pinn_model0)
+    dynamic, static = eqx.partition(opt_trainable, eqx.is_array)
+
+    def objective(dynamic_trainable, _args):
+        theta_u, pinn_model = eqx.combine(dynamic_trainable, static)
+        theta = _theta_from_unconstrained(theta_u, xl_j, xu_j)
+        return loss_fn((theta, pinn_model), None)
+
+    solver = optx.LBFGS(
+        rtol=rtol,
+        atol=atol,
+        history_length=history_length,
+    )
+
+    logger.info(
+        "[pinn/lbfgs] Starting Optimistix L-BFGS polish: "
+        "steps=%d  chunk=%d  rtol=%.1e  atol=%.1e  history=%d",
+        polish_steps,
+        chunk_steps,
+        rtol,
+        atol,
+        history_length,
+    )
+
+    history: list[dict] = []
+    t0 = time.perf_counter()
+    done = 0
+
+    while done < polish_steps:
+        this_chunk = min(chunk_steps, polish_steps - done)
+
+        sol = optx.minimise(
+            objective,
+            solver,
+            dynamic,
+            args=None,
+            has_aux=True,
+            max_steps=this_chunk,
+            options={"autodiff_mode": "bwd"},
+            throw=False,
+        )
+
+        dynamic = sol.value
+        done += this_chunk
+
+        theta_u_cur, pinn_cur = eqx.combine(dynamic, static)
+        theta_cur = _theta_from_unconstrained(theta_u_cur, xl_j, xu_j)
+
+        loss_val, aux = loss_fn((theta_cur, pinn_cur), None)
+        loss_val.block_until_ready()
+
+        elapsed = time.perf_counter() - t0
+        avg_step_s = elapsed / max(1, done)
+        eta_s = avg_step_s * max(0, polish_steps - done)
+
+        f1, f2, f3, f4, fp = tuple(float(a) for a in aux)
+        global_step = step_offset + done
+
+        row = {
+            "step": global_step,
+            "phase": "lbfgs_polish",
+            "total_loss": float(loss_val),
+            "f1": f1,
+            "f2": f2,
+            "f3": f3,
+            "f4": f4,
+            "f_pinn_reg": fp,
+            "elapsed_s": elapsed,
+            "avg_step_s": avg_step_s,
+            "eta_s": eta_s,
+            "optimistix_result": str(sol.result),
+        }
+        history.append(row)
+
+        logger.info(
+            "[pinn/lbfgs] step=%04d/%04d  total=%.4e  "
+            "f1=%.4e  f2=%.4e  f3=%.4e  f4=%.4e  f_pinn=%.4e  "
+            "elapsed=%.1fmin  avg_step=%.2fs  eta=%.1fmin  result=%s",
+            done,
+            polish_steps,
+            float(loss_val),
+            f1,
+            f2,
+            f3,
+            f4,
+            fp,
+            elapsed / 60.0,
+            avg_step_s,
+            eta_s / 60.0,
+            sol.result,
+        )
+
+    theta_u_final, pinn_final = eqx.combine(dynamic, static)
+    theta_final = _theta_from_unconstrained(theta_u_final, xl_j, xu_j)
+
+    logger.info("[pinn/lbfgs] L-BFGS polish complete.")
+
+    return (theta_final, pinn_final), history
 
 # ---------------------------------------------------------------------------
 # Public entry point
@@ -335,13 +504,32 @@ def run_pinn_pipeline(
     )
 
     t_train_start = time.perf_counter()
+
     (theta_final, pinn_final), loss_history = _run_pinn_optax(
         loss_fn=loss_fn,
         trainable=trainable,
         pinn_cfg=pinn_cfg,
     )
+
+    adam_steps = int(getattr(pinn_cfg, "max_steps", 500))
+
+    (theta_final, pinn_final), lbfgs_history = _run_pinn_optimistix_lbfgs_polish(
+        loss_fn=loss_fn,
+        trainable=(theta_final, pinn_final),
+        pinn_cfg=pinn_cfg,
+        xl=xl,
+        xu=xu,
+        step_offset=adam_steps,
+    )
+
+    loss_history.extend(lbfgs_history)
+
     t_train_elapsed = time.perf_counter() - t_train_start
-    logger.info("[pinn] Training finished in %.1f s (%d steps).", t_train_elapsed, len(loss_history))
+    logger.info(
+        "[pinn] Training + L-BFGS polish finished in %.1f s (%d logged rows).",
+        t_train_elapsed,
+        len(loss_history),
+    )
 
     # ------------------------------------------------------------------
     # 6. Recompute final loss diagnostics

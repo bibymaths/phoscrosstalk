@@ -547,6 +547,132 @@ def _train_with_optax_scan(*, loss_fn, params, neural_cfg):
     final_aux = tuple(jnp.asarray(x, dtype=jnp.float64) for x in logs_np[-1, 1:])
 
     return params, final_loss, final_aux, elapsed
+
+def _block_until_ready_tree(tree) -> None:
+    """Synchronise a JAX pytree."""
+    for leaf in jax.tree_util.tree_leaves(tree):
+        if hasattr(leaf, "block_until_ready"):
+            leaf.block_until_ready()
+    jax.effects_barrier()
+
+
+def _train_with_lbfgs_polish(*, loss_fn, params, neural_cfg):
+    """
+    Post-Optax L-BFGS polish stage using Optimistix.
+
+    Runs L-BFGS in chunks of `print_every` steps so progress is visible without
+    relying on Optimistix internal verbose callbacks.
+    """
+    polish_steps = int(getattr(neural_cfg, "lbfgs_steps", 0))
+    if polish_steps <= 0:
+        return params, None, None, 0.0, "lbfgs_skipped"
+
+    print_every = max(1, int(getattr(neural_cfg, "print_every", 1)))
+    chunk_steps = min(print_every, polish_steps)
+
+    rtol = float(getattr(neural_cfg, "lbfgs_rtol", 1e-8))
+    atol = float(getattr(neural_cfg, "lbfgs_atol", 1e-8))
+    history_length = int(getattr(neural_cfg, "lbfgs_history_length", 10))
+    use_inverse = bool(getattr(neural_cfg, "lbfgs_use_inverse", True))
+
+    solver = optx.LBFGS(
+        rtol=rtol,
+        atol=atol,
+        history_length=history_length,
+        use_inverse=use_inverse,
+    )
+
+    logger.info(
+        "[neural_ode] Starting Optimistix L-BFGS polish: steps=%d, "
+        "print_every=%d, rtol=%.2e, atol=%.2e, history_length=%d, use_inverse=%s",
+        polish_steps,
+        print_every,
+        rtol,
+        atol,
+        history_length,
+        use_inverse,
+    )
+
+    t0 = time.perf_counter()
+    done = 0
+    last_loss = None
+    last_aux = None
+    last_result = "lbfgs_not_started"
+
+    while done < polish_steps:
+        n_steps = min(chunk_steps, polish_steps - done)
+        chunk_t0 = time.perf_counter()
+
+        result = optx.minimise(
+            loss_fn,
+            solver,
+            params,
+            args=None,
+            has_aux=True,
+            max_steps=n_steps,
+            throw=False,
+        )
+
+        params = result.value
+        _block_until_ready_tree(params)
+
+        loss, aux = loss_fn(params, None)
+        loss.block_until_ready()
+
+        vals = _aux_to_floats(aux)
+        done += n_steps
+        chunk_dt = time.perf_counter() - chunk_t0
+        elapsed = time.perf_counter() - t0
+        avg_step_s = elapsed / max(1, done)
+        eta_s = avg_step_s * max(0, polish_steps - done)
+
+        _append_neural_loss_history(
+            loss=float(loss),
+            f_phospho=vals[0],
+            f_abund=vals[1],
+            f_mrna=vals[2],
+            f_k_prior=vals[3],
+            f_s_prior=vals[4],
+            f_theta_prior=vals[5],
+            f_traj_prior=vals[6],
+            force_print=False,
+            log_to_console=False,
+        )
+
+        logger.info(
+            "[neural_ode][lbfgs] step=%04d/%04d  "
+            "loss=%.4e  phospho=%.4e  abund=%.4e  mrna=%.4e  "
+            "k_prior=%.4e  s_prior=%.4e  theta_prior=%.4e  traj_prior=%.4e  "
+            "chunk_t=%.2fs  avg_step=%.2fs  elapsed=%.1fmin  eta=%.1fmin  result=%s",
+            done,
+            polish_steps,
+            float(loss),
+            vals[0],
+            vals[1],
+            vals[2],
+            vals[3],
+            vals[4],
+            vals[5],
+            vals[6],
+            chunk_dt,
+            avg_step_s,
+            elapsed / 60.0,
+            eta_s / 60.0,
+            str(result.result),
+        )
+
+        last_loss = loss
+        last_aux = aux
+        last_result = str(result.result)
+
+        if not np.isfinite(float(loss)):
+            logger.warning(
+                "[neural_ode][lbfgs] stopping polish early because loss is non-finite."
+            )
+            break
+
+    total_elapsed = time.perf_counter() - t0
+    return params, float(last_loss), last_aux, total_elapsed, last_result
 # ---------------------------------------------------------------------------
 # Neural loss function builders
 # ---------------------------------------------------------------------------
@@ -1744,7 +1870,7 @@ def run_neural_latent_rate_refinement(
         )
 
         if optax_loop == "scan":
-            params_opt, _train_loss, _train_aux, total_elapsed = _train_with_optax_scan(
+            params_opt, _train_loss, _train_aux, optax_elapsed = _train_with_optax_scan(
                 loss_fn=neural_loss_fn,
                 params=params,
                 neural_cfg=neural_cfg,
@@ -1752,12 +1878,37 @@ def run_neural_latent_rate_refinement(
             _optax_time_history: list[float] = []
             train_result_status = "optax_scan_complete"
         else:
-            params_opt, _train_loss, _train_aux, total_elapsed, _optax_time_history = _train_with_optax(
+            (
+                params_opt,
+                _train_loss,
+                _train_aux,
+                optax_elapsed,
+                _optax_time_history,
+            ) = _train_with_optax(
                 loss_fn=neural_loss_fn,
                 params=params,
                 neural_cfg=neural_cfg,
             )
             train_result_status = "optax_python_complete"
+
+        total_elapsed = optax_elapsed
+
+        if bool(getattr(neural_cfg, "lbfgs_polish", False)):
+            (
+                params_opt,
+                _lbfgs_loss,
+                _lbfgs_aux,
+                lbfgs_elapsed,
+                lbfgs_status,
+            ) = _train_with_lbfgs_polish(
+                loss_fn=neural_loss_fn,
+                params=params_opt,
+                neural_cfg=neural_cfg,
+            )
+
+            total_elapsed += lbfgs_elapsed
+            train_result_status = f"{train_result_status}+{lbfgs_status}"
+
     else:
         logger.info(
             "[neural_ode] Training with Optimistix GradientDescent for %d steps.",
@@ -1782,10 +1933,7 @@ def run_neural_latent_rate_refinement(
             max_steps=int(neural_cfg.steps),
             throw=False,
         )
-        for leaf in jax.tree_util.tree_leaves(train_result.value):
-            if hasattr(leaf, "block_until_ready"):
-                leaf.block_until_ready()
-        jax.effects_barrier()
+        _block_until_ready_tree(train_result.value)
         total_elapsed = time.perf_counter() - t_total
 
         params_opt = train_result.value
