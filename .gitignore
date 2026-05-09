@@ -2,6 +2,7 @@
 # PhosCrosstalk .gitignore
 # =============================================================================
 
+.pixi/envs/
 
 # -----------------------------------------------------------------------------
 # Python bytecode, interpreter caches, compiled artifacts
@@ -295,6 +296,7 @@ __marimo__/Write results folder path here.
 
 
 *.dispatch
+
 
 
 
