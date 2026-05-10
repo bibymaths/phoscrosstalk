@@ -1933,7 +1933,7 @@ def save_neural_ode_bundle(
         try:
             eqx.tree_serialise_leaves(model_path, neural_model)
             logger.info("[neural_ode] Saved %s", model_path)
-        except (OSError, IOError) as exc:
+        except OSError as exc:
             logger.warning(
                 "[neural_ode] Could not serialise neural model with eqx: %s", exc
             )
@@ -2001,7 +2001,7 @@ def load_neural_ode_bundle(
         try:
             neural_model = eqx.tree_deserialise_leaves(model_path, skeleton)
             logger.info("[neural_ode] Loaded neural model from %s", model_path)
-        except (OSError, IOError) as exc:
+        except OSError as exc:
             logger.warning(
                 "[neural_ode] Could not deserialise neural model: %s", exc
             )
@@ -2975,7 +2975,7 @@ def run_neural_latent_rate_refinement(
             K=K,
             learn_theta=learn_theta,
         )
-    except (OSError, IOError) as exc:
+    except OSError as exc:
         # Bundle save is best-effort; an I/O failure should not abort the run.
         logger.warning("[neural_ode] Could not save model bundle: %s", exc)
 

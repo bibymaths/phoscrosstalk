@@ -1086,7 +1086,7 @@ def main():
                 dims=dims,
             )
             logger.success("[pinn] PINN model bundle saved.")
-        except (OSError, IOError) as exc:
+        except OSError as exc:
             # Bundle save is best-effort; an I/O failure should not abort the run.
             logger.warning("[pinn] save_pinn_model_bundle failed: %s", exc)
 
