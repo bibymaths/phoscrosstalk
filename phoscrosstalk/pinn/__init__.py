@@ -25,6 +25,7 @@ make_combined_rhs(...)
 """
 
 from phoscrosstalk.pinn.model import PINNAugmentation
+from phoscrosstalk.pinn.outputs import load_pinn_model_bundle, save_pinn_model_bundle
 from phoscrosstalk.pinn.rhs import make_combined_rhs
 from phoscrosstalk.pinn.runner import run_pinn_pipeline
 
@@ -32,4 +33,6 @@ __all__ = [
     "PINNAugmentation",
     "make_combined_rhs",
     "run_pinn_pipeline",
+    "save_pinn_model_bundle",
+    "load_pinn_model_bundle",
 ]

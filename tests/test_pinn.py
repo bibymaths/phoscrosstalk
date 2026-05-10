@@ -639,3 +639,184 @@ class TestPINNRegression:
         assert cfg.neural_ode.width == 16
         assert cfg.neural_ode.steps == 1000
         assert cfg.pinn.enabled is False
+
+
+# ===========================================================================
+# 9. Model bundle save / load (round-trip)
+# ===========================================================================
+
+
+class TestPINNModelBundle:
+    """Tests for save_pinn_model_bundle / load_pinn_model_bundle round-trip."""
+
+    @pytest.fixture(autouse=True)
+    def _require_eqx(self):
+        pytest.importorskip("equinox", reason="equinox required for PINN bundle")
+        pytest.importorskip("jax",     reason="jax required for PINN bundle")
+
+    def _make_tiny_model(self, K=2, M=1, N=3):
+        import jax
+        from phoscrosstalk.pinn.model import PINNAugmentation
+
+        state_dim = 3 * K + M + N
+        return PINNAugmentation(
+            state_dim=state_dim,
+            width_size=4,
+            depth=1,
+            activation="tanh",
+            key=jax.random.PRNGKey(0),
+        )
+
+    def test_save_bundle_creates_required_files(self, tmp_path):
+        """save_pinn_model_bundle must create pinn_model.eqx, meta JSON, theta_opt.npy."""
+        from phoscrosstalk.pinn.outputs import save_pinn_model_bundle
+
+        K, M, N = 2, 1, 3
+        model = self._make_tiny_model(K, M, N)
+        theta = np.ones(10, dtype=np.float64)
+        cfg = _make_pinn_cfg(width_size=4, depth=1, activation="tanh")
+
+        bundle_dir = save_pinn_model_bundle(
+            str(tmp_path),
+            pinn_model=model,
+            theta_opt=theta,
+            pinn_cfg=cfg,
+            K=K, M=M, N=N,
+        )
+
+        assert os.path.isdir(bundle_dir)
+        assert os.path.isfile(os.path.join(bundle_dir, "pinn_model.eqx"))
+        assert os.path.isfile(os.path.join(bundle_dir, "pinn_bundle_meta.json"))
+        assert os.path.isfile(os.path.join(bundle_dir, "theta_opt.npy"))
+
+    def test_bundle_meta_contains_structural_fields(self, tmp_path):
+        """pinn_bundle_meta.json must contain state_dim, width_size, depth, activation, K, M, N."""
+        from phoscrosstalk.pinn.outputs import save_pinn_model_bundle
+
+        K, M, N = 2, 1, 3
+        model = self._make_tiny_model(K, M, N)
+        cfg = _make_pinn_cfg(width_size=4, depth=1, activation="relu")
+
+        bundle_dir = save_pinn_model_bundle(
+            str(tmp_path),
+            pinn_model=model,
+            theta_opt=np.zeros(5),
+            pinn_cfg=cfg,
+            K=K, M=M, N=N,
+        )
+
+        with open(os.path.join(bundle_dir, "pinn_bundle_meta.json")) as fh:
+            meta = json.load(fh)
+
+        assert meta["K"] == K
+        assert meta["M"] == M
+        assert meta["N"] == N
+        assert meta["state_dim"] == 3 * K + M + N
+        assert meta["width_size"] == 4
+        assert meta["depth"] == 1
+        assert meta["activation"] == "relu"
+        assert "output_clamp" in meta
+        assert meta["bundle_format_version"] == 1
+
+    def test_load_bundle_recovers_model_and_theta(self, tmp_path):
+        """load_pinn_model_bundle must return a working PINNAugmentation and theta_opt."""
+        import jax
+        import jax.numpy as jnp
+        from phoscrosstalk.pinn.outputs import save_pinn_model_bundle, load_pinn_model_bundle
+        from phoscrosstalk.pinn.model import PINNAugmentation
+
+        K, M, N = 2, 1, 3
+        state_dim = 3 * K + M + N
+        model_orig = self._make_tiny_model(K, M, N)
+        theta_orig = np.arange(10, dtype=np.float64)
+        cfg = _make_pinn_cfg(width_size=4, depth=1, activation="tanh")
+
+        bundle_dir = save_pinn_model_bundle(
+            str(tmp_path),
+            pinn_model=model_orig,
+            theta_opt=theta_orig,
+            pinn_cfg=cfg,
+            K=K, M=M, N=N,
+        )
+
+        pinn_loaded, theta_loaded, meta = load_pinn_model_bundle(bundle_dir)
+
+        # theta_opt round-trip
+        assert theta_loaded is not None
+        np.testing.assert_array_equal(theta_loaded, theta_orig)
+
+        # model should be a PINNAugmentation
+        assert isinstance(pinn_loaded, PINNAugmentation)
+
+        # Forward pass should produce the same output as the original model
+        x = jnp.ones(state_dim, dtype=jnp.float64)
+        t = jnp.asarray(5.0, dtype=jnp.float64)
+        out_orig   = model_orig(x, t)
+        out_loaded = pinn_loaded(x, t)
+        np.testing.assert_allclose(
+            np.asarray(out_orig), np.asarray(out_loaded), rtol=1e-6,
+            err_msg="Loaded model output differs from original",
+        )
+
+    def test_load_bundle_raises_on_missing_meta(self, tmp_path):
+        """load_pinn_model_bundle raises FileNotFoundError when meta JSON is absent."""
+        from phoscrosstalk.pinn.outputs import load_pinn_model_bundle
+
+        with pytest.raises(FileNotFoundError, match="pinn_bundle_meta.json"):
+            load_pinn_model_bundle(str(tmp_path))
+
+    def test_save_bundle_with_dims_object(self, tmp_path):
+        """save_pinn_model_bundle accepts a ModelDims object instead of K/M/N."""
+        from phoscrosstalk.pinn.outputs import save_pinn_model_bundle, load_pinn_model_bundle
+        from phoscrosstalk.config import ModelDims
+
+        K, M, N = 3, 2, 5
+        dims = ModelDims(K=K, M=M, N=N)
+        model = self._make_tiny_model(K, M, N)
+        cfg = _make_pinn_cfg(width_size=4, depth=1)
+
+        bundle_dir = save_pinn_model_bundle(
+            str(tmp_path),
+            pinn_model=model,
+            theta_opt=np.ones(15),
+            pinn_cfg=cfg,
+            dims=dims,
+        )
+
+        _, _, meta = load_pinn_model_bundle(bundle_dir)
+        assert meta["K"] == K
+        assert meta["M"] == M
+        assert meta["N"] == N
+        assert meta["state_dim"] == 3 * K + M + N
+
+    def test_save_bundle_integrated_via_save_pinn_outputs(self, tmp_path):
+        """save_pinn_outputs must call save_pinn_model_bundle internally."""
+        from phoscrosstalk.pinn.outputs import save_pinn_outputs
+
+        K, M, N, T = 2, 1, 3, 4
+        model = self._make_tiny_model(K, M, N)
+        theta = np.zeros(8, dtype=np.float64)
+        cfg = _make_pinn_cfg(width_size=4, depth=1)
+
+        save_pinn_outputs(
+            str(tmp_path),
+            theta_opt=theta,
+            pinn_model=model,
+            loss_components={"f1": 0.1, "f2": 0.05, "f3": 0.01, "f4": 0.0, "f_pinn_reg": 0.0},
+            ts=np.linspace(0, 10, T),
+            ys=np.zeros((T, 3 * K + M + N)),
+            K=K, M=M, N=N,
+            sites=[f"S{i}" for i in range(N)],
+            proteins=[f"P{i}" for i in range(K)],
+            kinases=[f"K{i}" for i in range(1)],
+            P_data=np.zeros((N, T)),
+            A_scaled=np.zeros((K, T)),
+            prot_idx_for_A=np.arange(K),
+            t=np.linspace(0, 10, T),
+            pinn_cfg=cfg,
+        )
+
+        bundle_dir = os.path.join(str(tmp_path), "pinn_bundle")
+        assert os.path.isdir(bundle_dir), "pinn_bundle/ should be created by save_pinn_outputs"
+        assert os.path.isfile(os.path.join(bundle_dir, "pinn_model.eqx"))
+        assert os.path.isfile(os.path.join(bundle_dir, "pinn_bundle_meta.json"))
