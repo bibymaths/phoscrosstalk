@@ -1762,7 +1762,6 @@ def save_neural_ode_plots(
             and s_prod_init_vals is not None
             and t_protein is not None
         ):
-            import jax  # noqa: PLC0415 – deferred to avoid top-level JAX import
             import jax.numpy as jnp_local  # noqa: PLC0415
 
             t_arr = np.asarray(t_protein)
@@ -1772,7 +1771,7 @@ def save_neural_ode_plots(
             s_hidden_all = []
             for ti_idx in range(T_obs):
                 t_norm = jnp_local.array(
-                    [t_arr[ti_idx] / max(t_max, 1e-8)], dtype=jnp_local.float64
+                    [t_arr[ti_idx] / t_max], dtype=jnp_local.float64
                 )
                 k_prior = jnp_local.asarray(
                     k_act_init_vals[:, ti_idx], dtype=jnp_local.float64
