@@ -343,11 +343,15 @@ __marimo__/Write results folder path here.
 
 
 
+
+
+
+
 # >>> auto-generated from config.toml [paths] >>>
 data_timeseries/input1.csv
 data_curated/processed/ptm_intra.db
 data_curated/processed/ptm_inter.db
-results_rand__EGFR_MET_ERBB2
+results_rand_EGFR_MET_ERBB2_jaxoptpgd
 data_timeseries/input3.csv
 data_subset/subnetwork_EGFR_MET_ERBB2/tf_mrna_subset.csv
 data_subset/subnetwork_EGFR_MET_ERBB2/kinase_sites_subset.tsv

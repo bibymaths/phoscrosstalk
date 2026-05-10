@@ -125,7 +125,7 @@
 data              = "data_timeseries/input1.csv"
 ptm_intra         = "data_curated/processed/ptm_intra.db"
 ptm_inter         = "data_curated/processed/ptm_inter.db"
-output_dir        = "results_rand__EGFR_MET_ERBB2"
+output_dir        = "results_rand_EGFR_MET_ERBB2_jaxoptpgd"
 
 crosstalk_tsv     = ""
 rna_data          = "data_timeseries/input3.csv"
@@ -176,7 +176,7 @@ weight_scheme           = "uniform"   # options: uniform, early_emphasis, early_
 
 receptors               = ["EGFR", "MET"]
 receptor_kinases        = ["EGFR", "ERBB2", "MET"]
-include_tfs_as_proteins = true
+include_tfs_as_proteins = false
 
 
 # =============================================================================
@@ -250,7 +250,7 @@ include_tfs_as_proteins = true
 #   These are not ODE tolerances.
 # =============================================================================
 [optimisation]
-n_starts      = 10
+n_starts      = 5
 max_steps     = 10000
 
 ls_solver     = "lm"         # options: "lm" | "gauss_newton" | "dogleg" | "indirect_lm"
@@ -258,7 +258,7 @@ ls_solver     = "lm"         # options: "lm" | "gauss_newton" | "dogleg" | "indi
 optx_adjoint  = "implicit"   # options: "implicit" | "checkpoint"
 jac_mode      = "bwd"        # options: "fwd" | "bwd"
 
-verbose       = true
+verbose       = false
 log_every     = 1          # log diagnostics every N steps for optax-style backends
 loss_type     = "mse"
 
@@ -270,7 +270,7 @@ atol          = 1e-6
 
 # Optimizer backend. Options: "optimistix" (default), "jaxopt_lbfgsb", "jaxopt_pgd",
 # "scipy_jax", "scipy_jax_pen", "optax_adam", "optax_sgd", "optax_lbfgs", "mpax".
-optimizer_backend = "jaxopt_lbfgsb"
+optimizer_backend = "jaxopt_pgd"
 
 # Optional TOML inline table of backend-specific keyword arguments.
 # Passed directly to the backend constructor.  Leave as empty table unless the
@@ -1006,9 +1006,9 @@ optax_loop              = "scan"
 print_every             = 250
 
 enabled                 = true
-width                   = 64
-depth                   = 2
-steps                   = 200
+width                   = 128
+depth                   = 4
+steps                   = 500
 learning_rate           = 1e-3
 learn_theta             = true
 
@@ -1025,8 +1025,8 @@ atol                    = 1e-6
 dt0                     = 0.02
 max_steps               = 4096
 
-save_dense              = false
-dense_n_points          = 100
+save_dense              = true
+dense_n_points          = 500
 
 
 # =============================================================================

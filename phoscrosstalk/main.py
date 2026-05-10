@@ -1245,6 +1245,7 @@ def main():
         k_act_fn=k_act_fn,
         s_prod_fn=s_prod_fn,
         R_data0=R_data0,
+        rna_data=rna_matrix,
         kinases=kinases,
         simulation_cfg=getattr(cfg, "simulation", None),
         data_interpolation_cfg=getattr(cfg, "data_interpolation", None),
@@ -1718,9 +1719,9 @@ def main():
         except Exception as _post_exc:
             raise RuntimeError(
                 "[posterior] Posterior inference failed. "
-                "Check log for details and verify blackjax/numpyro installation."
+                "Check the exception chain above; likely causes are non-finite log posterior, "
+                "ODE instability, shape mismatch in residuals, or invalid sampler config."
             ) from _post_exc
-
     logger.success("[*] Done.")
 
 

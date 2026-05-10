@@ -499,6 +499,7 @@ def save_fitted_simulation(
         k_act_fn=None,
         s_prod_fn=None,
         R_data0=None,
+        rna_data=None,
         kinases=None,
         simulation_cfg=None,
         data_interpolation_cfg=None,
@@ -556,6 +557,10 @@ def save_fitted_simulation(
         sim_full_override (bool | None): Override the default simulation mode
             (dense vs sparse) for PINN simulation. If None, the default mode is
             used.
+        R_data0 (np.ndarray | None): RNA initial condition/state used by the simulator.
+            This is not necessarily a full RNA time-series matrix.
+        rna_data (np.ndarray | None): Observed RNA time-series matrix for diagnostic
+            interpolation only. Expected shape is (n_genes, len(t_rna)).
 
     Returns:
         (None): Saves 'fitted_params.npz' and 'protein_fit_timeseries.tsv' to `outdir`.
@@ -720,45 +725,52 @@ def save_fitted_simulation(
                 logger.info(f"[data_interp]{msg}")
 
         # Separately build RNA interpolation using the RNA-specific time axis.
-        # This must NOT reuse t (phospho time axis) — t_rna may differ.
+        # This must NOT reuse t (phospho/protein time axis) — t_rna may differ.
+        #
+        # IMPORTANT:
+        #   R_data0 is simulation initial state / RNA state input.
+        #   rna_data is observed RNA time-series data for interpolation.
+        #   Do not use R_data0 here unless it has explicitly been passed as rna_data.
         _data_interp_R = None
         if _di_cfg is not None and getattr(_di_cfg, "enabled", False):
-            if R_data0 is not None and t_rna is not None:
+            if rna_data is not None and t_rna is not None:
                 from phoscrosstalk.derived_rates import build_data_interpolations as _bdi
 
                 _di_method = getattr(_di_cfg, "method", "linear")
                 _di_fwd = getattr(_di_cfg, "fill_forward_nans_at_end", False)
                 _di_start = getattr(_di_cfg, "replace_nans_at_start", None)
 
-                _rna_arr = np.asarray(R_data0, dtype=float)
+                _rna_arr = np.asarray(rna_data, dtype=float)
                 _t_rna_arr = np.asarray(t_rna, dtype=float)
 
-                # R_data0 may be a single RNA time series: shape (T_rna,).
-                # build_data_interpolations expects (n_genes, T_rna), so convert:
-                #     (T_rna,) -> (1, T_rna)
+                if _t_rna_arr.ndim != 1:
+                    raise ValueError(
+                        "[data_interp/rna] t_rna must be a 1-D time vector. "
+                        f"Got shape {_t_rna_arr.shape}."
+                    )
+
+                # Allow a single RNA trajectory only when it is truly time-indexed.
                 if _rna_arr.ndim == 1:
                     if _rna_arr.shape[0] != len(_t_rna_arr):
                         raise ValueError(
-                            f"[data_interp/rna] R_data0 appears to be an initial state "
-                            f"vector with length {_rna_arr.shape[0]} (K proteins), but "
+                            "[data_interp/rna] rna_data is 1-D but does not match t_rna. "
+                            f"rna_data length={_rna_arr.shape[0]}, "
                             f"len(t_rna)={len(_t_rna_arr)}. "
-                            "RNA data for interpolation must have shape (n_genes, len(t_rna)) "
-                            "or a 1-D time series of length len(t_rna). "
-                            "Do not pass the initial-state vector as the RNA time series."
+                            "Expected either (len(t_rna),) or (n_genes, len(t_rna))."
                         )
                     _rna_arr = _rna_arr.reshape(1, -1)
 
                 if _rna_arr.ndim != 2:
                     raise ValueError(
-                        f"[data_interp/rna] R_data0 must be 2-D (n_genes, T_rna) after "
-                        f"reshaping, got shape {_rna_arr.shape}."
+                        "[data_interp/rna] rna_data must be 2-D with shape "
+                        f"(n_genes, len(t_rna)). Got shape {_rna_arr.shape}."
                     )
 
                 if _rna_arr.shape[1] != len(_t_rna_arr):
                     raise ValueError(
-                        f"[data_interp/rna] R_data0.shape[1]={_rna_arr.shape[1]} does not "
-                        f"match len(t_rna)={len(_t_rna_arr)}. "
-                        "RNA time-series data and the RNA time axis must have the same length."
+                        "[data_interp/rna] RNA time-series axis mismatch. "
+                        f"rna_data.shape={_rna_arr.shape}, len(t_rna)={len(_t_rna_arr)}. "
+                        "Expected rna_data.shape[1] == len(t_rna)."
                     )
 
                 _rna_interp_result = _bdi(

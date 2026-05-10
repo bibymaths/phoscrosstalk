@@ -338,7 +338,114 @@ def plan_cpu_runtime(
         omp_threads=tpr,
     )
 
+def plan_posterior_runtime(
+        cpu_threads="auto",
+        num_chains="auto",
+        threads_per_chain="auto",
+        reserve_cores=0,
+        use_physical_cores=True,
+        default_threads_per_chain=4,
+) -> SimpleNamespace:
+    """
+    Calculate a CPU parallelism plan for posterior sampling.
 
+    Posterior sampling has two levels of parallelism:
+
+      1. Across independent MCMC chains.
+      2. Within each chain/log-posterior evaluation through JAX/XLA threads.
+
+    This helper avoids oversubscription by dividing the available CPU budget
+    between chains.
+
+    Parameters
+    ----------
+    cpu_threads : int | str
+        Total CPU budget. "auto" uses topology/environment detection.
+    num_chains : int | str
+        Number of parallel posterior chains. "auto" derives it from CPU budget.
+    threads_per_chain : int | str
+        Threads per chain. "auto" derives it from CPU budget.
+    reserve_cores : int
+        Cores to reserve for OS/parent process.
+    use_physical_cores : bool
+        Prefer physical cores when SLURM is not active.
+    default_threads_per_chain : int
+        Conservative default number of threads per chain.
+
+    Returns
+    -------
+    SimpleNamespace with fields:
+      topo
+      total_available_cpus
+      n_chains
+      threads_per_chain
+      xla_threads
+      blas_threads
+      omp_threads
+    """
+    topo = detect_cpu_topology()
+
+    if cpu_threads is not None and str(cpu_threads).lower() not in ("auto", "", "0"):
+        try:
+            budget = max(1, int(cpu_threads))
+        except (ValueError, TypeError):
+            budget = topo.total_available
+    else:
+        budget = topo.total_available
+
+    budget = max(1, budget - max(0, int(reserve_cores)))
+
+    if (
+        use_physical_cores
+        and topo.physical_cores is not None
+        and topo.slurm_cpus is None
+    ):
+        usable = min(budget, topo.physical_cores)
+    else:
+        usable = budget
+
+    usable = max(1, usable)
+
+    def _parse_int(val):
+        if val is not None and str(val).lower() not in ("auto", "", "0"):
+            try:
+                return max(1, int(val))
+            except (ValueError, TypeError):
+                return None
+        return None
+
+    n_chains_explicit = _parse_int(num_chains)
+    threads_explicit = _parse_int(threads_per_chain)
+
+    if n_chains_explicit is None and threads_explicit is None:
+        threads = min(default_threads_per_chain, usable)
+        n_chains = max(1, usable // threads)
+
+    elif n_chains_explicit is None:
+        threads = threads_explicit
+        n_chains = max(1, usable // threads)
+
+    elif threads_explicit is None:
+        n_chains = min(n_chains_explicit, usable)
+        threads = max(1, usable // n_chains)
+
+    else:
+        n_chains = n_chains_explicit
+        threads = threads_explicit
+
+    # Do not allocate more total worker threads than usable CPUs.
+    if n_chains * threads > usable:
+        threads = max(1, usable // n_chains)
+
+    return SimpleNamespace(
+        topo=topo,
+        total_available_cpus=budget,
+        n_chains=max(1, int(n_chains)),
+        threads_per_chain=max(1, int(threads)),
+        xla_threads=max(1, int(threads)),
+        blas_threads=max(1, int(threads)),
+        omp_threads=max(1, int(threads)),
+    )
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
