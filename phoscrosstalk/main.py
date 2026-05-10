@@ -1054,31 +1054,28 @@ def main():
             pinn_result.get("training_history", []),
         )
 
-        try:
-            save_pinn_outputs(
-                outdir=outdir,
-                theta_opt=theta_best,
-                pinn_model=_pinn_model,
-                loss_components=lc,
-                ts=np.asarray(_pinn_ts, dtype=float),
-                ys=_pinn_ys,
-                K=dims.K,
-                M=dims.M,
-                N=dims.N,
-                sites=sites,
-                proteins=proteins,
-                kinases=kinases,
-                P_data=P_scaled,
-                A_scaled=A_scaled,
-                prot_idx_for_A=prot_idx_for_A,
-                t=t,
-                run_mode="pinn",
-                pinn_cfg=_pinn_cfg,
-                dims=dims,
-            )
-            logger.success("[pinn] PINN output files saved.")
-        except Exception as exc:
-            logger.warning("[pinn] save_pinn_outputs failed: %s", exc)
+        save_pinn_outputs(
+            outdir=outdir,
+            theta_opt=theta_best,
+            pinn_model=_pinn_model,
+            loss_components=lc,
+            ts=np.asarray(_pinn_ts, dtype=float),
+            ys=_pinn_ys,
+            K=dims.K,
+            M=dims.M,
+            N=dims.N,
+            sites=sites,
+            proteins=proteins,
+            kinases=kinases,
+            P_data=P_scaled,
+            A_scaled=A_scaled,
+            prot_idx_for_A=prot_idx_for_A,
+            t=t,
+            run_mode="pinn",
+            pinn_cfg=_pinn_cfg,
+            dims=dims,
+        )
+        logger.success("[pinn] PINN output files saved.")
 
         try:
             save_pinn_model_bundle(
@@ -1089,28 +1086,26 @@ def main():
                 dims=dims,
             )
             logger.success("[pinn] PINN model bundle saved.")
-        except Exception as exc:
+        except OSError as exc:
+            # Bundle save is best-effort; an I/O failure should not abort the run.
             logger.warning("[pinn] save_pinn_model_bundle failed: %s", exc)
 
-        try:
-            save_pinn_plots(
-                outdir=os.path.join(outdir, "pinn_plots"),
-                pinn_residuals=_pinn_residuals,
-                ts=np.asarray(_pinn_ts, dtype=float) if _pinn_ts is not None else None,
-                ys=_pinn_ys,
-                t_obs=t,
-                P_data=P_scaled,
-                loss_history=_pinn_loss_history,
-                K=dims.K,
-                M=dims.M,
-                N=dims.N,
-                proteins=proteins,
-                kinases=kinases,
-                sites=sites,
-            )
-            logger.success("[pinn] PINN plots saved.")
-        except Exception as exc:
-            logger.warning("[pinn] save_pinn_plots failed: %s", exc)
+        save_pinn_plots(
+            outdir=os.path.join(outdir, "pinn_plots"),
+            pinn_residuals=_pinn_residuals,
+            ts=np.asarray(_pinn_ts, dtype=float) if _pinn_ts is not None else None,
+            ys=_pinn_ys,
+            t_obs=t,
+            P_data=P_scaled,
+            loss_history=_pinn_loss_history,
+            K=dims.K,
+            M=dims.M,
+            N=dims.N,
+            proteins=proteins,
+            kinases=kinases,
+            sites=sites,
+        )
+        logger.success("[pinn] PINN plots saved.")
 
         try:
             _pinn_bundle_dir = pathlib.Path(outdir) / "pinn_bundle"
@@ -1120,7 +1115,7 @@ def main():
                     output_dir=pathlib.Path(outdir) / "bundle_analysis" / "pinn",
                 )
                 logger.success("[bundle_analysis] PINN bundle analysis saved.")
-        except Exception as exc:
+        except (OSError, FileNotFoundError) as exc:
             logger.warning("[bundle_analysis] PINN bundle analysis failed: %s", exc)
 
         # ------------------------------------------------------------
@@ -1525,40 +1520,39 @@ def main():
         # ------------------------------------------------------------
         # Mechanistic reference simulation for neural-vs-mech residuals.
         # ------------------------------------------------------------
-        try:
-            _mech_full = problem.simulate_full(theta_best)
-        except Exception as exc:
-            logger.warning("[neural_ode] Mechanistic reference simulation failed: %s", exc)
-            _mech_full = {}
+        _mech_full = problem.simulate_full(theta_best)
 
         _mech_P_sim = _mech_full.get("P_sim", None)
         _mech_A_sim = _mech_full.get("A_sim", None)
         _mech_R_sim = _mech_full.get("R_sim_rna", _mech_full.get("R_sim", None))
         _mech_t = _mech_full.get("t", t)
 
+        # Determine the RNA time axis for mech_R_sim.
+        # R_sim_rna is on the RNA grid; use t_rna from the simulate_full result
+        # when present, otherwise fall back to the pipeline t_rna.
+        if _mech_full.get("R_sim_rna") is not None:
+            # simulate_full returned RNA-grid data; use its t_rna.
+            _mech_t_rna = _mech_full.get("t_rna", t_rna if rna_matrix is not None else None)
+        elif _mech_R_sim is not None and t_rna is not None and _mech_R_sim.shape[1] == len(t_rna):
+            # Fell back to R_sim (protein-grid key), but shape matches t_rna.
+            _mech_t_rna = t_rna
+        else:
+            _mech_t_rna = None
+
         # ------------------------------------------------------------
         # Evaluate original mechanistic k_act/s_prod priors on the neural grid.
         # ------------------------------------------------------------
-        try:
-            _ts_arr = np.asarray(_neural_ts, dtype=float)
+        _ts_arr = np.asarray(_neural_ts, dtype=float)
 
-            _k_act_init_vals = np.stack(
-                [np.asarray(k_act_fn(float(_tt)), dtype=float) for _tt in _ts_arr],
-                axis=1,
-            )
+        _k_act_init_vals = np.stack(
+            [np.asarray(k_act_fn(float(_tt)), dtype=float) for _tt in _ts_arr],
+            axis=1,
+        )
 
-            _s_prod_init_vals = np.stack(
-                [np.asarray(s_prod_fn(float(_tt)), dtype=float) for _tt in _ts_arr],
-                axis=1,
-            )
-
-        except Exception as exc:
-            logger.warning(
-                "[neural_ode] Could not evaluate mechanistic derived rates: %s",
-                exc,
-            )
-            _k_act_init_vals = None
-            _s_prod_init_vals = None
+        _s_prod_init_vals = np.stack(
+            [np.asarray(s_prod_fn(float(_tt)), dtype=float) for _tt in _ts_arr],
+            axis=1,
+        )
 
         def _first_existing_key(dct, keys):
             for key in keys:
@@ -1625,6 +1619,7 @@ def main():
             mech_A_sim=_mech_A_sim,
             mech_R_sim=_mech_R_sim,
             mech_t=_mech_t,
+            mech_t_rna=_mech_t_rna,
         )
 
         plot_neural_residuals(
@@ -1644,7 +1639,7 @@ def main():
                     output_dir=pathlib.Path(neural_outdir) / "bundle_analysis",
                 )
                 logger.success("[bundle_analysis] neuralODE bundle analysis saved.")
-        except Exception as exc:
+        except (OSError, FileNotFoundError) as exc:
             logger.warning("[bundle_analysis] neuralODE bundle analysis failed: %s", exc)
 
         logger.info("[*] Neural ODE visualisations saved to %s", neural_outdir)
@@ -1721,7 +1716,10 @@ def main():
                 "Install blackjax to enable MCMC posterior inference.", _post_err
             )
         except Exception as _post_exc:
-            logger.error("[posterior] Posterior inference failed: %s", _post_exc)
+            raise RuntimeError(
+                "[posterior] Posterior inference failed. "
+                "Check log for details and verify blackjax/numpyro installation."
+            ) from _post_exc
 
     logger.success("[*] Done.")
 
