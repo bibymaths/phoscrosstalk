@@ -2279,20 +2279,23 @@ def save_neural_ode_residuals(
     for s_idx, site in enumerate(sites):
         if s_idx >= P_sim.shape[0]:
             continue
-        y_neural = P_sim[s_idx]  # (T,)
+        y_neural = P_sim[s_idx]  # (T_neural,)
         y_obs = np.asarray(P_scaled[s_idx], dtype=float) if P_scaled is not None and s_idx < P_scaled.shape[0] else None
 
         for ti_idx, t_val in enumerate(ts_arr):
-            obs_val = float(y_obs[ti_idx]) if (y_obs is not None and ti_idx < len(y_obs)) else float("nan")
+            # Map neural time point to the nearest observed (t_prot) index.
+            ti_prot = int(np.argmin(np.abs(t_prot - t_val))) if len(t_prot) > 0 else ti_idx
+            obs_val = float(y_obs[ti_prot]) if (y_obs is not None and ti_prot < len(y_obs)) else float("nan")
             neural_val = float(y_neural[ti_idx])
             neural_resid = neural_val - obs_val if np.isfinite(obs_val) else float("nan")
 
-            # Mechanistic residual at the nearest time index
+            # Mechanistic residual at the nearest time index (reuse mech_ti below).
             mech_resid = float("nan")
+            mech_val_out = float("nan")
             if mech_P_sim is not None and s_idx < mech_P_sim.shape[0]:
                 mech_ti = int(np.argmin(np.abs(t_mech - t_val))) if len(t_mech) > 0 else 0
-                mech_val = float(mech_P_sim[s_idx, mech_ti])
-                mech_resid = mech_val - obs_val if np.isfinite(obs_val) else float("nan")
+                mech_val_out = float(mech_P_sim[s_idx, mech_ti])
+                mech_resid = mech_val_out - obs_val if np.isfinite(obs_val) else float("nan")
 
             rows.append({
                 "entity_type": "phosphosite",
@@ -2302,7 +2305,7 @@ def save_neural_ode_residuals(
                 "value_observed": obs_val,
                 "value_neural": neural_val,
                 "residual_neural": neural_resid,
-                "value_mechanistic": float(mech_P_sim[s_idx, int(np.argmin(np.abs(t_mech - t_val)))]) if (mech_P_sim is not None and s_idx < mech_P_sim.shape[0]) else float("nan"),
+                "value_mechanistic": mech_val_out,
                 "residual_mechanistic": mech_resid,
             })
 
@@ -2315,7 +2318,9 @@ def save_neural_ode_residuals(
         y_obs = np.asarray(A_scaled[obs_k], dtype=float) if (obs_k is not None and A_scaled is not None) else None
 
         for ti_idx, t_val in enumerate(ts_arr):
-            obs_val = float(y_obs[ti_idx]) if (y_obs is not None and ti_idx < len(y_obs)) else float("nan")
+            # Map neural time point to the nearest observed (t_prot) index.
+            ti_prot = int(np.argmin(np.abs(t_prot - t_val))) if len(t_prot) > 0 else ti_idx
+            obs_val = float(y_obs[ti_prot]) if (y_obs is not None and ti_prot < len(y_obs)) else float("nan")
             neural_val = float(y_neural[ti_idx])
             neural_resid = neural_val - obs_val if np.isfinite(obs_val) else float("nan")
 
@@ -2338,7 +2343,10 @@ def save_neural_ode_residuals(
                 "residual_mechanistic": mech_resid,
             })
 
-    # mRNA residuals
+    # mRNA residuals — populate value_neural / residual_neural from R_sim when available.
+    R_sim_ys = ys.get("R_sim") if ys is not None else None
+    R_sim_arr = np.asarray(R_sim_ys) if R_sim_ys is not None else None
+
     if t_rna_arr is not None:
         for p_idx, prot in enumerate(proteins):
             rna_k = prot_to_rna_k.get(p_idx)
@@ -2348,6 +2356,14 @@ def save_neural_ode_residuals(
 
             for ti_idx, t_val in enumerate(t_rna_arr):
                 obs_val = float(y_obs_rna[ti_idx]) if ti_idx < len(y_obs_rna) else float("nan")
+
+                # Neural mRNA from R_sim (shape K × T_rna when available).
+                if R_sim_arr is not None and p_idx < R_sim_arr.shape[0] and ti_idx < R_sim_arr.shape[1]:
+                    neural_rna_val = float(R_sim_arr[p_idx, ti_idx])
+                    neural_rna_resid = neural_rna_val - obs_val if np.isfinite(obs_val) else float("nan")
+                else:
+                    neural_rna_val = float("nan")
+                    neural_rna_resid = float("nan")
 
                 mech_val_out = float("nan")
                 mech_resid = float("nan")
@@ -2363,8 +2379,8 @@ def save_neural_ode_residuals(
                     "protein": prot,
                     "time": float(t_val),
                     "value_observed": obs_val,
-                    "value_neural": float("nan"),  # neural mRNA not available at t_rna in this scope
-                    "residual_neural": float("nan"),
+                    "value_neural": neural_rna_val,
+                    "residual_neural": neural_rna_resid,
                     "value_mechanistic": mech_val_out,
                     "residual_mechanistic": mech_resid,
                 })

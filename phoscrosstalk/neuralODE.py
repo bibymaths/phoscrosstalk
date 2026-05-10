@@ -1355,8 +1355,9 @@ def _save_neural_per_protein_plots(
     * **Protein abundance / A(t)** – observed vs neural-model trajectory.
     * **Phosphosites** – observed vs neural-model trajectory for all sites of the protein.
 
-    A bottom info strip shows the mechanistic vs neural k_act and s_prod priors when
-    those arrays are provided.
+    When *k_act_init_vals*/*k_hats_obs* (or *s_prod_init_vals*/*s_hats_obs*) are
+    provided, a bottom row of axes is added showing the mechanistic prior vs the
+    neural-learned k_act and s_prod for the protein.
 
     Args:
         outdir: Directory to write PNG files.
@@ -1383,12 +1384,29 @@ def _save_neural_per_protein_plots(
     t_prot = np.asarray(t_protein) if t_protein is not None else ts_arr
     P_sim = np.asarray(ys.get("P_sim", np.empty((0, len(ts_arr)))))
     A_sim = np.asarray(ys.get("A_sim", np.empty((0, len(ts_arr)))))
+    R_sim = np.asarray(ys["R_sim"]) if "R_sim" in ys else None
+
+    # Determine t-axis for neural mRNA: use t_rna when available, else ts.
+    t_rna_arr = np.asarray(t_rna) if (t_rna is not None and len(t_rna) > 0) else None
+    t_rna_neural = t_rna_arr if t_rna_arr is not None else ts_arr
+
+    # Determine whether k_act / s_prod bottom strip is available.
+    has_rate_strip = (
+        k_act_init_vals is not None and k_hats_obs is not None
+        or s_prod_init_vals is not None and s_hats_obs is not None
+    )
+    # Determine time axis for rate strip: use t_rna for k_act, t_prot for s_prod.
+    t_kact_strip = t_rna_arr if t_rna_arr is not None else t_prot
+    t_sprod_strip = t_prot
 
     # Build site-to-protein mapping.
     site_to_prot = {}
     for s_name in (sites or []):
         parts = s_name.split("_", 1)
         site_to_prot[s_name] = parts[0]
+
+    # Precompute site → index lookup to avoid O(N) list.index() calls.
+    site_to_index: dict[str, int] = {s: i for i, s in enumerate(sites or [])}
 
     # Build protein → observed abundance row index mapping.
     prot_to_obs_k = {}
@@ -1408,36 +1426,43 @@ def _save_neural_per_protein_plots(
         and len(t_rna) > 0
         and len(prot_to_rna_k) > 0
     )
-    t_rna_arr = np.asarray(t_rna) if (t_rna is not None and len(t_rna) > 0) else None
 
     cmap10 = _plt.cm.tab10
 
     for p_idx, prot in enumerate(proteins):
         prot_sites = [s for s in (sites or []) if site_to_prot.get(s) == prot]
         has_rna_for_prot = has_rna_global and (p_idx in prot_to_rna_k)
-        n_panels = (1 if has_rna_for_prot else 0) + 2  # mRNA + abundance + phospho
+        n_top_panels = (1 if has_rna_for_prot else 0) + 2  # mRNA + abundance + phospho
+
+        # Determine grid: top row + optional bottom strip for rates.
+        n_rows = 2 if has_rate_strip else 1
+        n_cols = n_top_panels
+        height_ratios = [4, 1.5] if has_rate_strip else [4]
         color = cmap10(p_idx % 10)
 
-        fig, axes = _plt.subplots(
-            1, n_panels,
-            figsize=(9 * n_panels, 7),
-            gridspec_kw={"wspace": 0.15},
+        fig, axes_grid = _plt.subplots(
+            n_rows, n_cols,
+            figsize=(9 * n_cols, 7 * n_rows),
+            gridspec_kw={"wspace": 0.15, "height_ratios": height_ratios},
             constrained_layout=True,
+            squeeze=False,
         )
-        if n_panels == 1:
-            axes = [axes]
-        else:
-            axes = list(axes)
-
+        top_axes = list(axes_grid[0])
         panel_idx = 0
 
         # --- mRNA panel ---
         if has_rna_for_prot:
-            ax_rna = axes[panel_idx]
+            ax_rna = top_axes[panel_idx]
             panel_idx += 1
             rna_k = prot_to_rna_k[p_idx]
             y_obs_rna = np.asarray(rna_obs_matched[rna_k], dtype=float)
             ax_rna.scatter(t_rna_arr, y_obs_rna, s=50, color=color, zorder=5, label="mRNA (obs)")
+            # Overlay neural R_sim trajectory when available.
+            if R_sim is not None and p_idx < R_sim.shape[0]:
+                ax_rna.plot(
+                    t_rna_neural, R_sim[p_idx],
+                    "-", lw=2.5, color=color, alpha=0.85, label="mRNA (neural)",
+                )
             ax_rna.set_title("mRNA / R(t)", fontsize=12, fontweight="bold")
             ax_rna.set_xlabel("Time (min)")
             ax_rna.set_ylabel("mRNA fold-change / R(t)")
@@ -1445,7 +1470,7 @@ def _save_neural_per_protein_plots(
             ax_rna.grid(alpha=0.25)
 
         # --- Protein abundance panel ---
-        ax_prot = axes[panel_idx]
+        ax_prot = top_axes[panel_idx]
         panel_idx += 1
         if p_idx < A_sim.shape[0]:
             ax_prot.plot(ts_arr, A_sim[p_idx], "-", lw=3, color=color, label="Abundance (neural)")
@@ -1469,15 +1494,12 @@ def _save_neural_per_protein_plots(
         ax_prot.grid(alpha=0.25)
 
         # --- Phosphosites panel ---
-        ax_sites = axes[panel_idx]
+        ax_sites = top_axes[panel_idx]
         cmap20 = _plt.cm.tab20
         if prot_sites and P_sim.shape[0] > 0:
             for si, site in enumerate(prot_sites):
-                try:
-                    s_idx = (sites or []).index(site)
-                except ValueError:
-                    continue
-                if s_idx >= P_sim.shape[0]:
+                s_idx = site_to_index.get(site, -1)
+                if s_idx < 0 or s_idx >= P_sim.shape[0]:
                     continue
                 c = cmap20(si % 20)
                 residue = site.split("_", 1)[1] if "_" in site else site
@@ -1503,6 +1525,40 @@ def _save_neural_per_protein_plots(
         ax_sites.legend(fontsize=8, loc="upper left", bbox_to_anchor=(1.02, 1.0),
                         borderaxespad=0.0, frameon=True)
         ax_sites.grid(alpha=0.25)
+
+        # --- Bottom strip: mechanistic vs neural rate priors ---
+        if has_rate_strip:
+            bot_axes = list(axes_grid[1])
+            # k_act strip in first available bottom axis.
+            ax_kact = bot_axes[0]
+            if k_act_init_vals is not None and p_idx < k_act_init_vals.shape[0]:
+                ax_kact.plot(t_kact_strip, k_act_init_vals[p_idx], "--",
+                             lw=1.5, color="steelblue", alpha=0.8, label="k_act (mech)")
+            if k_hats_obs is not None and p_idx < k_hats_obs.shape[1]:
+                ax_kact.plot(t_kact_strip, k_hats_obs[:, p_idx],
+                             "-", lw=2, color="steelblue", label="k_act (neural)")
+            ax_kact.set_title("k_act priors", fontsize=10)
+            ax_kact.set_xlabel("Time")
+            ax_kact.legend(fontsize=7)
+            ax_kact.grid(alpha=0.2)
+
+            # s_prod strip in second bottom axis (if present).
+            if len(bot_axes) > 1:
+                ax_sprod = bot_axes[1]
+                if s_prod_init_vals is not None and p_idx < s_prod_init_vals.shape[0]:
+                    ax_sprod.plot(t_sprod_strip, s_prod_init_vals[p_idx], "--",
+                                  lw=1.5, color="tomato", alpha=0.8, label="s_prod (mech)")
+                if s_hats_obs is not None and p_idx < s_hats_obs.shape[1]:
+                    ax_sprod.plot(t_sprod_strip, s_hats_obs[:, p_idx],
+                                  "-", lw=2, color="tomato", label="s_prod (neural)")
+                ax_sprod.set_title("s_prod priors", fontsize=10)
+                ax_sprod.set_xlabel("Time")
+                ax_sprod.legend(fontsize=7)
+                ax_sprod.grid(alpha=0.2)
+
+            # Hide remaining empty bottom axes.
+            for ax_b in bot_axes[2:]:
+                ax_b.set_visible(False)
 
         fig.suptitle(f"{prot} — Neural ODE fit", fontsize=14, fontweight="bold", y=1.01)
         _path = os.path.join(outdir, f"neural_fit_{prot}.png")
@@ -2257,7 +2313,6 @@ def run_neural_latent_rate_refinement(
             k_act_fn, s_prod_fn, t_kact
         )
         # Evaluate neural model at t_rna grid.
-        t_max_j_kact = jnp.asarray(t_max, dtype=jnp.float64)
         t_norms_rna = np.clip(t_kact / t_max, 0.0, 1.0)[:, None]
         k_priors_rna = k_act_mech_rna.T  # (T_rna, K)
         # s_prod priors at t_rna for features (needed by the NN but not saved).

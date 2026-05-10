@@ -149,16 +149,26 @@ def make_log_posterior_fn(
     import jax  # noqa: PLC0415
     import jax.numpy as jnp  # noqa: PLC0415
 
+    _eps = jnp.asarray(1e-8, dtype=jnp.float64)
+
     xl = jnp.asarray(theta_lower, dtype=jnp.float64)
     xu = jnp.asarray(theta_upper, dtype=jnp.float64)
     mu = jnp.asarray(
         theta_prior_mean if theta_prior_mean is not None else 0.5 * (xl + xu),
         dtype=jnp.float64,
     )
-    sigma_p = jnp.asarray(
+    sigma_p_raw = jnp.asarray(
         theta_prior_std if theta_prior_std is not None else (xu - xl) / 4.0,
         dtype=jnp.float64,
     )
+    # Clamp prior std to avoid division by zero when lower == upper.
+    sigma_p = jnp.maximum(sigma_p_raw, _eps)
+
+    if sigma_noise <= 0:
+        raise ValueError(
+            f"sigma_noise must be > 0 (got {sigma_noise!r}).  "
+            "A zero or negative observation noise produces a degenerate log-posterior."
+        )
     sigma_n = jnp.asarray(sigma_noise, dtype=jnp.float64)
 
     def log_posterior_fn(theta: jax.Array) -> jax.Array:
@@ -189,7 +199,6 @@ def run_posterior_inference(
     theta_best: np.ndarray,
     log_posterior_fn: Callable,
     posterior_cfg=None,
-    proteins: list[str] | None = None,
     theta_names: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run NUTS posterior inference and save results.
@@ -211,7 +220,6 @@ def run_posterior_inference(
                            supply a custom function.
         posterior_cfg:     Optional config ``SimpleNamespace``; merged with
                            defaults from :func:`_default_posterior_cfg`.
-        proteins:          Optional list of protein names (for output labels).
         theta_names:       Optional list of parameter names ``(dim,)``.  When
                            absent, uses ``"theta_0", "theta_1", ...``.
 
@@ -291,6 +299,7 @@ def run_posterior_inference(
         log_posterior_fn,
         adapted_step_size,
         inverse_mass_matrix,
+        max_num_doublings=int(getattr(cfg, "max_tree_depth", 10)),
     )
 
     state = nuts_kernel.init(warmup_state.position)
@@ -418,7 +427,7 @@ def posterior_predict(
     t_eval: np.ndarray,
     thin_factor: int = 1,
     credible_intervals: tuple[float, float] = (2.5, 97.5),
-) -> dict[str, np.ndarray]:
+) -> dict[str, dict[str, np.ndarray]]:
     """Draw posterior-predictive trajectories.
 
     For each (thinned) sample, calls *simulate_fn(theta)* and stacks the
@@ -429,18 +438,23 @@ def posterior_predict(
         samples:            Posterior samples ``(n_samples, dim)``.
         simulate_fn:        ``theta → dict`` with at least ``"P_sim"``,
                             ``"A_sim"`` arrays.  May return any keys.
-        t_eval:             Time points used in *simulate_fn*.
+        t_eval:             Time points used in *simulate_fn*.  Stored in the
+                            returned dict under ``"t_eval"`` for downstream
+                            plotting.
         thin_factor:        Sub-sample every *thin_factor*-th sample to reduce
                             computation.
         credible_intervals: (lower, upper) percentile bounds (default 2.5/97.5).
 
     Returns:
-        dict: Keys per simulated quantity (``"P_sim"``, ``"A_sim"``, etc.):
+        dict[str, dict]: Keys per simulated quantity (``"P_sim"``, ``"A_sim"``, etc.):
 
-        * ``"mean"``   – ``(entity, time)`` mean across samples.
-        * ``"lower"``  – ``(entity, time)`` lower CI.
-        * ``"upper"``  – ``(entity, time)`` upper CI.
+        * ``"mean"``    – ``(entity, time)`` mean across samples.
+        * ``"lower"``   – ``(entity, time)`` lower CI.
+        * ``"upper"``   – ``(entity, time)`` upper CI.
         * ``"samples"`` – ``(n_used, entity, time)`` all trajectories.
+
+        Additionally, the top-level key ``"t_eval"`` stores the *t_eval*
+        array for use in downstream plotting.
     """
     thin = max(1, int(thin_factor))
     use_samples = samples[::thin]
@@ -467,6 +481,9 @@ def posterior_predict(
             "upper": np.percentile(stack, hi, axis=0),
             "samples": stack,
         }
+
+    # Store the evaluation time axis for downstream plotting.
+    output["t_eval"] = np.asarray(t_eval)  # type: ignore[assignment]
 
     return output
 

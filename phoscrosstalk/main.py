@@ -1435,19 +1435,23 @@ def main():
                 run_posterior_inference,
                 make_log_posterior_fn,
             )
-            import jax.numpy as jnp  # noqa: PLC0415
 
             logger.header("[*] Running MCMC posterior inference (NUTS / BlackJax)")
+
+            # Precompute A0 once in Python so the JAX-traced residuals closure
+            # does not rebuild it on every log-posterior call (build_full_A0 is
+            # a NumPy/Python routine; calling it inside jax.jit breaks tracing).
+            from phoscrosstalk.simulation import simulate as _post_sim  # noqa: PLC0415
+            from phoscrosstalk.optimization import build_full_A0 as _bfa0  # noqa: PLC0415
+            _A0_post = _bfa0(dims.K, len(t), A_scaled, prot_idx_for_A)
 
             # Build a JAX-traceable residuals function using the mechanistic
             # simulation.  The residuals are (P_sim - P_scaled) flattened,
             # which is consistent with the mechanistic loss used in optimisation.
             def _mech_residuals_fn(theta):
-                from phoscrosstalk.simulation import simulate as _sim  # noqa: PLC0415
-                from phoscrosstalk.optimization import build_full_A0 as _bfa0  # noqa: PLC0415
-                A0 = _bfa0(dims.K, len(t), A_scaled, prot_idx_for_A)
-                P_sim_post, *_ = _sim(
-                    t, P_scaled, A0, theta,
+                import jax.numpy as jnp  # noqa: PLC0415
+                P_sim_post, *_ = _post_sim(
+                    t, P_scaled, _A0_post, theta,
                     problem.Cg, problem.Cl, problem.site_prot_idx,
                     problem.K_site_kin, problem.R, problem.L_alpha,
                     problem.kin_to_prot_idx, problem.receptor_mask_prot,
@@ -1474,7 +1478,6 @@ def main():
                 theta_best=theta_best,
                 log_posterior_fn=_log_post_fn,
                 posterior_cfg=_posterior_cfg,
-                proteins=proteins,
                 theta_names=_theta_names,
             )
             logger.success("[*] Posterior inference complete. Results in %s/posterior", outdir)

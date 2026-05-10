@@ -228,7 +228,7 @@ class TestSaveNeuralOdePlotsExtended:
         pytest.importorskip("diffrax", reason="diffrax required for neuralODE")
 
     def test_accepts_proteins_and_sites_without_error(self, tmp_path):
-        """Extended call with proteins/sites should not raise."""
+        """Extended call with proteins/sites should create per-protein PNGs."""
         from phoscrosstalk.neuralODE import save_neural_ode_plots
 
         K, N, T = 2, 3, 6
@@ -240,22 +240,23 @@ class TestSaveNeuralOdePlotsExtended:
         A_scaled = np.random.default_rng(1).random((K, T))
         prot_idx_for_A = np.arange(K)
 
-        # Should not raise even when diffrax is not available; per-protein
-        # plots are best-effort.
-        try:
-            save_neural_ode_plots(
-                str(tmp_path), ts, ys, None, [1.0, 0.5], [],
-                proteins=proteins,
-                sites=sites,
-                P_scaled=P_scaled,
-                A_scaled=A_scaled,
-                prot_idx_for_A=prot_idx_for_A,
-                t_protein=ts,
+        save_neural_ode_plots(
+            str(tmp_path), ts, ys, None, [1.0, 0.5], [],
+            proteins=proteins,
+            sites=sites,
+            P_scaled=P_scaled,
+            A_scaled=A_scaled,
+            prot_idx_for_A=prot_idx_for_A,
+            t_protein=ts,
+        )
+
+        # The training loss PNG should always be written (empty loss_history → no file,
+        # but a non-empty one → file created).  More importantly per-protein PNGs
+        # should be created when proteins are passed.
+        for prot in proteins:
+            assert (tmp_path / f"neural_fit_{prot}.png").exists(), (
+                f"Per-protein PNG for {prot} was not created"
             )
-        except Exception:
-            # The function may fail during the diffrax-dependent ODE solve;
-            # what matters is that it doesn't fail due to our new parameters.
-            pass
 
     def test_backward_compat_no_extra_params(self, tmp_path):
         """Old call-style (no proteins/sites) should still work."""
@@ -752,3 +753,181 @@ class TestPosteriorModule:
         assert cfg.posterior.num_samples == 1000
         assert cfg.posterior.seed == 42
         assert cfg.posterior.sigma_noise == pytest.approx(0.1)
+
+    def test_make_log_posterior_fn_raises_on_zero_sigma(self):
+        """make_log_posterior_fn should raise ValueError when sigma_noise=0."""
+        from phoscrosstalk.posterior import make_log_posterior_fn
+
+        def residuals(theta):
+            import jax.numpy as jnp
+            return jnp.zeros_like(theta)
+
+        with pytest.raises(ValueError, match="sigma_noise must be > 0"):
+            make_log_posterior_fn(
+                residuals_fn=residuals,
+                theta_lower=np.zeros(3),
+                theta_upper=np.ones(3),
+                sigma_noise=0.0,
+            )
+
+    def test_posterior_predict_stores_t_eval(self):
+        """posterior_predict should store t_eval in the returned dict."""
+        from phoscrosstalk.posterior import posterior_predict
+
+        T = 5
+        t_eval = np.linspace(0, 60, T)
+        samples = np.random.default_rng(42).random((5, 2))
+
+        def simulate_fn(theta):
+            return {"A_sim": np.ones((2, T))}
+
+        result = posterior_predict(samples=samples, simulate_fn=simulate_fn, t_eval=t_eval)
+        assert "t_eval" in result, "t_eval must be stored in posterior_predict output"
+        np.testing.assert_array_equal(result["t_eval"], t_eval)
+
+    def test_run_posterior_inference_no_proteins_param(self):
+        """run_posterior_inference should not accept 'proteins' anymore."""
+        import inspect
+        from phoscrosstalk.posterior import run_posterior_inference
+
+        sig = inspect.signature(run_posterior_inference)
+        assert "proteins" not in sig.parameters, (
+            "'proteins' should have been removed from run_posterior_inference signature"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 9. Tests that exercise real production code paths for abundance & mRNA rows
+# ---------------------------------------------------------------------------
+
+class TestRealProductionCodePaths:
+    """Tests using save_neural_ode_residuals to verify real code paths."""
+
+    @pytest.fixture(autouse=True)
+    def _skip_if_no_diffrax(self):
+        pytest.importorskip("diffrax", reason="diffrax required for analysis")
+
+    def test_abundance_value_observed_from_real_A_scaled(self, tmp_path):
+        """save_neural_ode_residuals must populate value_observed from A_scaled
+        for proteins in prot_idx_for_A — exercises the real indexing code path.
+        """
+        from phoscrosstalk.analysis import save_neural_ode_residuals
+
+        K, N, T = 3, 2, 5
+        ts = np.linspace(0, 60, T)
+        t_prot = ts.copy()
+        rng = np.random.default_rng(20)
+
+        # Only proteins 0 and 2 have abundance data.
+        prot_idx_for_A = np.array([0, 2])
+        A_scaled = rng.uniform(0.1, 2.0, (2, T))  # fully finite
+
+        proteins = [f"P{i}" for i in range(K)]
+        sites = [f"P0_S0", f"P1_S1"]
+        ys = {
+            "P_sim": rng.random((N, T)),
+            "A_sim": rng.random((K, T)),
+        }
+
+        save_neural_ode_residuals(
+            str(tmp_path),
+            ts=ts,
+            ys=ys,
+            proteins=proteins,
+            sites=sites,
+            A_scaled=A_scaled,
+            prot_idx_for_A=prot_idx_for_A,
+            t_protein=t_prot,
+        )
+
+        df = pd.read_csv(tmp_path / "neural_residuals.tsv", sep="\t")
+        df_abund = df[df["entity_type"] == "abundance"]
+
+        # Proteins 0 and 2 must have finite value_observed.
+        for prot_name in ["P0", "P2"]:
+            sub = df_abund[df_abund["entity"] == prot_name]
+            assert sub["value_observed"].notna().all(), (
+                f"{prot_name} (in prot_idx_for_A) should have finite value_observed"
+            )
+
+        # Protein 1 must have NaN value_observed.
+        sub1 = df_abund[df_abund["entity"] == "P1"]
+        assert sub1["value_observed"].isna().all(), (
+            "P1 not in prot_idx_for_A should have NaN value_observed"
+        )
+
+    def test_mrna_neural_values_populated_from_R_sim(self, tmp_path):
+        """save_neural_ode_residuals must populate value_neural from R_sim
+        when ys contains 'R_sim' — exercises the real code path.
+        """
+        from phoscrosstalk.analysis import save_neural_ode_residuals
+
+        K, N, T, T_rna = 2, 2, 4, 5
+        ts = np.linspace(0, 60, T)
+        t_rna = np.linspace(0, 60, T_rna)
+        rng = np.random.default_rng(21)
+
+        # R_sim matches t_rna grid (K × T_rna).
+        R_sim_expected = rng.uniform(0.5, 1.5, (K, T_rna))
+        ys = {
+            "P_sim": rng.random((N, T)),
+            "A_sim": rng.random((K, T)),
+            "R_sim": R_sim_expected,
+        }
+        rna_obs = rng.random((K, T_rna))
+        rna_idx = np.arange(K)
+        proteins = [f"Q{i}" for i in range(K)]
+        sites = [f"Q{i % K}_R{i}" for i in range(N)]
+
+        save_neural_ode_residuals(
+            str(tmp_path),
+            ts=ts,
+            ys=ys,
+            proteins=proteins,
+            sites=sites,
+            t_rna=t_rna,
+            rna_obs_matched=rna_obs,
+            rna_model_prot_idx=rna_idx,
+        )
+
+        df = pd.read_csv(tmp_path / "neural_residuals.tsv", sep="\t")
+        df_mrna = df[df["entity_type"] == "mrna"]
+        assert len(df_mrna) > 0, "mRNA rows should be present"
+        # value_neural must be finite (populated from R_sim).
+        assert df_mrna["value_neural"].notna().all(), (
+            "value_neural should be finite for mRNA rows when R_sim is in ys"
+        )
+        # value_observed must also be finite.
+        assert df_mrna["value_observed"].notna().all()
+        # residual_neural must be finite.
+        assert df_mrna["residual_neural"].notna().all()
+
+    def test_ts_vs_t_protein_mismatch_uses_nearest_index(self, tmp_path):
+        """When ts and t_protein grids differ, observed values should be
+        looked up via nearest-index mapping rather than direct indexing.
+        """
+        from phoscrosstalk.analysis import save_neural_ode_residuals
+
+        N, T_neural, T_prot = 1, 3, 5
+        ts = np.array([0.0, 30.0, 60.0])  # neural time axis (3 pts)
+        t_prot = np.linspace(0, 60, T_prot)  # observed time axis (5 pts)
+        # Known observed values at t_prot.
+        P_scaled = np.array([[0.1, 0.2, 0.3, 0.4, 0.5]])  # (1, 5)
+        ys = {"P_sim": np.array([[1.1, 1.3, 1.5]])}  # (1, 3) — neural
+
+        save_neural_ode_residuals(
+            str(tmp_path),
+            ts=ts,
+            ys=ys,
+            proteins=["X"],
+            sites=["X_S1"],
+            P_scaled=P_scaled,
+            t_protein=t_prot,
+        )
+
+        df = pd.read_csv(tmp_path / "neural_residuals.tsv", sep="\t")
+        df_p = df[df["entity_type"] == "phosphosite"]
+        # All value_observed should be finite (nearest-index lookup worked).
+        assert df_p["value_observed"].notna().all(), (
+            "value_observed should be finite when ts and t_protein differ"
+        )
