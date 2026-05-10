@@ -513,3 +513,159 @@ def test_training_losses_tsv_columns(tmp_path):
     assert required_cols.issubset(set(df.columns)), (
         f"Missing columns: {required_cols - set(df.columns)}"
     )
+
+
+# ===========================================================================
+# neuralODE model bundle save / load (round-trip)
+# ===========================================================================
+
+
+class TestNeuralODEModelBundle:
+    """Tests for save_neural_ode_bundle / load_neural_ode_bundle round-trip."""
+
+    @pytest.fixture(autouse=True)
+    def _require_eqx(self):
+        pytest.importorskip("equinox", reason="equinox required for bundle tests")
+        pytest.importorskip("jax",     reason="jax required for bundle tests")
+
+    def _make_tiny_model(self, K=3):
+        import jax
+        from phoscrosstalk.neuralODE import NeuralRateGenerator
+        return NeuralRateGenerator(K=K, width=4, depth=1, key=jax.random.PRNGKey(0))
+
+    def test_save_bundle_creates_required_files(self, tmp_path):
+        """save_neural_ode_bundle creates neural_ode_model.eqx, meta JSON, theta_refined.npy."""
+        from phoscrosstalk.neuralODE import save_neural_ode_bundle
+
+        K = 3
+        model = self._make_tiny_model(K)
+        theta = np.ones(10, dtype=np.float64)
+        cfg = _make_neural_cfg(width=4, depth=1)
+
+        bundle_dir = save_neural_ode_bundle(
+            str(tmp_path),
+            neural_model=model,
+            theta_refined=theta,
+            neural_cfg=cfg,
+            K=K,
+        )
+
+        assert os.path.isdir(bundle_dir)
+        assert os.path.isfile(os.path.join(bundle_dir, "neural_ode_model.eqx"))
+        assert os.path.isfile(os.path.join(bundle_dir, "neural_ode_bundle_meta.json"))
+        assert os.path.isfile(os.path.join(bundle_dir, "theta_refined.npy"))
+
+    def test_bundle_meta_contains_structural_fields(self, tmp_path):
+        """neural_ode_bundle_meta.json must contain K, width, depth, in_size, bundle_format_version."""
+        from phoscrosstalk.neuralODE import save_neural_ode_bundle
+
+        K = 3
+        model = self._make_tiny_model(K)
+        cfg = _make_neural_cfg(width=4, depth=2)
+
+        bundle_dir = save_neural_ode_bundle(
+            str(tmp_path),
+            neural_model=model,
+            theta_refined=np.zeros(5),
+            neural_cfg=cfg,
+            K=K,
+            learn_theta=True,
+        )
+
+        with open(os.path.join(bundle_dir, "neural_ode_bundle_meta.json")) as fh:
+            meta = json.load(fh)
+
+        assert meta["K"] == K
+        assert meta["width"] == 4
+        assert meta["depth"] == 2
+        assert meta["in_size"] == 1 + 2 * K
+        assert meta["learn_theta"] is True
+        assert meta["bundle_format_version"] == 1
+
+    def test_load_bundle_recovers_model_and_theta(self, tmp_path):
+        """load_neural_ode_bundle returns a working NeuralRateGenerator with same outputs."""
+        import jax
+        import jax.numpy as jnp
+        from phoscrosstalk.neuralODE import (
+            NeuralRateGenerator,
+            save_neural_ode_bundle,
+            load_neural_ode_bundle,
+        )
+
+        K = 3
+        model_orig = self._make_tiny_model(K)
+        theta_orig = np.arange(10, dtype=np.float64)
+        cfg = _make_neural_cfg(width=4, depth=1)
+
+        bundle_dir = save_neural_ode_bundle(
+            str(tmp_path),
+            neural_model=model_orig,
+            theta_refined=theta_orig,
+            neural_cfg=cfg,
+            K=K,
+        )
+
+        model_loaded, theta_loaded, meta = load_neural_ode_bundle(bundle_dir)
+
+        # theta round-trip
+        assert theta_loaded is not None
+        np.testing.assert_array_equal(theta_loaded, theta_orig)
+
+        # model type
+        assert isinstance(model_loaded, NeuralRateGenerator)
+
+        # Forward pass must produce same outputs
+        features = jnp.ones(1 + 2 * K, dtype=jnp.float64)
+        k_orig, s_orig = model_orig(features)
+        k_load, s_load = model_loaded(features)
+        np.testing.assert_allclose(
+            np.asarray(k_orig), np.asarray(k_load), rtol=1e-6,
+            err_msg="k_hat output differs after round-trip",
+        )
+        np.testing.assert_allclose(
+            np.asarray(s_orig), np.asarray(s_load), rtol=1e-6,
+            err_msg="s_hat output differs after round-trip",
+        )
+
+    def test_load_bundle_raises_on_missing_meta(self, tmp_path):
+        """load_neural_ode_bundle raises FileNotFoundError when meta JSON is absent."""
+        from phoscrosstalk.neuralODE import load_neural_ode_bundle
+
+        with pytest.raises(FileNotFoundError, match="neural_ode_bundle_meta.json"):
+            load_neural_ode_bundle(str(tmp_path))
+
+    def test_bundle_does_not_write_pinn_files(self, tmp_path):
+        """neuralODE bundle must not create pinn_model.eqx or pinn_bundle_meta.json."""
+        from phoscrosstalk.neuralODE import save_neural_ode_bundle
+
+        K = 2
+        model = self._make_tiny_model(K)
+
+        bundle_dir = save_neural_ode_bundle(
+            str(tmp_path),
+            neural_model=model,
+            theta_refined=np.zeros(5),
+            neural_cfg=_make_neural_cfg(width=4, depth=1),
+            K=K,
+        )
+
+        # None of the PINN bundle file names should appear
+        all_files = [f for _, _, files in os.walk(bundle_dir) for f in files]
+        assert "pinn_model.eqx" not in all_files
+        assert "pinn_bundle_meta.json" not in all_files
+
+    def test_bundle_in_separate_subdir_from_pinn(self, tmp_path):
+        """neuralODE bundle subdir name is 'neural_ode_bundle', not 'pinn_bundle'."""
+        from phoscrosstalk.neuralODE import save_neural_ode_bundle
+
+        K = 2
+        bundle_dir = save_neural_ode_bundle(
+            str(tmp_path),
+            neural_model=self._make_tiny_model(K),
+            theta_refined=np.zeros(5),
+            neural_cfg=_make_neural_cfg(width=4, depth=1),
+            K=K,
+        )
+
+        assert os.path.basename(bundle_dir) == "neural_ode_bundle"
+        assert "pinn_bundle" not in bundle_dir

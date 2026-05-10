@@ -1751,6 +1751,193 @@ def save_neural_ode_plots(
 
 
 # ---------------------------------------------------------------------------
+# neuralODE model bundle — save / load
+# ---------------------------------------------------------------------------
+
+#: Subdirectory name written inside the neural_ode/ output directory.
+_NEURAL_ODE_BUNDLE_SUBDIR = "neural_ode_bundle"
+
+
+def save_neural_ode_bundle(
+    neural_outdir: str,
+    *,
+    neural_model,
+    theta_refined: np.ndarray | None,
+    neural_cfg=None,
+    K: int,
+    learn_theta: bool = False,
+) -> str:
+    """Save the trained neuralODE model as a self-contained, reproducible bundle.
+
+    The bundle is written to ``{neural_outdir}/neural_ode_bundle/`` and
+    contains three files:
+
+    * ``neural_ode_model.eqx`` — Equinox-serialised ``NeuralRateGenerator``
+      weights (``eqx.tree_serialise_leaves``).  Load with
+      :func:`load_neural_ode_bundle`.
+    * ``neural_ode_bundle_meta.json`` — structural metadata required to
+      re-create the ``NeuralRateGenerator`` skeleton before deserialising
+      weights.  Includes ``K``, ``width``, ``depth``, ``in_size``
+      (``= 1 + 2*K``), ``learn_theta``, ``theta_dim``,
+      ``bundle_format_version``.
+    * ``theta_refined.npy`` — the mechanistic rate vector used with this
+      neural model (either refined jointly or copied from ``theta_best``).
+
+    This is **separate** from the PINN bundle: it never writes
+    ``pinn_model.eqx`` and uses a dedicated subdirectory.
+
+    Args:
+        neural_outdir: The neural ODE output directory (i.e.
+                       ``{outdir}/neural_ode/``).  The bundle is placed in
+                       a ``neural_ode_bundle/`` subdirectory.
+        neural_model:  Trained :class:`NeuralRateGenerator` Equinox module.
+        theta_refined: Mechanistic rate vector ``(theta_dim,)`` — either
+                       jointly refined or copied from ``theta_best``.
+        neural_cfg:    Neural-ODE config ``SimpleNamespace`` (provides
+                       ``width`` and ``depth``).
+        K:             Number of protein/gene species.
+        learn_theta:   Whether the bundle was produced by joint
+                       theta-refinement (stored in metadata only).
+
+    Returns:
+        str: Path to the bundle directory that was created.
+
+    Raises:
+        RuntimeError: If both ``neural_model`` and ``theta_refined`` are
+                      ``None``.
+    """
+    if neural_model is None and theta_refined is None:
+        raise RuntimeError(
+            "save_neural_ode_bundle: both neural_model and theta_refined are None."
+        )
+
+    _width = int(getattr(neural_cfg, "width", 32)) if neural_cfg is not None else 32
+    _depth = int(getattr(neural_cfg, "depth", 2))   if neural_cfg is not None else 2
+    _in_size = 1 + 2 * K  # fixed by NeuralRateGenerator architecture
+
+    bundle_dir = os.path.join(neural_outdir, _NEURAL_ODE_BUNDLE_SUBDIR)
+    os.makedirs(bundle_dir, exist_ok=True)
+
+    # ------------------------------------------------------------------ #
+    # 1. Structural metadata (needed to rebuild the skeleton)             #
+    # ------------------------------------------------------------------ #
+    meta: dict = {
+        "K": K,
+        "width": _width,
+        "depth": _depth,
+        "in_size": _in_size,
+        "learn_theta": bool(learn_theta),
+        "theta_dim": (
+            int(np.asarray(theta_refined).shape[0])
+            if theta_refined is not None
+            else None
+        ),
+        "bundle_format_version": 1,
+    }
+    meta_path = os.path.join(bundle_dir, "neural_ode_bundle_meta.json")
+    with open(meta_path, "w") as fh:
+        json.dump(meta, fh, indent=2)
+    logger.info("[neural_ode] Saved %s", meta_path)
+
+    # ------------------------------------------------------------------ #
+    # 2. Equinox model weights (NeuralRateGenerator only)                 #
+    # ------------------------------------------------------------------ #
+    if neural_model is not None:
+        model_path = os.path.join(bundle_dir, "neural_ode_model.eqx")
+        try:
+            eqx.tree_serialise_leaves(model_path, neural_model)
+            logger.info("[neural_ode] Saved %s", model_path)
+        except Exception as exc:
+            logger.warning(
+                "[neural_ode] Could not serialise neural model with eqx: %s", exc
+            )
+
+    # ------------------------------------------------------------------ #
+    # 3. Mechanistic parameter vector (copy)                              #
+    # ------------------------------------------------------------------ #
+    if theta_refined is not None:
+        theta_path = os.path.join(bundle_dir, "theta_refined.npy")
+        np.save(theta_path, np.asarray(theta_refined, dtype=np.float64))
+        logger.info("[neural_ode] Saved %s", theta_path)
+
+    logger.info("[neural_ode] Model bundle written to %s", bundle_dir)
+    return bundle_dir
+
+
+def load_neural_ode_bundle(
+    bundle_dir: str,
+) -> tuple:
+    """Load a neuralODE model bundle saved by :func:`save_neural_ode_bundle`.
+
+    Reconstructs the :class:`NeuralRateGenerator` skeleton from
+    ``neural_ode_bundle_meta.json``, then deserialises the weights from
+    ``neural_ode_model.eqx`` using
+    :func:`equinox.tree_deserialise_leaves`.
+
+    Args:
+        bundle_dir: Path to the ``neural_ode_bundle/`` directory created by
+                    :func:`save_neural_ode_bundle`.
+
+    Returns:
+        tuple: ``(neural_model, theta_refined, meta)`` where
+
+        * ``neural_model`` – loaded :class:`NeuralRateGenerator`
+          (or ``None`` if ``neural_ode_model.eqx`` is absent).
+        * ``theta_refined`` – ``np.ndarray`` mechanistic parameters
+          (or ``None`` if ``theta_refined.npy`` is absent).
+        * ``meta`` – ``dict`` with the structural metadata.
+
+    Raises:
+        FileNotFoundError: If ``neural_ode_bundle_meta.json`` is not found
+                           in *bundle_dir*.
+    """
+    meta_path = os.path.join(bundle_dir, "neural_ode_bundle_meta.json")
+    if not os.path.isfile(meta_path):
+        raise FileNotFoundError(
+            f"load_neural_ode_bundle: {meta_path!r} not found.  "
+            "Was the bundle created with save_neural_ode_bundle()?"
+        )
+
+    with open(meta_path) as fh:
+        meta = json.load(fh)
+
+    _K     = int(meta["K"])
+    _width = int(meta.get("width", 32))
+    _depth = int(meta.get("depth", 2))
+
+    # Build a skeleton with a fixed key (weights will be overwritten by
+    # eqx.tree_deserialise_leaves; the key value does not affect the loaded model).
+    skeleton = NeuralRateGenerator(K=_K, width=_width, depth=_depth, key=jax.random.PRNGKey(0))
+
+    neural_model = None
+    model_path = os.path.join(bundle_dir, "neural_ode_model.eqx")
+    if os.path.isfile(model_path):
+        try:
+            neural_model = eqx.tree_deserialise_leaves(model_path, skeleton)
+            logger.info("[neural_ode] Loaded neural model from %s", model_path)
+        except Exception as exc:
+            logger.warning(
+                "[neural_ode] Could not deserialise neural model: %s", exc
+            )
+    else:
+        logger.warning("[neural_ode] neural_ode_model.eqx not found in %s", bundle_dir)
+
+    theta_refined = None
+    theta_path = os.path.join(bundle_dir, "theta_refined.npy")
+    if os.path.isfile(theta_path):
+        theta_refined = np.load(theta_path)
+        logger.info(
+            "[neural_ode] Loaded theta_refined from %s (shape=%s)",
+            theta_path,
+            theta_refined.shape,
+        )
+    else:
+        logger.warning("[neural_ode] theta_refined.npy not found in %s", bundle_dir)
+
+    return neural_model, theta_refined, meta
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -2679,6 +2866,21 @@ def run_neural_latent_rate_refinement(
     with open(meta_path, "w") as fh:
         json.dump(metadata, fh, indent=2)
     logger.info("[neural_ode] Saved %s", meta_path)
+
+    # ------------------------------------------------------------------
+    # 15. Save model bundle (reproducible Equinox checkpoint)
+    # ------------------------------------------------------------------
+    try:
+        save_neural_ode_bundle(
+            neural_outdir,
+            neural_model=neural_model_opt,
+            theta_refined=theta_refined,
+            neural_cfg=neural_cfg,
+            K=K,
+            learn_theta=learn_theta,
+        )
+    except Exception as exc:
+        logger.warning("[neural_ode] Could not save model bundle: %s", exc)
 
     logger.info(
         "[neural_ode] Neural latent-rate refinement complete. Outputs saved to %s/",
