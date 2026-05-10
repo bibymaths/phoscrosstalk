@@ -42,7 +42,7 @@ because:
 * Performance: piecewise-constant/linear interpolation is negligible overhead
   compared to the ODE integration cost.
 
-TODO (future): If Diffrax gains a JAX-traceable cubic Hermite callable that
+Note: If Diffrax gains a JAX-traceable cubic Hermite callable that
 can be passed as a static argument through jit without triggering re-tracing,
 replace _piecewise_constant/_linear_interp with it in the ODE RHS.
 

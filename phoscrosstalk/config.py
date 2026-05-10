@@ -99,7 +99,6 @@ _DEFAULTS = {
     "optimisation": {
         "n_starts": 3,
         "max_steps": 500,
-        "solver": "levenberg_marquardt",
         "ls_solver": "lm",
         "optx_adjoint": "implicit",
         "jac_mode": "fwd",
@@ -246,6 +245,14 @@ _DEFAULTS = {
         "save_dense": True,
         # Number of time points in the dense neural output grid.
         "dense_n_points": 200,
+        # Use Optax optimiser (True) instead of Optimistix GradientDescent (False).
+        "use_optax": True,
+        # Optax optimiser name: "adabelief" | "adam" | "sgd" | "lbfgs" etc.
+        "optimizer": "adabelief",
+        # Optax training loop style: "python" (eager) or "scan" (jax.lax.scan).
+        "optax_loop": "python",
+        # Log training progress every N steps.
+        "print_every": 250,
     },
     # PINN / Universal ODE augmentation mode.
     # Only active when enabled = true.  Old configs without this section
@@ -446,6 +453,7 @@ _VALID_ODE_SOLVERS = {
 
 _VALID_ODE_ADJOINTS = {
     "forward",
+    "recursive",   # alias for checkpoint; both map to RecursiveCheckpointAdjoint
     "checkpoint",
     "direct",
     "backsolve",

@@ -220,6 +220,37 @@ class NeuralRateGenerator(eqx.Module):
         s_hat = self.s_prod_net(features)
         return k_hat, s_hat
 
+    def latent_activations(self, features: jax.Array) -> tuple[jax.Array, jax.Array]:
+        """Return the final hidden-layer activations of k_act_net and s_prod_net.
+
+        Runs *features* through all hidden layers (with softplus activation applied
+        between them) but stops before the final linear output projection.  The
+        returned arrays have shape ``(width,)`` and can be used to visualise what
+        the network has learned at each time point.
+
+        Note: relies on ``eqx.nn.MLP.layers`` being an indexable sequence of
+        ``eqx.nn.Linear`` layers (equinox >= 0.10).  If the MLP was built with
+        ``scan=True`` the layers are batched but the sequence interface is still
+        supported.
+
+        Returns
+        -------
+        k_hidden : jax.Array, shape (width,)
+            Final hidden-layer activations from the k_act MLP.
+        s_hidden : jax.Array, shape (width,)
+            Final hidden-layer activations from the s_prod MLP.
+        """
+
+        def _last_hidden(latent_mlp: LatentRateMLP, x: jax.Array) -> jax.Array:
+            # All linear layers except the final output projection.
+            for layer in latent_mlp.mlp.layers[:-1]:
+                x = jax.nn.softplus(layer(x))
+            return x
+
+        k_hidden = _last_hidden(self.k_act_net, features)
+        s_hidden = _last_hidden(self.s_prod_net, features)
+        return k_hidden, s_hidden
+
 
 class JointNeuralMechanisticModel(eqx.Module):
     """
@@ -243,6 +274,10 @@ class JointNeuralMechanisticModel(eqx.Module):
     ) -> None:
         self.neural = NeuralRateGenerator(K=K, width=width, depth=depth, key=key)
         self.theta = jnp.asarray(theta_best, dtype=jnp.float64)
+
+    def latent_activations(self, features: jax.Array) -> tuple[jax.Array, jax.Array]:
+        """Delegate to the wrapped NeuralRateGenerator.latent_activations()."""
+        return self.neural.latent_activations(features)
 
 
 # ---------------------------------------------------------------------------
@@ -1717,10 +1752,63 @@ def save_neural_ode_plots(
     except Exception as exc:  # pragma: no cover
         logger.warning("[neural_ode] Could not save trajectory plot: %s", exc)
 
-    # Latent activation heatmap: NeuralRateGenerator/JointNeuralMechanisticModel
-    # do not expose intermediate hidden-layer activations as a separate output.
-    # TODO: add a latent_activations() helper to NeuralRateGenerator and revisit.
-    logger.debug("[neural_ode] Latent heatmap skipped: model does not expose hidden states.")
+    # ------------------------------------------------------------------ #
+    # 3b. Latent activation heatmap                                       #
+    # ------------------------------------------------------------------ #
+    try:
+        if (
+            hasattr(model, "latent_activations")
+            and k_act_init_vals is not None
+            and s_prod_init_vals is not None
+            and t_protein is not None
+        ):
+            import jax  # noqa: PLC0415 – deferred to avoid top-level JAX import
+            import jax.numpy as jnp_local  # noqa: PLC0415
+
+            t_arr = np.asarray(t_protein)
+            T_obs = t_arr.shape[0]
+            t_max = float(t_arr[-1]) if T_obs > 0 else 1.0
+            k_hidden_all = []
+            s_hidden_all = []
+            for ti_idx in range(T_obs):
+                t_norm = jnp_local.array(
+                    [t_arr[ti_idx] / max(t_max, 1e-8)], dtype=jnp_local.float64
+                )
+                k_prior = jnp_local.asarray(
+                    k_act_init_vals[:, ti_idx], dtype=jnp_local.float64
+                )
+                s_prior = jnp_local.asarray(
+                    s_prod_init_vals[:, ti_idx], dtype=jnp_local.float64
+                )
+                feats = jnp_local.concatenate([t_norm, k_prior, s_prior])
+                k_h, s_h = model.latent_activations(feats)
+                k_hidden_all.append(np.asarray(k_h))
+                s_hidden_all.append(np.asarray(s_h))
+
+            k_heatmap = np.stack(k_hidden_all, axis=0).T  # (width, T_obs)
+            s_heatmap = np.stack(s_hidden_all, axis=0).T
+
+            fig, axes = _plt.subplots(1, 2, figsize=(12, 4))
+            axes[0].imshow(k_heatmap, aspect="auto", cmap="RdBu_r", origin="lower")
+            axes[0].set_title("k_act latent activations")
+            axes[0].set_xlabel("Time index")
+            axes[0].set_ylabel("Neuron")
+            axes[1].imshow(s_heatmap, aspect="auto", cmap="RdBu_r", origin="lower")
+            axes[1].set_title("s_prod latent activations")
+            axes[1].set_xlabel("Time index")
+            axes[1].set_ylabel("Neuron")
+            _plt.tight_layout()
+            _path = os.path.join(outdir, "neural_ode_latent_heatmap.png")
+            fig.savefig(_path, dpi=150)
+            _plt.close(fig)
+            logger.info("[neural_ode] Saved %s", _path)
+        else:
+            logger.debug(
+                "[neural_ode] Latent heatmap skipped: "
+                "model does not expose latent_activations() or prior data unavailable."
+            )
+    except Exception as exc:
+        logger.debug("[neural_ode] Latent heatmap skipped: %s", exc)
 
     # ------------------------------------------------------------------ #
     # 4. Per-protein horizontal layout: mRNA | abundance | phosphosites   #
