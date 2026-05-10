@@ -2070,6 +2070,10 @@ def plot_neural_ode_overlay(
         parts = s_name.split("_", 1)
         site_to_prot[s_name] = parts[0]
 
+    # Precompute O(1) site→index lookup to avoid O(N_sites) list.index() calls
+    # inside the per-protein/per-site loop (which would be O(N_sites²) overall).
+    site_to_index: dict[str, int] = {s: i for i, s in enumerate(sites)}
+
     cmap10 = _plt.cm.tab10
 
     for p_idx, prot in enumerate(proteins):
@@ -2137,9 +2141,8 @@ def plot_neural_ode_overlay(
         ax_sites = state_axes[panel_idx]
         cmap20 = _plt.cm.tab20
         for si, site in enumerate(prot_sites):
-            try:
-                s_idx = sites.index(site)
-            except ValueError:
+            s_idx = site_to_index.get(site, -1)
+            if s_idx < 0:
                 continue
             if s_idx >= P_sim.shape[0]:
                 continue

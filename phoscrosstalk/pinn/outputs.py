@@ -78,6 +78,13 @@ def save_pinn_model_bundle(
     _K = int(dims.K) if dims is not None else int(K or 0)
     _M = int(dims.M) if dims is not None else int(M or 0)
     _N = int(dims.N) if dims is not None else int(N or 0)
+
+    # Validate that all dimensions are positive so the saved metadata is valid.
+    if dims is None and (_K <= 0 or _M <= 0 or _N <= 0):
+        raise ValueError(
+            "save_pinn_model_bundle: when dims=None you must supply explicit positive "
+            f"values for K, M, and N.  Got K={_K}, M={_M}, N={_N}."
+        )
     state_dim = 3 * _K + _M + _N
 
     # Resolve architecture from config or model attributes.

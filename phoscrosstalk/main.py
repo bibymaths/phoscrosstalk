@@ -1448,9 +1448,13 @@ def main():
             # Build a JAX-traceable residuals function using the mechanistic
             # simulation.  The residuals are (P_sim - P_scaled) flattened,
             # which is consistent with the mechanistic loss used in optimisation.
+            # return_jax=True skips np.asarray(sol.ys) so the function is safely
+            # traceable inside jax.jit / jax.lax.scan (BlackJax NUTS).
+            import jax.numpy as jnp  # noqa: PLC0415
+            _P_scaled_jax = jnp.asarray(P_scaled, dtype=jnp.float64)
+
             def _mech_residuals_fn(theta):
-                import jax.numpy as jnp  # noqa: PLC0415
-                P_sim_post, *_ = _post_sim(
+                P_sim_post, _ = _post_sim(
                     t, P_scaled, _A0_post, theta,
                     problem.Cg, problem.Cl, problem.site_prot_idx,
                     problem.K_site_kin, problem.R, problem.L_alpha,
@@ -1459,8 +1463,9 @@ def main():
                     full_output=False,
                     k_act_fn=k_act_fn, s_prod_fn=s_prod_fn,
                     R_data0=R_data0, dims=dims,
+                    return_jax=True,
                 )
-                return jnp.asarray(P_sim_post - P_scaled, dtype=jnp.float64).ravel()
+                return (P_sim_post - _P_scaled_jax).ravel()
 
             _sigma_noise = float(getattr(_posterior_cfg, "sigma_noise", 0.1))
             _log_post_fn = make_log_posterior_fn(

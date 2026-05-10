@@ -272,6 +272,8 @@ def run_posterior_inference(
         init_position,
         num_steps=int(cfg.num_warmup),
     )
+    # Capture warmup end time immediately so post-processing is excluded.
+    t_warmup_end = time.time()
 
     adapted_step_size = float(warmup_params.get("step_size", cfg.step_size))
     inverse_mass_matrix = warmup_params.get(
@@ -282,7 +284,7 @@ def run_posterior_inference(
 
     logger.info(
         "[posterior] Warm-up complete in %.1f s.  Adapted step size: %.4g",
-        time.time() - t_start,
+        t_warmup_end - t_start,
         adapted_step_size,
     )
 
@@ -366,14 +368,20 @@ def run_posterior_inference(
     # ------------------------------------------------------------------ #
     # 5. Save samples NPZ                                                  #
     # ------------------------------------------------------------------ #
+    # theta_names is saved as a plain Unicode array (dtype="<U...") so the
+    # NPZ can be loaded with np.load(..., allow_pickle=False).  Names are
+    # also written to a JSON sidecar for easy inspection.
     npz_path = os.path.join(post_dir, "posterior_samples.npz")
     np.savez(
         npz_path,
         samples=thinned,
-        theta_names=np.array(theta_names, dtype=object),
+        theta_names=np.array(theta_names, dtype=str),
         theta_best=np.asarray(theta_best, dtype=np.float64),
         acceptance_rate=np.array(acceptance_rate),
     )
+    names_path = os.path.join(post_dir, "posterior_theta_names.json")
+    with open(names_path, "w") as fh:
+        json.dump(theta_names, fh, indent=2)
     logger.info("[posterior] Saved samples to %s", npz_path)
 
     # ------------------------------------------------------------------ #
@@ -391,7 +399,7 @@ def run_posterior_inference(
         "seed": int(cfg.seed),
         "dim": dim,
         "sampler": "NUTS (BlackJax)",
-        "warmup_time_s": float(time.time() - t_start - sample_elapsed),
+        "warmup_time_s": float(t_warmup_end - t_start),
         "sample_time_s": float(sample_elapsed),
     }
     meta_path = os.path.join(post_dir, "posterior_metadata.json")
@@ -427,7 +435,7 @@ def posterior_predict(
     t_eval: np.ndarray,
     thin_factor: int = 1,
     credible_intervals: tuple[float, float] = (2.5, 97.5),
-) -> dict[str, dict[str, np.ndarray]]:
+) -> dict[str, Any]:
     """Draw posterior-predictive trajectories.
 
     For each (thinned) sample, calls *simulate_fn(theta)* and stacks the
