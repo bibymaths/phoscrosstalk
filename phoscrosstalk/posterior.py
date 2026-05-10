@@ -269,6 +269,8 @@ def run_posterior_inference(
     inverse_mass_matrix = warmup_params.get(
         "inverse_mass_matrix", jnp.ones(dim, dtype=jnp.float64)
     )
+    # Ensure inverse_mass_matrix is a JAX array of consistent dtype.
+    inverse_mass_matrix = jnp.asarray(inverse_mass_matrix, dtype=jnp.float64)
 
     logger.info(
         "[posterior] Warm-up complete in %.1f s.  Adapted step size: %.4g",

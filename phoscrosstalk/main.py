@@ -1466,20 +1466,7 @@ def main():
                 sigma_noise=_sigma_noise,
             )
 
-            # Build human-readable theta parameter names from decoded theta.
-            from phoscrosstalk.mechanisms import decode_theta as _dt  # noqa: PLC0415
-            _param_names_base = [
-                "k_deact", "d_deg", "beta_g", "beta_l",
-                "alpha", "kK_act", "kK_deact", "k_off",
-                "gamma_S_p", "gamma_A_S", "gamma_A_p", "gamma_K_net",
-            ]
-            _theta_names = [
-                f"{pn}_{prot}" if i < dims.K else f"{pn}_{i}"
-                for i, (pn, _) in enumerate(
-                    zip(_param_names_base * max(1, len(theta_best) // max(1, len(_param_names_base))),
-                        range(len(theta_best)))
-                )
-            ]
+            # Simple indexed theta names (dim can be large; indices are unambiguous).
             _theta_names = [f"theta_{i}" for i in range(len(theta_best))]
 
             run_posterior_inference(

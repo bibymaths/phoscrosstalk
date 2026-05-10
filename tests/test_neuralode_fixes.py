@@ -23,17 +23,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-# Mark to skip classes that need diffrax/analysis imports.
-needs_analysis = pytest.mark.skipif(
-    pytest.importorskip.__doc__ is not None  # always True, placeholder
-    and __import__("importlib.util", fromlist=["find_spec"]).find_spec("diffrax") is None,
-    reason="diffrax required for analysis module",
-)
-
-def _diffrax_available():
-    import importlib.util
-    return importlib.util.find_spec("diffrax") is not None
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -113,10 +102,12 @@ class TestAbundanceValueObserved:
         prot_to_obs_k = {int(prot_idx_for_A[k]): k for k in range(len(prot_idx_for_A))}
         A_scaled = np.ones((2, 3))
 
-        # Protein index 1 is absent.
+        # Protein index 1 is absent from the mapping.
         obs_k = prot_to_obs_k.get(1, None)
-        assert obs_k is None
-        assert float("nan") != float("nan")  # sanity check for nan
+        assert obs_k is None, "Protein 1 should not be in prot_to_obs_k"
+        # Simulate what the code does: if obs_k is None → NaN.
+        obs_val = float(A_scaled[obs_k, 0]) if obs_k is not None else float("nan")
+        assert np.isnan(obs_val), "value_observed should be NaN when protein has no abundance data"
 
 
 # ---------------------------------------------------------------------------
