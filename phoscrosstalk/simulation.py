@@ -255,6 +255,7 @@ def simulate(
         prot_idx_jax = jnp.asarray(prot_time_idx, dtype=jnp.int32)
         xs_jax = sol.ys[prot_idx_jax, :]          # (T, 3K+M+N)
         P_sim_jax = jnp.clip(xs_jax[:, 3 * K + M :], 0.0, None).T  # (N, T)
+        # 5.0 matches the biology-based upper bound applied in the numpy path below.
         A_sim_jax = jnp.clip(xs_jax[:, 2 * K : 3 * K], 0.0, 5.0).T  # (K, T)
         return P_sim_jax, A_sim_jax
 

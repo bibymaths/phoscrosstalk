@@ -1454,7 +1454,7 @@ def main():
             _P_scaled_jax = jnp.asarray(P_scaled, dtype=jnp.float64)
 
             def _mech_residuals_fn(theta):
-                P_sim_post, _ = _post_sim(
+                P_sim_post, _A_sim_post = _post_sim(
                     t, P_scaled, _A0_post, theta,
                     problem.Cg, problem.Cl, problem.site_prot_idx,
                     problem.K_site_kin, problem.R, problem.L_alpha,
