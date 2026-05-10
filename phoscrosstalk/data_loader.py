@@ -977,11 +977,13 @@ def build_protein_entity_masks(
 
 
 # ---------------------------------------------------------------------------
-# TODO(data-loader-refactor): This helper is a temporary network-driven
-# pre-filter so that full measurement files can serve as a "reservoir" while
-# the biological networks (kinase_tsv / tf_net) define the model universe.
-# When data_loader.py is refactored to accept allow-lists natively, remove
-# _build_network_allow_sets() and the two _prefilter_*() wrappers below.
+# Network-driven pre-filter helpers.
+#
+# These helpers let full measurement files serve as a "reservoir" while the
+# biological networks (kinase_tsv / tf_net) define the model universe.  If
+# data_loader.py is later refactored to accept allow-lists natively, these
+# three helpers (_build_network_allow_sets, _prefilter_phospho_csv, and
+# _prefilter_rna_csv) can be removed and the allow-list logic inlined.
 # ---------------------------------------------------------------------------
 
 
@@ -1049,8 +1051,8 @@ def _prefilter_phospho_csv(
     logger_,
 ):
     """
-    TODO(data-loader-refactor): Temporary pre-filter applied to the full
-    phospho/protein CSV before passing its path to load_site_data().
+    Pre-filter applied to the full phospho/protein CSV before passing its
+    path to load_site_data().
 
     Keeps rows where:
       • internal site label (Protein + normalised Psite/Residue) matches an
@@ -1138,8 +1140,8 @@ def _prefilter_phospho_csv(
 
 def _prefilter_rna_csv(rna_path, model_proteins, tf_sources, tf_targets, logger_):
     """
-    TODO(data-loader-refactor): Temporary pre-filter applied to the full RNA
-    CSV before passing its path to load_rna_data().
+    Pre-filter applied to the full RNA CSV before passing its path to
+    load_rna_data().
 
     Keeps rows whose GeneID is a model protein OR a TF source OR a TF target.
 

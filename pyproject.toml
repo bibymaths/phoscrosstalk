@@ -47,6 +47,9 @@ dev = [
   "ruff",
   "ipython",
 ]
+posterior = [
+  "blackjax>=1.0",
+]
 docs = [
   "mkdocs",
   "mkdocs-material",

@@ -65,6 +65,7 @@ def simulate(
     rna_relax=0.1,
     ode_adjoint_kind="recursive",
     dims: ModelDims | None = None,
+    return_jax: bool = False,
 ):
     """
     Simulate the phosphoproteomic network dynamics using Diffrax (JAX backend).
@@ -103,6 +104,13 @@ def simulate(
         t_rna (np.ndarray | None): mRNA-specific time points for RNA output.
         R_data0 (np.ndarray | None): RNA initial condition matrix (K x T_rna or K,);
             R_rna state is initialized from first column (or vector). Defaults 1.0.
+        return_jax (bool): If True, skip ``np.asarray(sol.ys)`` and return pure JAX
+            arrays.  Use this when the function is called inside a ``jax.jit``-compiled
+            log-posterior (e.g. BlackJax NUTS) so that tracing is not broken by
+            converting a traced JAX value to NumPy.  Only the simple
+            ``(full_output=False, return_full=False)`` output mode is supported with
+            this flag; NaN/success checks are omitted because they cannot be evaluated
+            at trace time.
 
     Returns:
         (dict | tuple): Simulation outputs depending on the requested output mode.
@@ -239,6 +247,18 @@ def simulate(
         ) from exc
 
     # sol.ys shape: (T_unified, 3*K + M + N)
+    if return_jax:
+        # JAX-native path: keep sol.ys as a JAX array so the function is
+        # traceable inside jax.jit / jax.lax.scan (e.g. BlackJax NUTS).
+        # NaN/convergence checks are skipped because they cannot be evaluated
+        # at trace time.  Only the simple (P_sim, A_sim) output is returned.
+        prot_idx_jax = jnp.asarray(prot_time_idx, dtype=jnp.int32)
+        xs_jax = sol.ys[prot_idx_jax, :]          # (T, 3K+M+N)
+        P_sim_jax = jnp.clip(xs_jax[:, 3 * K + M :], 0.0, None).T  # (N, T)
+        # 5.0 matches the biology-based upper bound applied in the numpy path below.
+        A_sim_jax = jnp.clip(xs_jax[:, 2 * K : 3 * K], 0.0, 5.0).T  # (K, T)
+        return P_sim_jax, A_sim_jax
+
     xs_all = np.asarray(sol.ys, dtype=np.float64)
 
     if not np.all(np.isfinite(xs_all)) or sol.result != diffrax.RESULTS.successful:

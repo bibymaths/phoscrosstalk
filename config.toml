@@ -272,6 +272,12 @@ atol          = 1e-6
 # "scipy_jax", "scipy_jax_pen", "optax_adam", "optax_sgd", "optax_lbfgs", "mpax".
 optimizer_backend = "jaxopt_lbfgsb"
 
+# Optional TOML inline table of backend-specific keyword arguments.
+# Passed directly to the backend constructor.  Leave as empty table unless the
+# selected backend requires extra settings.
+# Example for jaxopt_lbfgsb:  optimizer_backend_kwargs = {history_size = 20}
+optimizer_backend_kwargs = {}
+
 
 # =============================================================================
 # [solver] – Diffrax ODE solver configuration
@@ -1096,4 +1102,47 @@ use_max_machine_threads = true
 
 
 [debug]
-save_jaxpr_reports = true
+save_jaxpr_reports = false
+
+
+# =============================================================================
+# [posterior] – MCMC posterior inference using BlackJax NUTS (optional)
+# =============================================================================
+#
+# Runs after multi-start optimisation (and optionally neural_ode mode).
+# Disabled by default; set enabled = true to activate.
+#
+# num_warmup:
+#   NUTS warm-up steps for dual-averaging step-size adaptation.
+#
+# num_samples:
+#   Number of posterior samples to draw after warm-up.
+#
+# step_size:
+#   Initial NUTS step size (adapted during warm-up).
+#
+# thin_factor:
+#   Sub-sample every thin_factor-th sample to reduce autocorrelation.
+#
+# target_acceptance_rate:
+#   Target acceptance rate for dual-averaging adaptation (typically 0.8).
+#
+# seed:
+#   JAX random seed for reproducibility.
+#
+# plot_params:
+#   Number of leading parameters to include in trace and pairs plots.
+#
+# sigma_noise:
+#   Observation noise standard deviation for the Gaussian likelihood.
+# =============================================================================
+[posterior]
+enabled                 = false
+num_warmup              = 500
+num_samples             = 1000
+step_size               = 1e-3
+thin_factor             = 10
+target_acceptance_rate  = 0.8
+seed                    = 42
+plot_params             = 8
+sigma_noise             = 0.1

@@ -99,7 +99,6 @@ _DEFAULTS = {
     "optimisation": {
         "n_starts": 3,
         "max_steps": 500,
-        "solver": "levenberg_marquardt",
         "ls_solver": "lm",
         "optx_adjoint": "implicit",
         "jac_mode": "fwd",
@@ -246,6 +245,14 @@ _DEFAULTS = {
         "save_dense": True,
         # Number of time points in the dense neural output grid.
         "dense_n_points": 200,
+        # Use Optax optimiser (True) instead of Optimistix GradientDescent (False).
+        "use_optax": True,
+        # Optax optimiser name: "adabelief" | "adam" | "sgd" | "lbfgs" etc.
+        "optimizer": "adabelief",
+        # Optax training loop style: "python" (eager) or "scan" (jax.lax.scan).
+        "optax_loop": "python",
+        # Log training progress every N steps.
+        "print_every": 250,
     },
     # PINN / Universal ODE augmentation mode.
     # Only active when enabled = true.  Old configs without this section
@@ -305,6 +312,29 @@ _DEFAULTS = {
         # with zero; "first_valid" → repeat the first valid value.
         # Never fills the original training arrays.
         "replace_nans_at_start": None,
+    },
+    # MCMC posterior inference using BlackJax NUTS.
+    # Runs after the multi-start optimisation (and optionally neural_ode mode).
+    # Disabled by default; set enabled = true to activate.
+    "posterior": {
+        # Set to true to run MCMC posterior inference after optimisation.
+        "enabled": False,
+        # NUTS warm-up steps (dual-averaging step-size adaptation).
+        "num_warmup": 500,
+        # Number of posterior samples to draw.
+        "num_samples": 1000,
+        # Initial step size for NUTS (adapted during warm-up).
+        "step_size": 1e-3,
+        # Sub-sample every thin_factor-th sample to reduce autocorrelation.
+        "thin_factor": 10,
+        # Target acceptance rate for dual-averaging adaptation.
+        "target_acceptance_rate": 0.8,
+        # Random seed for reproducibility.
+        "seed": 42,
+        # Number of leading parameters to include in trace and pairs plots.
+        "plot_params": 8,
+        # Observation noise standard deviation for the Gaussian likelihood.
+        "sigma_noise": 0.1,
     },
 }
 
@@ -423,6 +453,7 @@ _VALID_ODE_SOLVERS = {
 
 _VALID_ODE_ADJOINTS = {
     "forward",
+    "recursive",   # alias for checkpoint; both map to RecursiveCheckpointAdjoint
     "checkpoint",
     "direct",
     "backsolve",

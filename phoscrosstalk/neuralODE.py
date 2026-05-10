@@ -220,6 +220,37 @@ class NeuralRateGenerator(eqx.Module):
         s_hat = self.s_prod_net(features)
         return k_hat, s_hat
 
+    def latent_activations(self, features: jax.Array) -> tuple[jax.Array, jax.Array]:
+        """Return the final hidden-layer activations of k_act_net and s_prod_net.
+
+        Runs *features* through all hidden layers (with softplus activation applied
+        between them) but stops before the final linear output projection.  The
+        returned arrays have shape ``(width,)`` and can be used to visualise what
+        the network has learned at each time point.
+
+        Note: relies on ``eqx.nn.MLP.layers`` being an indexable sequence of
+        ``eqx.nn.Linear`` layers (equinox >= 0.10).  If the MLP was built with
+        ``scan=True`` the layers are batched but the sequence interface is still
+        supported.
+
+        Returns
+        -------
+        k_hidden : jax.Array, shape (width,)
+            Final hidden-layer activations from the k_act MLP.
+        s_hidden : jax.Array, shape (width,)
+            Final hidden-layer activations from the s_prod MLP.
+        """
+
+        def _last_hidden(latent_mlp: LatentRateMLP, x: jax.Array) -> jax.Array:
+            # All linear layers except the final output projection.
+            for layer in latent_mlp.mlp.layers[:-1]:
+                x = jax.nn.softplus(layer(x))
+            return x
+
+        k_hidden = _last_hidden(self.k_act_net, features)
+        s_hidden = _last_hidden(self.s_prod_net, features)
+        return k_hidden, s_hidden
+
 
 class JointNeuralMechanisticModel(eqx.Module):
     """
@@ -243,6 +274,10 @@ class JointNeuralMechanisticModel(eqx.Module):
     ) -> None:
         self.neural = NeuralRateGenerator(K=K, width=width, depth=depth, key=key)
         self.theta = jnp.asarray(theta_best, dtype=jnp.float64)
+
+    def latent_activations(self, features: jax.Array) -> tuple[jax.Array, jax.Array]:
+        """Delegate to the wrapped NeuralRateGenerator.latent_activations()."""
+        return self.neural.latent_activations(features)
 
 
 # ---------------------------------------------------------------------------
@@ -1317,14 +1352,254 @@ def _neural_simulate_dense(
     )
 
     xs = np.asarray(sol.ys)
+    R_sim = np.clip(xs[:, :K].T, 0.0, None)
     P_sim = np.clip(xs[:, 3 * K + M :].T, 0.0, None)
     A_sim = np.clip(xs[:, 2 * K : 3 * K].T, 0.0, abundance_max)
-    return {"P_sim": P_sim, "A_sim": A_sim, "xs": xs}
+    return {"P_sim": P_sim, "A_sim": A_sim, "R_sim": R_sim, "xs": xs}
 
 
 # ---------------------------------------------------------------------------
 # Visualisation helpers
 # ---------------------------------------------------------------------------
+
+
+def _save_neural_per_protein_plots(
+    outdir,
+    ts,
+    ys,
+    proteins,
+    sites,
+    P_scaled,
+    A_scaled,
+    prot_idx_for_A,
+    t_protein,
+    t_rna,
+    rna_obs_matched,
+    rna_model_prot_idx,
+    k_act_init_vals,
+    s_prod_init_vals,
+    k_hats_obs,
+    s_hats_obs,
+    _plt,
+):
+    """Generate per-protein horizontal layout PNG files for the neural ODE outputs.
+
+    For each protein, creates ``neural_fit_{prot}.png`` with up to three panels:
+
+    * **mRNA / R(t)** – observed vs neural-model trajectory (when RNA data available).
+    * **Protein abundance / A(t)** – observed vs neural-model trajectory.
+    * **Phosphosites** – observed vs neural-model trajectory for all sites of the protein.
+
+    When *k_act_init_vals*/*k_hats_obs* (or *s_prod_init_vals*/*s_hats_obs*) are
+    provided, a bottom row of axes is added showing the mechanistic prior vs the
+    neural-learned k_act and s_prod for the protein.
+
+    Args:
+        outdir: Directory to write PNG files.
+        ts: Time points at which *ys* was evaluated (protein time scale).
+        ys: Dict with ``"P_sim"`` ``(N, T)`` and ``"A_sim"`` ``(K, T)``.
+        proteins: List of protein names.
+        sites: List of phosphosite names (``"PROT_Res"`` format).
+        P_scaled: Observed phosphosite data ``(N, T_protein)``.
+        A_scaled: Observed protein abundance ``(n_obs, T_protein)``.
+        prot_idx_for_A: Protein indices for each row of *A_scaled*.
+        t_protein: Protein time points; defaults to *ts* when None.
+        t_rna: RNA-specific time points (optional).
+        rna_obs_matched: Matched RNA observations ``(n_matched, T_rna)`` (optional).
+        rna_model_prot_idx: Protein indices for each row of *rna_obs_matched* (optional).
+        k_act_init_vals: Mechanistic k_act priors ``(K, T_obs)`` (optional).
+        s_prod_init_vals: Mechanistic s_prod priors ``(K, T_obs)`` (optional).
+        k_hats_obs: Neural k_hat ``(T_obs, K)`` (optional).
+        s_hats_obs: Neural s_hat ``(T_obs, K)`` (optional).
+        _plt: Matplotlib pyplot module (already imported by the caller).
+    """
+    os.makedirs(outdir, exist_ok=True)
+
+    ts_arr = np.asarray(ts)
+    t_prot = np.asarray(t_protein) if t_protein is not None else ts_arr
+    P_sim = np.asarray(ys.get("P_sim", np.empty((0, len(ts_arr)))))
+    A_sim = np.asarray(ys.get("A_sim", np.empty((0, len(ts_arr)))))
+    R_sim = np.asarray(ys["R_sim"]) if "R_sim" in ys else None
+
+    # Determine t-axis for neural mRNA: use t_rna when available, else ts.
+    t_rna_arr = np.asarray(t_rna) if (t_rna is not None and len(t_rna) > 0) else None
+    t_rna_neural = t_rna_arr if t_rna_arr is not None else ts_arr
+
+    # Determine whether k_act / s_prod bottom strip is available.
+    has_rate_strip = (
+        (k_act_init_vals is not None and k_hats_obs is not None)
+        or (s_prod_init_vals is not None and s_hats_obs is not None)
+    )
+    # Determine time axis for rate strip: use t_rna for k_act, t_prot for s_prod.
+    t_kact_strip = t_rna_arr if t_rna_arr is not None else t_prot
+    t_sprod_strip = t_prot
+
+    # Build site-to-protein mapping.
+    site_to_prot = {}
+    for s_name in (sites or []):
+        parts = s_name.split("_", 1)
+        site_to_prot[s_name] = parts[0]
+
+    # Precompute site → index lookup to avoid O(N) list.index() calls.
+    site_to_index: dict[str, int] = {s: i for i, s in enumerate(sites or [])}
+
+    # Build protein → observed abundance row index mapping.
+    prot_to_obs_k = {}
+    if prot_idx_for_A is not None and A_scaled is not None:
+        for k, p_idx in enumerate(prot_idx_for_A):
+            prot_to_obs_k[int(p_idx)] = k
+
+    # Build protein → matched RNA row index mapping.
+    prot_to_rna_k = {}
+    if rna_model_prot_idx is not None:
+        for k, p_idx in enumerate(rna_model_prot_idx):
+            prot_to_rna_k[int(p_idx)] = k
+
+    has_rna_global = (
+        rna_obs_matched is not None
+        and t_rna is not None
+        and len(t_rna) > 0
+        and len(prot_to_rna_k) > 0
+    )
+
+    cmap10 = _plt.cm.tab10
+
+    for p_idx, prot in enumerate(proteins):
+        prot_sites = [s for s in (sites or []) if site_to_prot.get(s) == prot]
+        has_rna_for_prot = has_rna_global and (p_idx in prot_to_rna_k)
+        n_top_panels = (1 if has_rna_for_prot else 0) + 2  # mRNA + abundance + phospho
+
+        # Determine grid: top row + optional bottom strip for rates.
+        n_rows = 2 if has_rate_strip else 1
+        n_cols = n_top_panels
+        height_ratios = [4, 1.5] if has_rate_strip else [4]
+        color = cmap10(p_idx % 10)
+
+        fig, axes_grid = _plt.subplots(
+            n_rows, n_cols,
+            figsize=(9 * n_cols, 7 * n_rows),
+            gridspec_kw={"wspace": 0.15, "height_ratios": height_ratios},
+            constrained_layout=True,
+            squeeze=False,
+        )
+        top_axes = list(axes_grid[0])
+        panel_idx = 0
+
+        # --- mRNA panel ---
+        if has_rna_for_prot:
+            ax_rna = top_axes[panel_idx]
+            panel_idx += 1
+            rna_k = prot_to_rna_k[p_idx]
+            y_obs_rna = np.asarray(rna_obs_matched[rna_k], dtype=float)
+            ax_rna.scatter(t_rna_arr, y_obs_rna, s=50, color=color, zorder=5, label="mRNA (obs)")
+            # Overlay neural R_sim trajectory when available.
+            if R_sim is not None and p_idx < R_sim.shape[0]:
+                ax_rna.plot(
+                    t_rna_neural, R_sim[p_idx],
+                    "-", lw=2.5, color=color, alpha=0.85, label="mRNA (neural)",
+                )
+            ax_rna.set_title("mRNA / R(t)", fontsize=12, fontweight="bold")
+            ax_rna.set_xlabel("Time (min)")
+            ax_rna.set_ylabel("mRNA fold-change / R(t)")
+            ax_rna.legend(fontsize=9)
+            ax_rna.grid(alpha=0.25)
+
+        # --- Protein abundance panel ---
+        ax_prot = top_axes[panel_idx]
+        panel_idx += 1
+        if p_idx < A_sim.shape[0]:
+            ax_prot.plot(ts_arr, A_sim[p_idx], "-", lw=3, color=color, label="Abundance (neural)")
+        obs_k = prot_to_obs_k.get(p_idx, None)
+        if obs_k is not None and A_scaled is not None:
+            y_obs_A = np.asarray(A_scaled[obs_k], dtype=float)
+            mask_A = np.isfinite(y_obs_A)
+            if np.any(mask_A):
+                ax_prot.plot(
+                    t_prot[mask_A], y_obs_A[mask_A],
+                    "--", lw=2, alpha=0.6, color=color, label="Abundance (obs)",
+                )
+                ax_prot.scatter(
+                    t_prot[mask_A], y_obs_A[mask_A],
+                    marker="s", s=55, alpha=0.7, color=color, edgecolors="none",
+                )
+        ax_prot.set_title("Protein abundance / A(t)", fontsize=12, fontweight="bold")
+        ax_prot.set_xlabel("Time (min)")
+        ax_prot.set_ylabel("Protein abundance")
+        ax_prot.legend(fontsize=9)
+        ax_prot.grid(alpha=0.25)
+
+        # --- Phosphosites panel ---
+        ax_sites = top_axes[panel_idx]
+        cmap20 = _plt.cm.tab20
+        if prot_sites and P_sim.shape[0] > 0:
+            for si, site in enumerate(prot_sites):
+                s_idx = site_to_index.get(site, -1)
+                if s_idx < 0 or s_idx >= P_sim.shape[0]:
+                    continue
+                c = cmap20(si % 20)
+                residue = site.split("_", 1)[1] if "_" in site else site
+                ax_sites.plot(ts_arr, P_sim[s_idx], "-", lw=3, color=c, label=f"{residue} (neural)")
+                if P_scaled is not None and s_idx < P_scaled.shape[0]:
+                    y_obs_p = np.asarray(P_scaled[s_idx], dtype=float)
+                    mask_p = np.isfinite(y_obs_p)
+                    if np.any(mask_p):
+                        ax_sites.plot(
+                            t_prot[mask_p], y_obs_p[mask_p],
+                            "--", lw=2, alpha=0.45, color=c,
+                        )
+                        ax_sites.scatter(
+                            t_prot[mask_p], y_obs_p[mask_p],
+                            marker="s", s=45, alpha=0.6, color=c, edgecolors="none",
+                        )
+        else:
+            ax_sites.text(0.5, 0.5, "No phosphosites", transform=ax_sites.transAxes,
+                          ha="center", va="center", fontsize=10, alpha=0.7)
+        ax_sites.set_title("Phosphosites", fontsize=12, fontweight="bold")
+        ax_sites.set_xlabel("Time (min)")
+        ax_sites.set_ylabel("Relative signal p(t)")
+        ax_sites.legend(fontsize=8, loc="upper left", bbox_to_anchor=(1.02, 1.0),
+                        borderaxespad=0.0, frameon=True)
+        ax_sites.grid(alpha=0.25)
+
+        # --- Bottom strip: mechanistic vs neural rate priors ---
+        if has_rate_strip:
+            bot_axes = list(axes_grid[1])
+            # k_act strip in first available bottom axis.
+            ax_kact = bot_axes[0]
+            if k_act_init_vals is not None and p_idx < k_act_init_vals.shape[0]:
+                ax_kact.plot(t_kact_strip, k_act_init_vals[p_idx], "--",
+                             lw=1.5, color="steelblue", alpha=0.8, label="k_act (mech)")
+            if k_hats_obs is not None and p_idx < k_hats_obs.shape[1]:
+                ax_kact.plot(t_kact_strip, k_hats_obs[:, p_idx],
+                             "-", lw=2, color="steelblue", label="k_act (neural)")
+            ax_kact.set_title("k_act priors", fontsize=10)
+            ax_kact.set_xlabel("Time")
+            ax_kact.legend(fontsize=7)
+            ax_kact.grid(alpha=0.2)
+
+            # s_prod strip in second bottom axis (if present).
+            if len(bot_axes) > 1:
+                ax_sprod = bot_axes[1]
+                if s_prod_init_vals is not None and p_idx < s_prod_init_vals.shape[0]:
+                    ax_sprod.plot(t_sprod_strip, s_prod_init_vals[p_idx], "--",
+                                  lw=1.5, color="tomato", alpha=0.8, label="s_prod (mech)")
+                if s_hats_obs is not None and p_idx < s_hats_obs.shape[1]:
+                    ax_sprod.plot(t_sprod_strip, s_hats_obs[:, p_idx],
+                                  "-", lw=2, color="tomato", label="s_prod (neural)")
+                ax_sprod.set_title("s_prod priors", fontsize=10)
+                ax_sprod.set_xlabel("Time")
+                ax_sprod.legend(fontsize=7)
+                ax_sprod.grid(alpha=0.2)
+
+            # Hide remaining empty bottom axes.
+            for ax_b in bot_axes[2:]:
+                ax_b.set_visible(False)
+
+        fig.suptitle(f"{prot} — Neural ODE fit", fontsize=14, fontweight="bold", y=1.01)
+        _path = os.path.join(outdir, f"neural_fit_{prot}.png")
+        fig.savefig(_path, dpi=300, bbox_inches="tight")
+        _plt.close(fig)
+        logger.info("[neural_ode] Saved %s", _path)
 
 
 def save_neural_ode_plots(
@@ -1334,6 +1609,20 @@ def save_neural_ode_plots(
     model,
     loss_history: list,
     time_history: list,
+    *,
+    proteins: list | None = None,
+    sites: list | None = None,
+    P_scaled: np.ndarray | None = None,
+    A_scaled: np.ndarray | None = None,
+    prot_idx_for_A: np.ndarray | None = None,
+    t_protein: np.ndarray | None = None,
+    t_rna: np.ndarray | None = None,
+    rna_obs_matched: np.ndarray | None = None,
+    rna_model_prot_idx: np.ndarray | None = None,
+    k_act_init_vals: np.ndarray | None = None,
+    s_prod_init_vals: np.ndarray | None = None,
+    k_hats_obs: np.ndarray | None = None,
+    s_hats_obs: np.ndarray | None = None,
 ) -> None:
     """Save diagnostic visualisation plots from a neural ODE training run.
 
@@ -1347,6 +1636,9 @@ def save_neural_ode_plots(
     * ``neural_ode_trajectories.png``  – real vs model trajectories for the
       first sample, one subplot per ODE state dimension (dodgerblue = real,
       crimson = model).
+    * ``neural_fit_{prot}.png``        – per-protein horizontal layout
+      (mRNA | abundance | phosphosites) when *proteins* and related arrays
+      are provided.
 
     Args:
         outdir:       Directory where PNG files are written.  Created if absent.
@@ -1357,6 +1649,19 @@ def save_neural_ode_plots(
                       future latent-state visualisation).
         loss_history: List of per-step total loss values.
         time_history: List of per-step wall-clock times (seconds).
+        proteins:     Optional list of protein names for per-protein plots.
+        sites:        Optional list of phosphosite names.
+        P_scaled:     Optional observed phosphosite data (N, T_protein).
+        A_scaled:     Optional observed abundance data (n_obs, T_protein).
+        prot_idx_for_A: Optional mapping from A_scaled rows to protein indices.
+        t_protein:    Optional protein time points (defaults to *ts* when absent).
+        t_rna:        Optional RNA time points.
+        rna_obs_matched: Optional matched RNA observations (n_matched, T_rna).
+        rna_model_prot_idx: Optional protein indices for matched RNA genes.
+        k_act_init_vals: Mechanistic k_act priors (K, T_obs).
+        s_prod_init_vals: Mechanistic s_prod priors (K, T_obs).
+        k_hats_obs:   Neural-learned k_hat at observed protein times (T_obs, K).
+        s_hats_obs:   Neural-learned s_hat at observed protein times (T_obs, K).
     """
     import matplotlib  # noqa: PLC0415
     matplotlib.use("Agg")
@@ -1447,10 +1752,274 @@ def save_neural_ode_plots(
     except Exception as exc:  # pragma: no cover
         logger.warning("[neural_ode] Could not save trajectory plot: %s", exc)
 
-    # Latent activation heatmap: NeuralRateGenerator/JointNeuralMechanisticModel
-    # do not expose intermediate hidden-layer activations as a separate output.
-    # TODO: add a latent_activations() helper to NeuralRateGenerator and revisit.
-    logger.debug("[neural_ode] Latent heatmap skipped: model does not expose hidden states.")
+    # ------------------------------------------------------------------ #
+    # 3b. Latent activation heatmap                                       #
+    # ------------------------------------------------------------------ #
+    try:
+        if (
+            hasattr(model, "latent_activations")
+            and k_act_init_vals is not None
+            and s_prod_init_vals is not None
+            and t_protein is not None
+        ):
+            t_arr = np.asarray(t_protein)
+            T_obs = t_arr.shape[0]
+            t_max = float(t_arr[-1]) if T_obs > 0 else 1.0
+            k_hidden_all = []
+            s_hidden_all = []
+            for ti_idx in range(T_obs):
+                t_norm = jnp.array(
+                    [t_arr[ti_idx] / t_max], dtype=jnp.float64
+                )
+                k_prior = jnp.asarray(
+                    k_act_init_vals[:, ti_idx], dtype=jnp.float64
+                )
+                s_prior = jnp.asarray(
+                    s_prod_init_vals[:, ti_idx], dtype=jnp.float64
+                )
+                feats = jnp.concatenate([t_norm, k_prior, s_prior])
+                k_h, s_h = model.latent_activations(feats)
+                k_hidden_all.append(np.asarray(k_h))
+                s_hidden_all.append(np.asarray(s_h))
+
+            k_heatmap = np.stack(k_hidden_all, axis=0).T  # (width, T_obs)
+            s_heatmap = np.stack(s_hidden_all, axis=0).T
+
+            fig, axes = _plt.subplots(1, 2, figsize=(12, 4))
+            axes[0].imshow(k_heatmap, aspect="auto", cmap="RdBu_r", origin="lower")
+            axes[0].set_title("k_act latent activations")
+            axes[0].set_xlabel("Time index")
+            axes[0].set_ylabel("Neuron")
+            axes[1].imshow(s_heatmap, aspect="auto", cmap="RdBu_r", origin="lower")
+            axes[1].set_title("s_prod latent activations")
+            axes[1].set_xlabel("Time index")
+            axes[1].set_ylabel("Neuron")
+            _plt.tight_layout()
+            _path = os.path.join(outdir, "neural_ode_latent_heatmap.png")
+            fig.savefig(_path, dpi=150)
+            _plt.close(fig)
+            logger.info("[neural_ode] Saved %s", _path)
+        else:
+            logger.debug(
+                "[neural_ode] Latent heatmap skipped: "
+                "model does not expose latent_activations() or prior data unavailable."
+            )
+    except Exception as exc:
+        logger.debug("[neural_ode] Latent heatmap skipped: %s", exc)
+
+    # ------------------------------------------------------------------ #
+    # 4. Per-protein horizontal layout: mRNA | abundance | phosphosites   #
+    # ------------------------------------------------------------------ #
+    if proteins is not None and len(proteins) > 0:
+        try:
+            _save_neural_per_protein_plots(
+                outdir=outdir,
+                ts=ts,
+                ys=ys,
+                proteins=proteins,
+                sites=sites,
+                P_scaled=P_scaled,
+                A_scaled=A_scaled,
+                prot_idx_for_A=prot_idx_for_A,
+                t_protein=t_protein,
+                t_rna=t_rna,
+                rna_obs_matched=rna_obs_matched,
+                rna_model_prot_idx=rna_model_prot_idx,
+                k_act_init_vals=k_act_init_vals,
+                s_prod_init_vals=s_prod_init_vals,
+                k_hats_obs=k_hats_obs,
+                s_hats_obs=s_hats_obs,
+                _plt=_plt,
+            )
+        except Exception as exc:
+            logger.warning("[neural_ode] Per-protein plots skipped: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# neuralODE model bundle — save / load
+# ---------------------------------------------------------------------------
+
+#: Subdirectory name written inside the neural_ode/ output directory.
+_NEURAL_ODE_BUNDLE_SUBDIR = "neural_ode_bundle"
+
+
+def save_neural_ode_bundle(
+    neural_outdir: str,
+    *,
+    neural_model,
+    theta_refined: np.ndarray | None,
+    neural_cfg=None,
+    K: int,
+    learn_theta: bool = False,
+) -> str:
+    """Save the trained neuralODE model as a self-contained, reproducible bundle.
+
+    The bundle is written to ``{neural_outdir}/neural_ode_bundle/`` and
+    contains three files:
+
+    * ``neural_ode_model.eqx`` — Equinox-serialised ``NeuralRateGenerator``
+      weights (``eqx.tree_serialise_leaves``).  Load with
+      :func:`load_neural_ode_bundle`.
+    * ``neural_ode_bundle_meta.json`` — structural metadata required to
+      re-create the ``NeuralRateGenerator`` skeleton before deserialising
+      weights.  Includes ``K``, ``width``, ``depth``, ``in_size``
+      (``= 1 + 2*K``), ``learn_theta``, ``theta_dim``,
+      ``bundle_format_version``.
+    * ``theta_refined.npy`` — the mechanistic rate vector used with this
+      neural model (either refined jointly or copied from ``theta_best``).
+
+    This is **separate** from the PINN bundle: it never writes
+    ``pinn_model.eqx`` and uses a dedicated subdirectory.
+
+    Args:
+        neural_outdir: The neural ODE output directory (i.e.
+                       ``{outdir}/neural_ode/``).  The bundle is placed in
+                       a ``neural_ode_bundle/`` subdirectory.
+        neural_model:  Trained :class:`NeuralRateGenerator` Equinox module.
+        theta_refined: Mechanistic rate vector ``(theta_dim,)`` — either
+                       jointly refined or copied from ``theta_best``.
+        neural_cfg:    Neural-ODE config ``SimpleNamespace`` (provides
+                       ``width`` and ``depth``).
+        K:             Number of protein/gene species.
+        learn_theta:   Whether the bundle was produced by joint
+                       theta-refinement (stored in metadata only).
+
+    Returns:
+        str: Path to the bundle directory that was created.
+
+    Raises:
+        RuntimeError: If both ``neural_model`` and ``theta_refined`` are
+                      ``None``.
+    """
+    if neural_model is None and theta_refined is None:
+        raise RuntimeError(
+            "save_neural_ode_bundle: both neural_model and theta_refined are None."
+        )
+
+    _width = int(getattr(neural_cfg, "width", 32)) if neural_cfg is not None else 32
+    _depth = int(getattr(neural_cfg, "depth", 2))   if neural_cfg is not None else 2
+    _in_size = 1 + 2 * K  # fixed by NeuralRateGenerator architecture
+
+    bundle_dir = os.path.join(neural_outdir, _NEURAL_ODE_BUNDLE_SUBDIR)
+    os.makedirs(bundle_dir, exist_ok=True)
+
+    # ------------------------------------------------------------------ #
+    # 1. Structural metadata (needed to rebuild the skeleton)             #
+    # ------------------------------------------------------------------ #
+    meta: dict = {
+        "K": K,
+        "width": _width,
+        "depth": _depth,
+        "in_size": _in_size,
+        "learn_theta": bool(learn_theta),
+        "theta_dim": (
+            int(np.asarray(theta_refined).shape[0])
+            if theta_refined is not None
+            else None
+        ),
+        "bundle_format_version": 1,
+    }
+    meta_path = os.path.join(bundle_dir, "neural_ode_bundle_meta.json")
+    with open(meta_path, "w") as fh:
+        json.dump(meta, fh, indent=2)
+    logger.info("[neural_ode] Saved %s", meta_path)
+
+    # ------------------------------------------------------------------ #
+    # 2. Equinox model weights (NeuralRateGenerator only)                 #
+    # ------------------------------------------------------------------ #
+    if neural_model is not None:
+        model_path = os.path.join(bundle_dir, "neural_ode_model.eqx")
+        try:
+            eqx.tree_serialise_leaves(model_path, neural_model)
+            logger.info("[neural_ode] Saved %s", model_path)
+        except Exception as exc:
+            logger.warning(
+                "[neural_ode] Could not serialise neural model with eqx: %s", exc
+            )
+
+    # ------------------------------------------------------------------ #
+    # 3. Mechanistic parameter vector (copy)                              #
+    # ------------------------------------------------------------------ #
+    if theta_refined is not None:
+        theta_path = os.path.join(bundle_dir, "theta_refined.npy")
+        np.save(theta_path, np.asarray(theta_refined, dtype=np.float64))
+        logger.info("[neural_ode] Saved %s", theta_path)
+
+    logger.info("[neural_ode] Model bundle written to %s", bundle_dir)
+    return bundle_dir
+
+
+def load_neural_ode_bundle(
+    bundle_dir: str,
+) -> tuple:
+    """Load a neuralODE model bundle saved by :func:`save_neural_ode_bundle`.
+
+    Reconstructs the :class:`NeuralRateGenerator` skeleton from
+    ``neural_ode_bundle_meta.json``, then deserialises the weights from
+    ``neural_ode_model.eqx`` using
+    :func:`equinox.tree_deserialise_leaves`.
+
+    Args:
+        bundle_dir: Path to the ``neural_ode_bundle/`` directory created by
+                    :func:`save_neural_ode_bundle`.
+
+    Returns:
+        tuple: ``(neural_model, theta_refined, meta)`` where
+
+        * ``neural_model`` – loaded :class:`NeuralRateGenerator`
+          (or ``None`` if ``neural_ode_model.eqx`` is absent).
+        * ``theta_refined`` – ``np.ndarray`` mechanistic parameters
+          (or ``None`` if ``theta_refined.npy`` is absent).
+        * ``meta`` – ``dict`` with the structural metadata.
+
+    Raises:
+        FileNotFoundError: If ``neural_ode_bundle_meta.json`` is not found
+                           in *bundle_dir*.
+    """
+    meta_path = os.path.join(bundle_dir, "neural_ode_bundle_meta.json")
+    if not os.path.isfile(meta_path):
+        raise FileNotFoundError(
+            f"load_neural_ode_bundle: {meta_path!r} not found.  "
+            "Was the bundle created with save_neural_ode_bundle()?"
+        )
+
+    with open(meta_path) as fh:
+        meta = json.load(fh)
+
+    _K     = int(meta["K"])
+    _width = int(meta.get("width", 32))
+    _depth = int(meta.get("depth", 2))
+
+    # Build a skeleton with a fixed key (weights will be overwritten by
+    # eqx.tree_deserialise_leaves; the key value does not affect the loaded model).
+    skeleton = NeuralRateGenerator(K=_K, width=_width, depth=_depth, key=jax.random.PRNGKey(0))
+
+    neural_model = None
+    model_path = os.path.join(bundle_dir, "neural_ode_model.eqx")
+    if os.path.isfile(model_path):
+        try:
+            neural_model = eqx.tree_deserialise_leaves(model_path, skeleton)
+            logger.info("[neural_ode] Loaded neural model from %s", model_path)
+        except Exception as exc:
+            logger.warning(
+                "[neural_ode] Could not deserialise neural model: %s", exc
+            )
+    else:
+        logger.warning("[neural_ode] neural_ode_model.eqx not found in %s", bundle_dir)
+
+    theta_refined = None
+    theta_path = os.path.join(bundle_dir, "theta_refined.npy")
+    if os.path.isfile(theta_path):
+        theta_refined = np.load(theta_path)
+        logger.info(
+            "[neural_ode] Loaded theta_refined from %s (shape=%s)",
+            theta_path,
+            theta_refined.shape,
+        )
+    else:
+        logger.warning("[neural_ode] theta_refined.npy not found in %s", bundle_dir)
+
+    return neural_model, theta_refined, meta
 
 
 # ---------------------------------------------------------------------------
@@ -2005,22 +2574,52 @@ def run_neural_latent_rate_refinement(
 
     # ------------------------------------------------------------------
     # 10. Save latent rates
+    # k_act uses t_rna scale (mRNA-related); s_prod uses t_obs scale.
+    # Matches the convention in save_derived_rates / derived_rates_long.tsv.
     # ------------------------------------------------------------------
+
+    # Determine k_act time grid: use t_rna when available (mRNA-related rate).
+    if t_rna is not None and len(t_rna) > 0:
+        t_kact = np.asarray(t_rna, dtype=np.float64)
+        k_act_mech_rna, _, _ = _evaluate_mechanistic_rate_priors(
+            k_act_fn, s_prod_fn, t_kact
+        )
+        # Evaluate neural model at t_rna grid.
+        t_norms_rna = np.clip(t_kact / t_max, 0.0, 1.0)[:, None]
+        k_priors_rna = k_act_mech_rna.T  # (T_rna, K)
+        # s_prod priors at t_rna for features (needed by the NN but not saved).
+        s_prod_mech_rna_np = np.vstack(
+            [np.asarray(s_prod_fn(float(ti))) for ti in t_kact]
+        )  # (T_rna, K)
+        features_rna = np.concatenate(
+            [t_norms_rna, k_priors_rna, s_prod_mech_rna_np], axis=1
+        )
+        features_rna_j = jnp.asarray(features_rna, dtype=jnp.float64)
+        k_hats_rna_j, _ = jax.vmap(neural_model_opt)(features_rna_j)
+        k_hats_rna = np.asarray(k_hats_rna_j)  # (T_rna, K)
+    else:
+        t_kact = t_obs
+        k_act_mech_rna = k_act_init_vals  # (K, T_obs)
+        k_hats_rna = k_hats_obs          # (T_obs, K)
+
     rate_rows = []
-    for ti_idx, t_val in enumerate(t_obs):
+    for ti_idx, t_val in enumerate(t_kact):
         for p_idx, prot in enumerate(proteins):
             rate_rows.append(
                 {
                     "rate_type": "k_act",
                     "entity": prot,
                     "time": float(t_val),
-                    "mechanistic_prior": float(k_act_init_vals[p_idx, ti_idx]),
-                    "neural_learned": float(k_hats_obs[ti_idx, p_idx]),
+                    "mechanistic_prior": float(k_act_mech_rna[p_idx, ti_idx]),
+                    "neural_learned": float(k_hats_rna[ti_idx, p_idx]),
                     "difference": float(
-                        k_hats_obs[ti_idx, p_idx] - k_act_init_vals[p_idx, ti_idx]
+                        k_hats_rna[ti_idx, p_idx] - k_act_mech_rna[p_idx, ti_idx]
                     ),
                 }
             )
+
+    for ti_idx, t_val in enumerate(t_obs):
+        for p_idx, prot in enumerate(proteins):
             rate_rows.append(
                 {
                     "rate_type": "s_prod",
@@ -2044,10 +2643,11 @@ def run_neural_latent_rate_refinement(
     np.savez(
         os.path.join(neural_outdir, "neural_latent_rates.npz"),
         t_obs=t_obs,
+        t_kact=t_kact,
         proteins=np.array(proteins),
-        k_act_mechanistic=k_act_init_vals,
+        k_act_mechanistic=k_act_mech_rna,
         s_prod_mechanistic=s_prod_init_vals,
-        k_act_neural=k_hats_obs.T,
+        k_act_neural=k_hats_rna.T,
         s_prod_neural=s_hats_obs.T,
     )
 
@@ -2085,6 +2685,10 @@ def run_neural_latent_rate_refinement(
         abundance_max=float(abundance_max),
     )
 
+    # Build reverse mapping: protein index → row index in A_scaled.
+    # Only proteins in prot_idx_for_A have observed abundance data.
+    prot_to_obs_k = {int(prot_idx_for_A[k]): k for k in range(len(prot_idx_for_A))}
+
     ts_rows = []
     for ti_idx, t_val in enumerate(t_obs):
         for s_idx, site in enumerate(sites):
@@ -2100,15 +2704,72 @@ def run_neural_latent_rate_refinement(
                 }
             )
         for p_idx, prot in enumerate(proteins):
+            obs_k = prot_to_obs_k.get(p_idx, None)
+            if obs_k is not None and ti_idx < A_scaled.shape[1]:
+                obs_val = float(A_scaled[obs_k, ti_idx])
+            else:
+                obs_val = float("nan")
             ts_rows.append(
                 {
                     "time": float(t_val),
                     "entity_type": "abundance",
                     "entity": prot,
                     "value_neural": float(sim_obs["A_sim"][p_idx, ti_idx]),
-                    "value_observed": float("nan"),
+                    "value_observed": obs_val,
                 }
             )
+
+    # mRNA rows: simulate at t_rna and include observed mRNA values.
+    if has_mrna and t_rna is not None and len(t_rna) > 0:
+        t_rna_arr = np.asarray(t_rna, dtype=np.float64)
+        try:
+            sim_rna = _neural_simulate_dense(
+                model=neural_model_opt,
+                K=K,
+                M=M,
+                N=N,
+                mechanism=mechanism,
+                theta_j=theta_for_outputs_j,
+                y0_j=y0_j,
+                t0_val=t0_val,
+                t_dense=t_rna_arr,
+                prev_site_idx_j=prev_site_idx_j,
+                Cg_j=Cg_j,
+                Cl_j=Cl_j,
+                K_sk_j=K_sk_j,
+                R_j=R_j,
+                La_j=La_j,
+                spi_j=spi_j,
+                k2p_j=k2p_j,
+                rmp_j=rmp_j,
+                rmk_j=rmk_j,
+                t_max=t_max,
+                k_act_init_fn=k_act_fn,
+                s_prod_init_fn=s_prod_fn,
+                rtol=float(neural_cfg.rtol),
+                atol=float(neural_cfg.atol),
+                dt0=float(neural_cfg.dt0),
+                max_steps=int(neural_cfg.max_steps),
+                rna_relax=float(rna_relax),
+                abundance_max=float(abundance_max),
+            )
+            R_sim_rna = sim_rna["R_sim"]  # (K, T_rna)
+            rna_obs_arr = np.asarray(rna_obs_matched, dtype=np.float64)  # (n_matched, T_rna)
+            for gene_idx, p_idx in enumerate(rna_model_prot_idx):
+                prot_name = proteins[int(p_idx)]
+                for ti_idx, t_val in enumerate(t_rna_arr):
+                    obs_rna = float(rna_obs_arr[gene_idx, ti_idx]) if ti_idx < rna_obs_arr.shape[1] else float("nan")
+                    ts_rows.append(
+                        {
+                            "time": float(t_val),
+                            "entity_type": "mrna",
+                            "entity": prot_name,
+                            "value_neural": float(R_sim_rna[int(p_idx), ti_idx]),
+                            "value_observed": obs_rna,
+                        }
+                    )
+        except Exception as exc:
+            logger.warning("[neural_ode] mRNA rows in neural_fit_timeseries.tsv skipped: %s", exc)
 
     df_ts = pd.DataFrame(ts_rows)
     ts_path = os.path.join(neural_outdir, "neural_fit_timeseries.tsv")
@@ -2290,6 +2951,21 @@ def run_neural_latent_rate_refinement(
     with open(meta_path, "w") as fh:
         json.dump(metadata, fh, indent=2)
     logger.info("[neural_ode] Saved %s", meta_path)
+
+    # ------------------------------------------------------------------
+    # 15. Save model bundle (reproducible Equinox checkpoint)
+    # ------------------------------------------------------------------
+    try:
+        save_neural_ode_bundle(
+            neural_outdir,
+            neural_model=neural_model_opt,
+            theta_refined=theta_refined,
+            neural_cfg=neural_cfg,
+            K=K,
+            learn_theta=learn_theta,
+        )
+    except Exception as exc:
+        logger.warning("[neural_ode] Could not save model bundle: %s", exc)
 
     logger.info(
         "[neural_ode] Neural latent-rate refinement complete. Outputs saved to %s/",
