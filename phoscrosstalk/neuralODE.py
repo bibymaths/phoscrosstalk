@@ -1392,8 +1392,8 @@ def _save_neural_per_protein_plots(
 
     # Determine whether k_act / s_prod bottom strip is available.
     has_rate_strip = (
-        k_act_init_vals is not None and k_hats_obs is not None
-        or s_prod_init_vals is not None and s_hats_obs is not None
+        (k_act_init_vals is not None and k_hats_obs is not None)
+        or (s_prod_init_vals is not None and s_hats_obs is not None)
     )
     # Determine time axis for rate strip: use t_rna for k_act, t_prot for s_prod.
     t_kact_strip = t_rna_arr if t_rna_arr is not None else t_prot
