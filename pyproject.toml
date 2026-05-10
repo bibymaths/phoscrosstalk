@@ -37,6 +37,7 @@ dependencies = [
   "jaxopt>=0.8.5",
   "mpax>=0.2.2",
   "jax>=0.8.3",
+  "blackjax>=1.0",
 ]
 
 [project.optional-dependencies]

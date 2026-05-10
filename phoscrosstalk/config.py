@@ -306,6 +306,29 @@ _DEFAULTS = {
         # Never fills the original training arrays.
         "replace_nans_at_start": None,
     },
+    # MCMC posterior inference using BlackJax NUTS.
+    # Runs after the multi-start optimisation (and optionally neural_ode mode).
+    # Disabled by default; set enabled = true to activate.
+    "posterior": {
+        # Set to true to run MCMC posterior inference after optimisation.
+        "enabled": False,
+        # NUTS warm-up steps (dual-averaging step-size adaptation).
+        "num_warmup": 500,
+        # Number of posterior samples to draw.
+        "num_samples": 1000,
+        # Initial step size for NUTS (adapted during warm-up).
+        "step_size": 1e-3,
+        # Sub-sample every thin_factor-th sample to reduce autocorrelation.
+        "thin_factor": 10,
+        # Target acceptance rate for dual-averaging adaptation.
+        "target_acceptance_rate": 0.8,
+        # Random seed for reproducibility.
+        "seed": 42,
+        # Number of leading parameters to include in trace and pairs plots.
+        "plot_params": 8,
+        # Observation noise standard deviation for the Gaussian likelihood.
+        "sigma_noise": 0.1,
+    },
 }
 
 

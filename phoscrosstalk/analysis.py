@@ -1977,3 +1977,495 @@ def save_derived_rates(
         )
 
     logger.success("[*] Saved derived_rates.npz and derived_rates_long.tsv")
+
+
+# ---------------------------------------------------------------------------
+# Neural ODE analysis helpers
+# ---------------------------------------------------------------------------
+
+
+def plot_neural_ode_overlay(
+    outdir: str,
+    *,
+    ts: np.ndarray,
+    ys: dict,
+    proteins: list,
+    sites: list,
+    P_scaled: np.ndarray | None = None,
+    A_scaled: np.ndarray | None = None,
+    prot_idx_for_A: np.ndarray | None = None,
+    t_protein: np.ndarray | None = None,
+    t_rna: np.ndarray | None = None,
+    rna_obs_matched: np.ndarray | None = None,
+    rna_model_prot_idx: np.ndarray | None = None,
+    k_act_init_vals: np.ndarray | None = None,
+    s_prod_init_vals: np.ndarray | None = None,
+    k_hats_obs: np.ndarray | None = None,
+    s_hats_obs: np.ndarray | None = None,
+) -> None:
+    """Plot observed values and mechanistic + neural fit curves as overlays.
+
+    For each protein, saves ``neural_overlay_{prot}.png`` in *outdir* showing:
+
+    * Observed data (scatter markers).
+    * Neural ODE fitted curve (solid line).
+    * Mechanistic prior trajectory (dashed line, when *k_act_init_vals* /
+      *s_prod_init_vals* are provided).
+    * Learned k_act and s_prod curves in a bottom strip below the ODE state panels.
+
+    This function reuses the same file-reading pattern as
+    :func:`plot_fitted_simulation`.
+
+    Args:
+        outdir:           Directory to write PNG files.
+        ts:               Neural ODE evaluation time points (protein scale).
+        ys:               Dict with ``"P_sim"`` ``(N, T)`` and ``"A_sim"`` ``(K, T)``.
+        proteins:         List of protein names.
+        sites:            List of phosphosite names.
+        P_scaled:         Observed phosphosite data ``(N, T_prot)``.
+        A_scaled:         Observed abundance data ``(n_obs, T_prot)``.
+        prot_idx_for_A:   Protein indices for *A_scaled* rows.
+        t_protein:        Protein time points (defaults to *ts*).
+        t_rna:            RNA time points (optional).
+        rna_obs_matched:  Matched RNA observations ``(n_matched, T_rna)``.
+        rna_model_prot_idx: Protein indices for RNA gene rows.
+        k_act_init_vals:  Mechanistic k_act ``(K, T_obs)``.
+        s_prod_init_vals: Mechanistic s_prod ``(K, T_obs)``.
+        k_hats_obs:       Neural k_hat ``(T_obs, K)``.
+        s_hats_obs:       Neural s_hat ``(T_obs, K)``.
+
+    Returns:
+        None: PNG files are written to *outdir*.
+    """
+    import matplotlib  # noqa: PLC0415
+    matplotlib.use("Agg")
+    from matplotlib import pyplot as _plt  # noqa: PLC0415
+
+    os.makedirs(outdir, exist_ok=True)
+
+    ts_arr = np.asarray(ts)
+    t_prot = np.asarray(t_protein) if t_protein is not None else ts_arr
+    P_sim = np.asarray(ys.get("P_sim", np.empty((0, len(ts_arr)))))
+    A_sim = np.asarray(ys.get("A_sim", np.empty((0, len(ts_arr)))))
+
+    has_mech_priors = k_act_init_vals is not None and s_prod_init_vals is not None
+    has_neural_rates = k_hats_obs is not None and s_hats_obs is not None
+
+    prot_to_obs_k: dict[int, int] = {}
+    if prot_idx_for_A is not None and A_scaled is not None:
+        for k, p_idx in enumerate(prot_idx_for_A):
+            prot_to_obs_k[int(p_idx)] = k
+
+    prot_to_rna_k: dict[int, int] = {}
+    has_rna_global = False
+    t_rna_arr = None
+    if rna_model_prot_idx is not None and rna_obs_matched is not None and t_rna is not None and len(t_rna) > 0:
+        for k, p_idx in enumerate(rna_model_prot_idx):
+            prot_to_rna_k[int(p_idx)] = k
+        has_rna_global = len(prot_to_rna_k) > 0
+        t_rna_arr = np.asarray(t_rna)
+
+    site_to_prot: dict[str, str] = {}
+    for s_name in sites:
+        parts = s_name.split("_", 1)
+        site_to_prot[s_name] = parts[0]
+
+    cmap10 = _plt.cm.tab10
+
+    for p_idx, prot in enumerate(proteins):
+        color = cmap10(p_idx % 10)
+        prot_sites = [s for s in sites if site_to_prot.get(s) == prot]
+        has_rna_for_prot = has_rna_global and (p_idx in prot_to_rna_k)
+
+        # Number of ODE state panels + bottom parameter strip
+        n_state_panels = (1 if has_rna_for_prot else 0) + 2  # mRNA + abundance + phospho
+        n_rate_panels = 2 if (has_mech_priors or has_neural_rates) else 0
+        n_rows = 2 if n_rate_panels > 0 else 1
+
+        if n_rate_panels > 0:
+            fig, axes = _plt.subplots(
+                n_rows, max(n_state_panels, n_rate_panels),
+                figsize=(9 * max(n_state_panels, n_rate_panels), 12),
+                gridspec_kw={"height_ratios": [3, 1], "wspace": 0.15, "hspace": 0.35},
+                constrained_layout=False,
+            )
+            state_axes = axes[0, :n_state_panels]
+            rate_axes = axes[1, :n_rate_panels]
+            # Hide unused subplots in rate row
+            for ax in axes[1, n_rate_panels:]:
+                ax.set_visible(False)
+        else:
+            fig, axes_1d = _plt.subplots(1, n_state_panels, figsize=(9 * n_state_panels, 7),
+                                          gridspec_kw={"wspace": 0.15}, constrained_layout=True)
+            state_axes = [axes_1d] if n_state_panels == 1 else list(axes_1d)
+            rate_axes = []
+
+        panel_idx = 0
+
+        # mRNA panel
+        if has_rna_for_prot and t_rna_arr is not None:
+            ax_rna = state_axes[panel_idx]
+            panel_idx += 1
+            rna_k = prot_to_rna_k[p_idx]
+            y_obs_rna = np.asarray(rna_obs_matched[rna_k], dtype=float)
+            ax_rna.scatter(t_rna_arr, y_obs_rna, s=50, color=color, zorder=5, label="mRNA (obs)")
+            ax_rna.set_title("mRNA / R(t)", fontsize=12, fontweight="bold")
+            ax_rna.set_xlabel("Time (min)")
+            ax_rna.set_ylabel("mRNA fold-change")
+            ax_rna.legend(fontsize=9)
+            ax_rna.grid(alpha=0.25)
+
+        # Abundance panel
+        ax_prot = state_axes[panel_idx]
+        panel_idx += 1
+        if p_idx < A_sim.shape[0]:
+            ax_prot.plot(ts_arr, A_sim[p_idx], "-", lw=3, color=color, label="Abundance (neural)")
+        obs_k = prot_to_obs_k.get(p_idx)
+        if obs_k is not None and A_scaled is not None:
+            y_obs_A = np.asarray(A_scaled[obs_k], dtype=float)
+            m = np.isfinite(y_obs_A)
+            if np.any(m):
+                ax_prot.plot(t_prot[m], y_obs_A[m], "--", lw=2, alpha=0.6, color=color, label="Abundance (obs)")
+                ax_prot.scatter(t_prot[m], y_obs_A[m], marker="s", s=55, alpha=0.7, color=color, edgecolors="none")
+        ax_prot.set_title("Protein abundance / A(t)", fontsize=12, fontweight="bold")
+        ax_prot.set_xlabel("Time (min)")
+        ax_prot.set_ylabel("Protein abundance")
+        ax_prot.legend(fontsize=9)
+        ax_prot.grid(alpha=0.25)
+
+        # Phosphosites panel
+        ax_sites = state_axes[panel_idx]
+        cmap20 = _plt.cm.tab20
+        for si, site in enumerate(prot_sites):
+            try:
+                s_idx = sites.index(site)
+            except ValueError:
+                continue
+            if s_idx >= P_sim.shape[0]:
+                continue
+            c = cmap20(si % 20)
+            residue = site.split("_", 1)[1] if "_" in site else site
+            ax_sites.plot(ts_arr, P_sim[s_idx], "-", lw=3, color=c, label=f"{residue} (neural)")
+            if P_scaled is not None and s_idx < P_scaled.shape[0]:
+                y_obs_p = np.asarray(P_scaled[s_idx], dtype=float)
+                m = np.isfinite(y_obs_p)
+                if np.any(m):
+                    ax_sites.plot(t_prot[m], y_obs_p[m], "--", lw=2, alpha=0.45, color=c)
+                    ax_sites.scatter(t_prot[m], y_obs_p[m], marker="s", s=45, alpha=0.6, color=c, edgecolors="none")
+        if not prot_sites:
+            ax_sites.text(0.5, 0.5, "No phosphosites", transform=ax_sites.transAxes,
+                          ha="center", va="center", fontsize=10, alpha=0.7)
+        ax_sites.set_title("Phosphosites", fontsize=12, fontweight="bold")
+        ax_sites.set_xlabel("Time (min)")
+        ax_sites.set_ylabel("Relative signal p(t)")
+        ax_sites.legend(fontsize=8, loc="upper left", bbox_to_anchor=(1.02, 1.0),
+                        borderaxespad=0.0, frameon=True)
+        ax_sites.grid(alpha=0.25)
+
+        # --- Bottom rate strip ---
+        if n_rate_panels > 0:
+            # k_act panel
+            ax_k = rate_axes[0]
+            if has_mech_priors and p_idx < k_act_init_vals.shape[0]:
+                ax_k.plot(ts_arr, k_act_init_vals[p_idx], "--", lw=1.5, color="gray", label="k_act mech")
+            if has_neural_rates and p_idx < k_hats_obs.shape[1]:
+                ax_k.plot(ts_arr, k_hats_obs[:, p_idx], "-", lw=1.5, color=color, label="k_act neural")
+            ax_k.set_title("k_act(t)", fontsize=10)
+            ax_k.set_xlabel("Time (min)")
+            ax_k.set_ylabel("k_act")
+            ax_k.legend(fontsize=8)
+            ax_k.grid(alpha=0.2)
+
+            # s_prod panel
+            ax_s = rate_axes[1]
+            if has_mech_priors and p_idx < s_prod_init_vals.shape[0]:
+                ax_s.plot(ts_arr, s_prod_init_vals[p_idx], "--", lw=1.5, color="gray", label="s_prod mech")
+            if has_neural_rates and p_idx < s_hats_obs.shape[1]:
+                ax_s.plot(ts_arr, s_hats_obs[:, p_idx], "-", lw=1.5, color=color, label="s_prod neural")
+            ax_s.set_title("s_prod(t)", fontsize=10)
+            ax_s.set_xlabel("Time (min)")
+            ax_s.set_ylabel("s_prod")
+            ax_s.legend(fontsize=8)
+            ax_s.grid(alpha=0.2)
+
+        fig.suptitle(f"{prot} — Neural ODE overlay", fontsize=14, fontweight="bold", y=1.01)
+        _path = os.path.join(outdir, f"neural_overlay_{prot}.png")
+        fig.savefig(_path, dpi=300, bbox_inches="tight")
+        _plt.close(fig)
+        logger.info("[neural_ode] Saved overlay plot %s", _path)
+
+
+def save_neural_ode_residuals(
+    outdir: str,
+    *,
+    ts: np.ndarray,
+    ys: dict,
+    proteins: list,
+    sites: list,
+    P_scaled: np.ndarray | None = None,
+    A_scaled: np.ndarray | None = None,
+    prot_idx_for_A: np.ndarray | None = None,
+    t_protein: np.ndarray | None = None,
+    t_rna: np.ndarray | None = None,
+    rna_obs_matched: np.ndarray | None = None,
+    rna_model_prot_idx: np.ndarray | None = None,
+    mech_P_sim: np.ndarray | None = None,
+    mech_A_sim: np.ndarray | None = None,
+    mech_R_sim: np.ndarray | None = None,
+    mech_t: np.ndarray | None = None,
+) -> None:
+    """Save per-row time-wise residuals for each ODE state.
+
+    Writes ``neural_residuals.tsv`` to *outdir* in long format.  Each row
+    records the entity, time, neural residual (neural_fit − observed), and —
+    when mechanistic simulation arrays are provided — the mechanistic residual
+    (mech_fit − observed) for direct comparison.
+
+    Time scales:
+
+    * mRNA / R(t): uses *t_rna* (RNA-specific time axis).
+    * Protein abundance / A(t): uses *t_protein* (protein time axis).
+    * Phosphosite / P(t): uses *t_protein* (protein time axis).
+
+    Args:
+        outdir:         Directory to write ``neural_residuals.tsv``.
+        ts:             Neural ODE evaluation time points (protein scale).
+        ys:             Dict with ``"P_sim"`` ``(N, T)`` and ``"A_sim"`` ``(K, T)``.
+        proteins:       List of protein names.
+        sites:          List of phosphosite names.
+        P_scaled:       Observed phosphosite data ``(N, T_prot)``.
+        A_scaled:       Observed abundance data ``(n_obs, T_prot)``.
+        prot_idx_for_A: Protein indices for *A_scaled* rows.
+        t_protein:      Protein time points (defaults to *ts*).
+        t_rna:          RNA time points.
+        rna_obs_matched: Matched RNA observations ``(n_matched, T_rna)``.
+        rna_model_prot_idx: Protein indices for each RNA gene row.
+        mech_P_sim:     Mechanistic phosphosite simulation ``(N, T_mech)``.
+        mech_A_sim:     Mechanistic abundance simulation ``(K, T_mech)``.
+        mech_R_sim:     Mechanistic mRNA simulation ``(K, T_mech)``.
+        mech_t:         Time points for mechanistic simulation (defaults to *t_protein*).
+
+    Returns:
+        None: ``neural_residuals.tsv`` is written to *outdir*.
+    """
+    os.makedirs(outdir, exist_ok=True)
+
+    ts_arr = np.asarray(ts)
+    t_prot = np.asarray(t_protein) if t_protein is not None else ts_arr
+    t_mech = np.asarray(mech_t) if mech_t is not None else t_prot
+    P_sim = np.asarray(ys.get("P_sim", np.empty((0, len(ts_arr)))))
+    A_sim = np.asarray(ys.get("A_sim", np.empty((0, len(ts_arr)))))
+
+    prot_to_obs_k: dict[int, int] = {}
+    if prot_idx_for_A is not None and A_scaled is not None:
+        for k, p_idx in enumerate(prot_idx_for_A):
+            prot_to_obs_k[int(p_idx)] = k
+
+    prot_to_rna_k: dict[int, int] = {}
+    t_rna_arr = None
+    if rna_model_prot_idx is not None and rna_obs_matched is not None and t_rna is not None and len(t_rna) > 0:
+        for k, p_idx in enumerate(rna_model_prot_idx):
+            prot_to_rna_k[int(p_idx)] = k
+        t_rna_arr = np.asarray(t_rna)
+
+    site_to_prot: dict[str, str] = {}
+    for s_name in sites:
+        parts = s_name.split("_", 1)
+        site_to_prot[s_name] = parts[0]
+
+    rows: list[dict] = []
+
+    # Phosphosite residuals
+    for s_idx, site in enumerate(sites):
+        if s_idx >= P_sim.shape[0]:
+            continue
+        y_neural = P_sim[s_idx]  # (T,)
+        y_obs = np.asarray(P_scaled[s_idx], dtype=float) if P_scaled is not None and s_idx < P_scaled.shape[0] else None
+
+        for ti_idx, t_val in enumerate(ts_arr):
+            obs_val = float(y_obs[ti_idx]) if (y_obs is not None and ti_idx < len(y_obs)) else float("nan")
+            neural_val = float(y_neural[ti_idx])
+            neural_resid = neural_val - obs_val if np.isfinite(obs_val) else float("nan")
+
+            # Mechanistic residual at the nearest time index
+            mech_resid = float("nan")
+            if mech_P_sim is not None and s_idx < mech_P_sim.shape[0]:
+                mech_ti = int(np.argmin(np.abs(t_mech - t_val))) if len(t_mech) > 0 else 0
+                mech_val = float(mech_P_sim[s_idx, mech_ti])
+                mech_resid = mech_val - obs_val if np.isfinite(obs_val) else float("nan")
+
+            rows.append({
+                "entity_type": "phosphosite",
+                "entity": site,
+                "protein": site_to_prot.get(site, ""),
+                "time": float(t_val),
+                "value_observed": obs_val,
+                "value_neural": neural_val,
+                "residual_neural": neural_resid,
+                "value_mechanistic": float(mech_P_sim[s_idx, int(np.argmin(np.abs(t_mech - t_val)))]) if (mech_P_sim is not None and s_idx < mech_P_sim.shape[0]) else float("nan"),
+                "residual_mechanistic": mech_resid,
+            })
+
+    # Abundance residuals
+    for p_idx, prot in enumerate(proteins):
+        if p_idx >= A_sim.shape[0]:
+            continue
+        y_neural = A_sim[p_idx]
+        obs_k = prot_to_obs_k.get(p_idx)
+        y_obs = np.asarray(A_scaled[obs_k], dtype=float) if (obs_k is not None and A_scaled is not None) else None
+
+        for ti_idx, t_val in enumerate(ts_arr):
+            obs_val = float(y_obs[ti_idx]) if (y_obs is not None and ti_idx < len(y_obs)) else float("nan")
+            neural_val = float(y_neural[ti_idx])
+            neural_resid = neural_val - obs_val if np.isfinite(obs_val) else float("nan")
+
+            mech_resid = float("nan")
+            mech_val_out = float("nan")
+            if mech_A_sim is not None and p_idx < mech_A_sim.shape[0]:
+                mech_ti = int(np.argmin(np.abs(t_mech - t_val))) if len(t_mech) > 0 else 0
+                mech_val_out = float(mech_A_sim[p_idx, mech_ti])
+                mech_resid = mech_val_out - obs_val if np.isfinite(obs_val) else float("nan")
+
+            rows.append({
+                "entity_type": "abundance",
+                "entity": prot,
+                "protein": prot,
+                "time": float(t_val),
+                "value_observed": obs_val,
+                "value_neural": neural_val,
+                "residual_neural": neural_resid,
+                "value_mechanistic": mech_val_out,
+                "residual_mechanistic": mech_resid,
+            })
+
+    # mRNA residuals
+    if t_rna_arr is not None:
+        for p_idx, prot in enumerate(proteins):
+            rna_k = prot_to_rna_k.get(p_idx)
+            if rna_k is None:
+                continue
+            y_obs_rna = np.asarray(rna_obs_matched[rna_k], dtype=float)
+
+            for ti_idx, t_val in enumerate(t_rna_arr):
+                obs_val = float(y_obs_rna[ti_idx]) if ti_idx < len(y_obs_rna) else float("nan")
+
+                mech_val_out = float("nan")
+                mech_resid = float("nan")
+                if mech_R_sim is not None and p_idx < mech_R_sim.shape[0]:
+                    t_ref = t_mech if mech_t is not None else (t_rna_arr if len(t_rna_arr) == mech_R_sim.shape[1] else t_mech)
+                    mech_ti = int(np.argmin(np.abs(t_ref - t_val))) if len(t_ref) > 0 else 0
+                    mech_val_out = float(mech_R_sim[p_idx, mech_ti])
+                    mech_resid = mech_val_out - obs_val if np.isfinite(obs_val) else float("nan")
+
+                rows.append({
+                    "entity_type": "mrna",
+                    "entity": prot,
+                    "protein": prot,
+                    "time": float(t_val),
+                    "value_observed": obs_val,
+                    "value_neural": float("nan"),  # neural mRNA not available at t_rna in this scope
+                    "residual_neural": float("nan"),
+                    "value_mechanistic": mech_val_out,
+                    "residual_mechanistic": mech_resid,
+                })
+
+    df_resid = pd.DataFrame(rows)
+    resid_path = os.path.join(outdir, "neural_residuals.tsv")
+    df_resid.to_csv(resid_path, sep="\t", index=False)
+    logger.info("[neural_ode] Saved residuals to %s (%d rows)", resid_path, len(rows))
+
+
+def plot_neural_residuals(
+    outdir: str,
+    *,
+    residuals_tsv: str | None = None,
+) -> None:
+    """Visualise and compare neural vs mechanistic residuals.
+
+    Reads ``neural_residuals.tsv`` (either from *residuals_tsv* or from
+    *outdir*/neural_residuals.tsv) and generates:
+
+    * ``neural_residuals_heatmap_phospho.png`` – heatmap of neural phosphosite
+      residuals (sites × time).
+    * ``neural_vs_mech_residuals.png`` – scatter of neural residual vs
+      mechanistic residual for all entity types, coloured by entity type.
+
+    Args:
+        outdir:         Directory to save PNG files (and to find the TSV when
+                        *residuals_tsv* is None).
+        residuals_tsv:  Path to ``neural_residuals.tsv``.  Defaults to
+                        ``outdir/neural_residuals.tsv``.
+
+    Returns:
+        None: PNG files are written to *outdir*.
+    """
+    import matplotlib  # noqa: PLC0415
+    matplotlib.use("Agg")
+    from matplotlib import pyplot as _plt  # noqa: PLC0415
+
+    os.makedirs(outdir, exist_ok=True)
+
+    tsv_path = residuals_tsv or os.path.join(outdir, "neural_residuals.tsv")
+    if not os.path.exists(tsv_path):
+        logger.warning("[neural_ode] neural_residuals.tsv not found at %s; skipping plot.", tsv_path)
+        return
+
+    df = pd.read_csv(tsv_path, sep="\t")
+
+    # ------------------------------------------------------------------ #
+    # 1. Neural phosphosite residuals heatmap                             #
+    # ------------------------------------------------------------------ #
+    try:
+        df_p = df[df["entity_type"] == "phosphosite"].copy()
+        if not df_p.empty and "residual_neural" in df_p.columns:
+            pivot = df_p.pivot_table(index="entity", columns="time", values="residual_neural", aggfunc="mean")
+            n_sites = len(pivot)
+            fig_h = max(6, min(40, n_sites * 0.35))
+            fig, ax = _plt.subplots(figsize=(max(8, len(pivot.columns) * 1.2), fig_h))
+            import seaborn as sns  # noqa: PLC0415
+            sns.heatmap(pivot, ax=ax, cmap="vlag", center=0,
+                        xticklabels=[f"{c:.0f}" for c in pivot.columns],
+                        yticklabels=True, linewidths=0)
+            ax.set_title("Neural ODE — Phosphosite Residuals (neural − observed)", fontsize=12)
+            ax.set_xlabel("Time (min)")
+            ax.set_ylabel("Phosphosite")
+            _plt.tight_layout()
+            _path = os.path.join(outdir, "neural_residuals_heatmap_phospho.png")
+            fig.savefig(_path, dpi=300)
+            _plt.close(fig)
+            logger.info("[neural_ode] Saved %s", _path)
+    except Exception as exc:
+        logger.warning("[neural_ode] Phosphosite residual heatmap skipped: %s", exc)
+
+    # ------------------------------------------------------------------ #
+    # 2. Neural vs mechanistic residuals scatter                          #
+    # ------------------------------------------------------------------ #
+    try:
+        df_valid = df.dropna(subset=["residual_neural", "residual_mechanistic"])
+        if len(df_valid) >= 3:
+            fig, ax = _plt.subplots(figsize=(8, 8))
+            entity_types = df_valid["entity_type"].unique()
+            colors = _plt.cm.tab10(np.arange(len(entity_types)) / len(entity_types))
+            for et, col in zip(entity_types, colors):
+                sub = df_valid[df_valid["entity_type"] == et]
+                ax.scatter(sub["residual_mechanistic"], sub["residual_neural"],
+                           s=20, alpha=0.6, color=col, label=et)
+            lim = float(max(df_valid[["residual_neural", "residual_mechanistic"]].abs().max().max(), 1e-6))
+            ax.axline((0, 0), slope=1, color="gray", lw=1.5, linestyle="--", label="identity")
+            ax.axhline(0, color="gray", lw=0.8, alpha=0.5)
+            ax.axvline(0, color="gray", lw=0.8, alpha=0.5)
+            ax.set_xlim(-lim, lim)
+            ax.set_ylim(-lim, lim)
+            ax.set_xlabel("Mechanistic residual (mech − observed)")
+            ax.set_ylabel("Neural residual (neural − observed)")
+            ax.set_title("Neural ODE vs Mechanistic Residuals")
+            ax.legend(fontsize=9)
+            ax.grid(alpha=0.25)
+            _plt.tight_layout()
+            _path = os.path.join(outdir, "neural_vs_mech_residuals.png")
+            fig.savefig(_path, dpi=300)
+            _plt.close(fig)
+            logger.info("[neural_ode] Saved %s", _path)
+    except Exception as exc:
+        logger.warning("[neural_ode] Neural vs mech residuals scatter skipped: %s", exc)
+

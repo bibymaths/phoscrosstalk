@@ -1317,14 +1317,198 @@ def _neural_simulate_dense(
     )
 
     xs = np.asarray(sol.ys)
+    R_sim = np.clip(xs[:, :K].T, 0.0, None)
     P_sim = np.clip(xs[:, 3 * K + M :].T, 0.0, None)
     A_sim = np.clip(xs[:, 2 * K : 3 * K].T, 0.0, abundance_max)
-    return {"P_sim": P_sim, "A_sim": A_sim, "xs": xs}
+    return {"P_sim": P_sim, "A_sim": A_sim, "R_sim": R_sim, "xs": xs}
 
 
 # ---------------------------------------------------------------------------
 # Visualisation helpers
 # ---------------------------------------------------------------------------
+
+
+def _save_neural_per_protein_plots(
+    outdir,
+    ts,
+    ys,
+    proteins,
+    sites,
+    P_scaled,
+    A_scaled,
+    prot_idx_for_A,
+    t_protein,
+    t_rna,
+    rna_obs_matched,
+    rna_model_prot_idx,
+    k_act_init_vals,
+    s_prod_init_vals,
+    k_hats_obs,
+    s_hats_obs,
+    _plt,
+):
+    """Generate per-protein horizontal layout PNG files for the neural ODE outputs.
+
+    For each protein, creates ``neural_fit_{prot}.png`` with up to three panels:
+
+    * **mRNA / R(t)** – observed vs neural-model trajectory (when RNA data available).
+    * **Protein abundance / A(t)** – observed vs neural-model trajectory.
+    * **Phosphosites** – observed vs neural-model trajectory for all sites of the protein.
+
+    A bottom info strip shows the mechanistic vs neural k_act and s_prod priors when
+    those arrays are provided.
+
+    Args:
+        outdir: Directory to write PNG files.
+        ts: Time points at which *ys* was evaluated (protein time scale).
+        ys: Dict with ``"P_sim"`` ``(N, T)`` and ``"A_sim"`` ``(K, T)``.
+        proteins: List of protein names.
+        sites: List of phosphosite names (``"PROT_Res"`` format).
+        P_scaled: Observed phosphosite data ``(N, T_protein)``.
+        A_scaled: Observed protein abundance ``(n_obs, T_protein)``.
+        prot_idx_for_A: Protein indices for each row of *A_scaled*.
+        t_protein: Protein time points; defaults to *ts* when None.
+        t_rna: RNA-specific time points (optional).
+        rna_obs_matched: Matched RNA observations ``(n_matched, T_rna)`` (optional).
+        rna_model_prot_idx: Protein indices for each row of *rna_obs_matched* (optional).
+        k_act_init_vals: Mechanistic k_act priors ``(K, T_obs)`` (optional).
+        s_prod_init_vals: Mechanistic s_prod priors ``(K, T_obs)`` (optional).
+        k_hats_obs: Neural k_hat ``(T_obs, K)`` (optional).
+        s_hats_obs: Neural s_hat ``(T_obs, K)`` (optional).
+        _plt: Matplotlib pyplot module (already imported by the caller).
+    """
+    os.makedirs(outdir, exist_ok=True)
+
+    ts_arr = np.asarray(ts)
+    t_prot = np.asarray(t_protein) if t_protein is not None else ts_arr
+    P_sim = np.asarray(ys.get("P_sim", np.empty((0, len(ts_arr)))))
+    A_sim = np.asarray(ys.get("A_sim", np.empty((0, len(ts_arr)))))
+
+    # Build site-to-protein mapping.
+    site_to_prot = {}
+    for s_name in (sites or []):
+        parts = s_name.split("_", 1)
+        site_to_prot[s_name] = parts[0]
+
+    # Build protein → observed abundance row index mapping.
+    prot_to_obs_k = {}
+    if prot_idx_for_A is not None and A_scaled is not None:
+        for k, p_idx in enumerate(prot_idx_for_A):
+            prot_to_obs_k[int(p_idx)] = k
+
+    # Build protein → matched RNA row index mapping.
+    prot_to_rna_k = {}
+    if rna_model_prot_idx is not None:
+        for k, p_idx in enumerate(rna_model_prot_idx):
+            prot_to_rna_k[int(p_idx)] = k
+
+    has_rna_global = (
+        rna_obs_matched is not None
+        and t_rna is not None
+        and len(t_rna) > 0
+        and len(prot_to_rna_k) > 0
+    )
+    t_rna_arr = np.asarray(t_rna) if (t_rna is not None and len(t_rna) > 0) else None
+
+    cmap10 = _plt.cm.tab10
+
+    for p_idx, prot in enumerate(proteins):
+        prot_sites = [s for s in (sites or []) if site_to_prot.get(s) == prot]
+        has_rna_for_prot = has_rna_global and (p_idx in prot_to_rna_k)
+        n_panels = (1 if has_rna_for_prot else 0) + 2  # mRNA + abundance + phospho
+        color = cmap10(p_idx % 10)
+
+        fig, axes = _plt.subplots(
+            1, n_panels,
+            figsize=(9 * n_panels, 7),
+            gridspec_kw={"wspace": 0.15},
+            constrained_layout=True,
+        )
+        if n_panels == 1:
+            axes = [axes]
+        else:
+            axes = list(axes)
+
+        panel_idx = 0
+
+        # --- mRNA panel ---
+        if has_rna_for_prot:
+            ax_rna = axes[panel_idx]
+            panel_idx += 1
+            rna_k = prot_to_rna_k[p_idx]
+            y_obs_rna = np.asarray(rna_obs_matched[rna_k], dtype=float)
+            ax_rna.scatter(t_rna_arr, y_obs_rna, s=50, color=color, zorder=5, label="mRNA (obs)")
+            ax_rna.set_title("mRNA / R(t)", fontsize=12, fontweight="bold")
+            ax_rna.set_xlabel("Time (min)")
+            ax_rna.set_ylabel("mRNA fold-change / R(t)")
+            ax_rna.legend(fontsize=9)
+            ax_rna.grid(alpha=0.25)
+
+        # --- Protein abundance panel ---
+        ax_prot = axes[panel_idx]
+        panel_idx += 1
+        if p_idx < A_sim.shape[0]:
+            ax_prot.plot(ts_arr, A_sim[p_idx], "-", lw=3, color=color, label="Abundance (neural)")
+        obs_k = prot_to_obs_k.get(p_idx, None)
+        if obs_k is not None and A_scaled is not None:
+            y_obs_A = np.asarray(A_scaled[obs_k], dtype=float)
+            mask_A = np.isfinite(y_obs_A)
+            if np.any(mask_A):
+                ax_prot.plot(
+                    t_prot[mask_A], y_obs_A[mask_A],
+                    "--", lw=2, alpha=0.6, color=color, label="Abundance (obs)",
+                )
+                ax_prot.scatter(
+                    t_prot[mask_A], y_obs_A[mask_A],
+                    marker="s", s=55, alpha=0.7, color=color, edgecolors="none",
+                )
+        ax_prot.set_title("Protein abundance / A(t)", fontsize=12, fontweight="bold")
+        ax_prot.set_xlabel("Time (min)")
+        ax_prot.set_ylabel("Protein abundance")
+        ax_prot.legend(fontsize=9)
+        ax_prot.grid(alpha=0.25)
+
+        # --- Phosphosites panel ---
+        ax_sites = axes[panel_idx]
+        cmap20 = _plt.cm.tab20
+        if prot_sites and P_sim.shape[0] > 0:
+            for si, site in enumerate(prot_sites):
+                try:
+                    s_idx = (sites or []).index(site)
+                except ValueError:
+                    continue
+                if s_idx >= P_sim.shape[0]:
+                    continue
+                c = cmap20(si % 20)
+                residue = site.split("_", 1)[1] if "_" in site else site
+                ax_sites.plot(ts_arr, P_sim[s_idx], "-", lw=3, color=c, label=f"{residue} (neural)")
+                if P_scaled is not None and s_idx < P_scaled.shape[0]:
+                    y_obs_p = np.asarray(P_scaled[s_idx], dtype=float)
+                    mask_p = np.isfinite(y_obs_p)
+                    if np.any(mask_p):
+                        ax_sites.plot(
+                            t_prot[mask_p], y_obs_p[mask_p],
+                            "--", lw=2, alpha=0.45, color=c,
+                        )
+                        ax_sites.scatter(
+                            t_prot[mask_p], y_obs_p[mask_p],
+                            marker="s", s=45, alpha=0.6, color=c, edgecolors="none",
+                        )
+        else:
+            ax_sites.text(0.5, 0.5, "No phosphosites", transform=ax_sites.transAxes,
+                          ha="center", va="center", fontsize=10, alpha=0.7)
+        ax_sites.set_title("Phosphosites", fontsize=12, fontweight="bold")
+        ax_sites.set_xlabel("Time (min)")
+        ax_sites.set_ylabel("Relative signal p(t)")
+        ax_sites.legend(fontsize=8, loc="upper left", bbox_to_anchor=(1.02, 1.0),
+                        borderaxespad=0.0, frameon=True)
+        ax_sites.grid(alpha=0.25)
+
+        fig.suptitle(f"{prot} — Neural ODE fit", fontsize=14, fontweight="bold", y=1.01)
+        _path = os.path.join(outdir, f"neural_fit_{prot}.png")
+        fig.savefig(_path, dpi=300, bbox_inches="tight")
+        _plt.close(fig)
+        logger.info("[neural_ode] Saved %s", _path)
 
 
 def save_neural_ode_plots(
@@ -1334,6 +1518,20 @@ def save_neural_ode_plots(
     model,
     loss_history: list,
     time_history: list,
+    *,
+    proteins: list | None = None,
+    sites: list | None = None,
+    P_scaled: np.ndarray | None = None,
+    A_scaled: np.ndarray | None = None,
+    prot_idx_for_A: np.ndarray | None = None,
+    t_protein: np.ndarray | None = None,
+    t_rna: np.ndarray | None = None,
+    rna_obs_matched: np.ndarray | None = None,
+    rna_model_prot_idx: np.ndarray | None = None,
+    k_act_init_vals: np.ndarray | None = None,
+    s_prod_init_vals: np.ndarray | None = None,
+    k_hats_obs: np.ndarray | None = None,
+    s_hats_obs: np.ndarray | None = None,
 ) -> None:
     """Save diagnostic visualisation plots from a neural ODE training run.
 
@@ -1347,6 +1545,9 @@ def save_neural_ode_plots(
     * ``neural_ode_trajectories.png``  – real vs model trajectories for the
       first sample, one subplot per ODE state dimension (dodgerblue = real,
       crimson = model).
+    * ``neural_fit_{prot}.png``        – per-protein horizontal layout
+      (mRNA | abundance | phosphosites) when *proteins* and related arrays
+      are provided.
 
     Args:
         outdir:       Directory where PNG files are written.  Created if absent.
@@ -1357,6 +1558,19 @@ def save_neural_ode_plots(
                       future latent-state visualisation).
         loss_history: List of per-step total loss values.
         time_history: List of per-step wall-clock times (seconds).
+        proteins:     Optional list of protein names for per-protein plots.
+        sites:        Optional list of phosphosite names.
+        P_scaled:     Optional observed phosphosite data (N, T_protein).
+        A_scaled:     Optional observed abundance data (n_obs, T_protein).
+        prot_idx_for_A: Optional mapping from A_scaled rows to protein indices.
+        t_protein:    Optional protein time points (defaults to *ts* when absent).
+        t_rna:        Optional RNA time points.
+        rna_obs_matched: Optional matched RNA observations (n_matched, T_rna).
+        rna_model_prot_idx: Optional protein indices for matched RNA genes.
+        k_act_init_vals: Mechanistic k_act priors (K, T_obs).
+        s_prod_init_vals: Mechanistic s_prod priors (K, T_obs).
+        k_hats_obs:   Neural-learned k_hat at observed protein times (T_obs, K).
+        s_hats_obs:   Neural-learned s_hat at observed protein times (T_obs, K).
     """
     import matplotlib  # noqa: PLC0415
     matplotlib.use("Agg")
@@ -1451,6 +1665,33 @@ def save_neural_ode_plots(
     # do not expose intermediate hidden-layer activations as a separate output.
     # TODO: add a latent_activations() helper to NeuralRateGenerator and revisit.
     logger.debug("[neural_ode] Latent heatmap skipped: model does not expose hidden states.")
+
+    # ------------------------------------------------------------------ #
+    # 4. Per-protein horizontal layout: mRNA | abundance | phosphosites   #
+    # ------------------------------------------------------------------ #
+    if proteins is not None and len(proteins) > 0:
+        try:
+            _save_neural_per_protein_plots(
+                outdir=outdir,
+                ts=ts,
+                ys=ys,
+                proteins=proteins,
+                sites=sites,
+                P_scaled=P_scaled,
+                A_scaled=A_scaled,
+                prot_idx_for_A=prot_idx_for_A,
+                t_protein=t_protein,
+                t_rna=t_rna,
+                rna_obs_matched=rna_obs_matched,
+                rna_model_prot_idx=rna_model_prot_idx,
+                k_act_init_vals=k_act_init_vals,
+                s_prod_init_vals=s_prod_init_vals,
+                k_hats_obs=k_hats_obs,
+                s_hats_obs=s_hats_obs,
+                _plt=_plt,
+            )
+        except Exception as exc:
+            logger.warning("[neural_ode] Per-protein plots skipped: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -2005,22 +2246,53 @@ def run_neural_latent_rate_refinement(
 
     # ------------------------------------------------------------------
     # 10. Save latent rates
+    # k_act uses t_rna scale (mRNA-related); s_prod uses t_obs scale.
+    # Matches the convention in save_derived_rates / derived_rates_long.tsv.
     # ------------------------------------------------------------------
+
+    # Determine k_act time grid: use t_rna when available (mRNA-related rate).
+    if t_rna is not None and len(t_rna) > 0:
+        t_kact = np.asarray(t_rna, dtype=np.float64)
+        k_act_mech_rna, _, _ = _evaluate_mechanistic_rate_priors(
+            k_act_fn, s_prod_fn, t_kact
+        )
+        # Evaluate neural model at t_rna grid.
+        t_max_j_kact = jnp.asarray(t_max, dtype=jnp.float64)
+        t_norms_rna = np.clip(t_kact / t_max, 0.0, 1.0)[:, None]
+        k_priors_rna = k_act_mech_rna.T  # (T_rna, K)
+        # s_prod priors at t_rna for features (needed by the NN but not saved).
+        s_prod_mech_rna_np = np.vstack(
+            [np.asarray(s_prod_fn(float(ti))) for ti in t_kact]
+        )  # (T_rna, K)
+        features_rna = np.concatenate(
+            [t_norms_rna, k_priors_rna, s_prod_mech_rna_np], axis=1
+        )
+        features_rna_j = jnp.asarray(features_rna, dtype=jnp.float64)
+        k_hats_rna_j, _ = jax.vmap(neural_model_opt)(features_rna_j)
+        k_hats_rna = np.asarray(k_hats_rna_j)  # (T_rna, K)
+    else:
+        t_kact = t_obs
+        k_act_mech_rna = k_act_init_vals  # (K, T_obs)
+        k_hats_rna = k_hats_obs          # (T_obs, K)
+
     rate_rows = []
-    for ti_idx, t_val in enumerate(t_obs):
+    for ti_idx, t_val in enumerate(t_kact):
         for p_idx, prot in enumerate(proteins):
             rate_rows.append(
                 {
                     "rate_type": "k_act",
                     "entity": prot,
                     "time": float(t_val),
-                    "mechanistic_prior": float(k_act_init_vals[p_idx, ti_idx]),
-                    "neural_learned": float(k_hats_obs[ti_idx, p_idx]),
+                    "mechanistic_prior": float(k_act_mech_rna[p_idx, ti_idx]),
+                    "neural_learned": float(k_hats_rna[ti_idx, p_idx]),
                     "difference": float(
-                        k_hats_obs[ti_idx, p_idx] - k_act_init_vals[p_idx, ti_idx]
+                        k_hats_rna[ti_idx, p_idx] - k_act_mech_rna[p_idx, ti_idx]
                     ),
                 }
             )
+
+    for ti_idx, t_val in enumerate(t_obs):
+        for p_idx, prot in enumerate(proteins):
             rate_rows.append(
                 {
                     "rate_type": "s_prod",
@@ -2044,10 +2316,11 @@ def run_neural_latent_rate_refinement(
     np.savez(
         os.path.join(neural_outdir, "neural_latent_rates.npz"),
         t_obs=t_obs,
+        t_kact=t_kact,
         proteins=np.array(proteins),
-        k_act_mechanistic=k_act_init_vals,
+        k_act_mechanistic=k_act_mech_rna,
         s_prod_mechanistic=s_prod_init_vals,
-        k_act_neural=k_hats_obs.T,
+        k_act_neural=k_hats_rna.T,
         s_prod_neural=s_hats_obs.T,
     )
 
@@ -2085,6 +2358,10 @@ def run_neural_latent_rate_refinement(
         abundance_max=float(abundance_max),
     )
 
+    # Build reverse mapping: protein index → row index in A_scaled.
+    # Only proteins in prot_idx_for_A have observed abundance data.
+    prot_to_obs_k = {int(prot_idx_for_A[k]): k for k in range(len(prot_idx_for_A))}
+
     ts_rows = []
     for ti_idx, t_val in enumerate(t_obs):
         for s_idx, site in enumerate(sites):
@@ -2100,15 +2377,72 @@ def run_neural_latent_rate_refinement(
                 }
             )
         for p_idx, prot in enumerate(proteins):
+            obs_k = prot_to_obs_k.get(p_idx, None)
+            if obs_k is not None and ti_idx < A_scaled.shape[1]:
+                obs_val = float(A_scaled[obs_k, ti_idx])
+            else:
+                obs_val = float("nan")
             ts_rows.append(
                 {
                     "time": float(t_val),
                     "entity_type": "abundance",
                     "entity": prot,
                     "value_neural": float(sim_obs["A_sim"][p_idx, ti_idx]),
-                    "value_observed": float("nan"),
+                    "value_observed": obs_val,
                 }
             )
+
+    # mRNA rows: simulate at t_rna and include observed mRNA values.
+    if has_mrna and t_rna is not None and len(t_rna) > 0:
+        t_rna_arr = np.asarray(t_rna, dtype=np.float64)
+        try:
+            sim_rna = _neural_simulate_dense(
+                model=neural_model_opt,
+                K=K,
+                M=M,
+                N=N,
+                mechanism=mechanism,
+                theta_j=theta_for_outputs_j,
+                y0_j=y0_j,
+                t0_val=t0_val,
+                t_dense=t_rna_arr,
+                prev_site_idx_j=prev_site_idx_j,
+                Cg_j=Cg_j,
+                Cl_j=Cl_j,
+                K_sk_j=K_sk_j,
+                R_j=R_j,
+                La_j=La_j,
+                spi_j=spi_j,
+                k2p_j=k2p_j,
+                rmp_j=rmp_j,
+                rmk_j=rmk_j,
+                t_max=t_max,
+                k_act_init_fn=k_act_fn,
+                s_prod_init_fn=s_prod_fn,
+                rtol=float(neural_cfg.rtol),
+                atol=float(neural_cfg.atol),
+                dt0=float(neural_cfg.dt0),
+                max_steps=int(neural_cfg.max_steps),
+                rna_relax=float(rna_relax),
+                abundance_max=float(abundance_max),
+            )
+            R_sim_rna = sim_rna["R_sim"]  # (K, T_rna)
+            rna_obs_arr = np.asarray(rna_obs_matched, dtype=np.float64)  # (n_matched, T_rna)
+            for gene_idx, p_idx in enumerate(rna_model_prot_idx):
+                prot_name = proteins[int(p_idx)]
+                for ti_idx, t_val in enumerate(t_rna_arr):
+                    obs_rna = float(rna_obs_arr[gene_idx, ti_idx]) if ti_idx < rna_obs_arr.shape[1] else float("nan")
+                    ts_rows.append(
+                        {
+                            "time": float(t_val),
+                            "entity_type": "mrna",
+                            "entity": prot_name,
+                            "value_neural": float(R_sim_rna[int(p_idx), ti_idx]),
+                            "value_observed": obs_rna,
+                        }
+                    )
+        except Exception as exc:
+            logger.warning("[neural_ode] mRNA rows in neural_fit_timeseries.tsv skipped: %s", exc)
 
     df_ts = pd.DataFrame(ts_rows)
     ts_path = os.path.join(neural_outdir, "neural_fit_timeseries.tsv")

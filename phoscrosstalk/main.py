@@ -1408,6 +1408,15 @@ def main():
             model=_neural_model,
             loss_history=_neural_loss_hist,
             time_history=_neural_time_hist,
+            proteins=proteins,
+            sites=sites,
+            P_scaled=P_scaled,
+            A_scaled=A_scaled,
+            prot_idx_for_A=prot_idx_for_A,
+            t_protein=t,
+            t_rna=t_rna if rna_matrix is not None else None,
+            rna_obs_matched=rna_obs_matched,
+            rna_model_prot_idx=rna_model_prot_idx,
         )
         logger.info("[*] Neural ODE visualisations saved to %s/neural_ode", outdir)
 
@@ -1415,6 +1424,80 @@ def main():
         logger.info(
             "[pinn] Skipping post-fit neuralODE because PINN mode is enabled."
         )
+
+    # ------------------------------------------------------------------
+    # 14. MCMC Posterior inference (optional; enabled via [posterior] config)
+    # ------------------------------------------------------------------
+    _posterior_cfg = getattr(cfg, "posterior", None)
+    if _posterior_cfg is not None and getattr(_posterior_cfg, "enabled", False):
+        try:
+            from phoscrosstalk.posterior import (  # noqa: PLC0415
+                run_posterior_inference,
+                make_log_posterior_fn,
+            )
+            import jax.numpy as jnp  # noqa: PLC0415
+
+            logger.header("[*] Running MCMC posterior inference (NUTS / BlackJax)")
+
+            # Build a JAX-traceable residuals function using the mechanistic
+            # simulation.  The residuals are (P_sim - P_scaled) flattened,
+            # which is consistent with the mechanistic loss used in optimisation.
+            def _mech_residuals_fn(theta):
+                from phoscrosstalk.simulation import simulate as _sim  # noqa: PLC0415
+                from phoscrosstalk.optimization import build_full_A0 as _bfa0  # noqa: PLC0415
+                A0 = _bfa0(dims.K, len(t), A_scaled, prot_idx_for_A)
+                P_sim_post, *_ = _sim(
+                    t, P_scaled, A0, theta,
+                    problem.Cg, problem.Cl, problem.site_prot_idx,
+                    problem.K_site_kin, problem.R, problem.L_alpha,
+                    problem.kin_to_prot_idx, problem.receptor_mask_prot,
+                    problem.receptor_mask_kin, mechanism,
+                    full_output=False,
+                    k_act_fn=k_act_fn, s_prod_fn=s_prod_fn,
+                    R_data0=R_data0, dims=dims,
+                )
+                return jnp.asarray(P_sim_post - P_scaled, dtype=jnp.float64).ravel()
+
+            _sigma_noise = float(getattr(_posterior_cfg, "sigma_noise", 0.1))
+            _log_post_fn = make_log_posterior_fn(
+                residuals_fn=_mech_residuals_fn,
+                theta_lower=problem.xl,
+                theta_upper=problem.xu,
+                sigma_noise=_sigma_noise,
+            )
+
+            # Build human-readable theta parameter names from decoded theta.
+            from phoscrosstalk.mechanisms import decode_theta as _dt  # noqa: PLC0415
+            _param_names_base = [
+                "k_deact", "d_deg", "beta_g", "beta_l",
+                "alpha", "kK_act", "kK_deact", "k_off",
+                "gamma_S_p", "gamma_A_S", "gamma_A_p", "gamma_K_net",
+            ]
+            _theta_names = [
+                f"{pn}_{prot}" if i < dims.K else f"{pn}_{i}"
+                for i, (pn, _) in enumerate(
+                    zip(_param_names_base * max(1, len(theta_best) // max(1, len(_param_names_base))),
+                        range(len(theta_best)))
+                )
+            ]
+            _theta_names = [f"theta_{i}" for i in range(len(theta_best))]
+
+            run_posterior_inference(
+                outdir=outdir,
+                theta_best=theta_best,
+                log_posterior_fn=_log_post_fn,
+                posterior_cfg=_posterior_cfg,
+                proteins=proteins,
+                theta_names=_theta_names,
+            )
+            logger.success("[*] Posterior inference complete. Results in %s/posterior", outdir)
+        except ImportError as _post_err:
+            logger.warning(
+                "[posterior] Skipped: %s  "
+                "Install blackjax to enable MCMC posterior inference.", _post_err
+            )
+        except Exception as _post_exc:
+            logger.error("[posterior] Posterior inference failed: %s", _post_exc)
 
     logger.success("[*] Done.")
 
