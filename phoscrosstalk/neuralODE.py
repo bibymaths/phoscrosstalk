@@ -298,7 +298,17 @@ def _evaluate_mechanistic_rate_priors(k_act_fn, s_prod_fn, t_obs: np.ndarray):
 
         return k_vals, s_vals, "jax.vmap"
 
-    except Exception:
+    except (
+        jax.errors.TracerBoolConversionError,
+        jax.errors.ConcretizationTypeError,
+        jax.errors.UnexpectedTracerError,
+        TypeError,
+        # JAX vmap can raise RuntimeError/ValueError for non-traceable closures
+        # (e.g. closures that call numpy/scipy internally). Fall back to the
+        # Python loop which evaluates each time point individually.
+        RuntimeError,
+        ValueError,
+    ):
         k_vals = np.stack(
             [np.asarray(k_act_fn(float(ti)), dtype=np.float64) for ti in t_obs],
             axis=1,
@@ -1721,118 +1731,109 @@ def save_neural_ode_plots(
     # ------------------------------------------------------------------ #
     # 3. Real vs model trajectories                                        #
     # ------------------------------------------------------------------ #
-    try:
-        ts_arr = np.asarray(ts)
-        P_sim = np.asarray(ys.get("P_sim", np.empty((0, len(ts_arr)))))
-        A_sim = np.asarray(ys.get("A_sim", np.empty((0, len(ts_arr)))))
+    ts_arr = np.asarray(ts)
+    P_sim = np.asarray(ys.get("P_sim", np.empty((0, len(ts_arr)))))
+    A_sim = np.asarray(ys.get("A_sim", np.empty((0, len(ts_arr)))))
 
-        all_states = []
-        if P_sim.size > 0:
-            for i in range(min(P_sim.shape[0], 5)):
-                all_states.append(("P", i, P_sim[i]))
-        if A_sim.size > 0:
-            for i in range(min(A_sim.shape[0], 5)):
-                all_states.append(("A", i, A_sim[i]))
+    all_states = []
+    if P_sim.size > 0:
+        for i in range(min(P_sim.shape[0], 5)):
+            all_states.append(("P", i, P_sim[i]))
+    if A_sim.size > 0:
+        for i in range(min(A_sim.shape[0], 5)):
+            all_states.append(("A", i, A_sim[i]))
 
-        if all_states:
-            n_panels = len(all_states)
-            fig, axes = _plt.subplots(n_panels, 1, figsize=(8, 2.5 * n_panels), squeeze=False)
-            for panel_idx, (label, idx, vals) in enumerate(all_states):
-                ax = axes[panel_idx, 0]
-                ax.plot(ts_arr, vals, color="crimson", linewidth=1.5, label=f"{label}[{idx}] model")
-                ax.set_xlabel("time")
-                ax.set_ylabel("value")
-                ax.set_title(f"State {label}[{idx}]")
-                ax.legend(fontsize=7)
-            _plt.tight_layout()
-            _path = os.path.join(outdir, "neural_ode_trajectories.png")
-            fig.savefig(_path, dpi=300)
-            _plt.close(fig)
-            logger.info("[neural_ode] Saved %s", _path)
-    except Exception as exc:  # pragma: no cover
-        logger.warning("[neural_ode] Could not save trajectory plot: %s", exc)
+    if all_states:
+        n_panels = len(all_states)
+        fig, axes = _plt.subplots(n_panels, 1, figsize=(8, 2.5 * n_panels), squeeze=False)
+        for panel_idx, (label, idx, vals) in enumerate(all_states):
+            ax = axes[panel_idx, 0]
+            ax.plot(ts_arr, vals, color="crimson", linewidth=1.5, label=f"{label}[{idx}] model")
+            ax.set_xlabel("time")
+            ax.set_ylabel("value")
+            ax.set_title(f"State {label}[{idx}]")
+            ax.legend(fontsize=7)
+        _plt.tight_layout()
+        _path = os.path.join(outdir, "neural_ode_trajectories.png")
+        fig.savefig(_path, dpi=300)
+        _plt.close(fig)
+        logger.info("[neural_ode] Saved %s", _path)
 
     # ------------------------------------------------------------------ #
     # 3b. Latent activation heatmap                                       #
     # ------------------------------------------------------------------ #
-    try:
-        if (
-                hasattr(model, "latent_activations")
-                and k_act_init_vals is not None
-                and s_prod_init_vals is not None
-                and t_protein is not None
-        ):
-            t_arr = np.asarray(t_protein)
-            T_obs = t_arr.shape[0]
-            t_max = float(t_arr[-1]) if T_obs > 0 else 1.0
-            k_hidden_all = []
-            s_hidden_all = []
-            for ti_idx in range(T_obs):
-                t_norm = jnp.array(
-                    [t_arr[ti_idx] / t_max], dtype=jnp.float64
-                )
-                k_prior = jnp.asarray(
-                    k_act_init_vals[:, ti_idx], dtype=jnp.float64
-                )
-                s_prior = jnp.asarray(
-                    s_prod_init_vals[:, ti_idx], dtype=jnp.float64
-                )
-                feats = jnp.concatenate([t_norm, k_prior, s_prior])
-                k_h, s_h = model.latent_activations(feats)
-                k_hidden_all.append(np.asarray(k_h))
-                s_hidden_all.append(np.asarray(s_h))
-
-            k_heatmap = np.stack(k_hidden_all, axis=0).T  # (width, T_obs)
-            s_heatmap = np.stack(s_hidden_all, axis=0).T
-
-            fig, axes = _plt.subplots(1, 2, figsize=(12, 4))
-            axes[0].imshow(k_heatmap, aspect="auto", cmap="RdBu_r", origin="lower")
-            axes[0].set_title("k_act latent activations")
-            axes[0].set_xlabel("Time index")
-            axes[0].set_ylabel("Neuron")
-            axes[1].imshow(s_heatmap, aspect="auto", cmap="RdBu_r", origin="lower")
-            axes[1].set_title("s_prod latent activations")
-            axes[1].set_xlabel("Time index")
-            axes[1].set_ylabel("Neuron")
-            _plt.tight_layout()
-            _path = os.path.join(outdir, "neural_ode_latent_heatmap.png")
-            fig.savefig(_path, dpi=150)
-            _plt.close(fig)
-            logger.info("[neural_ode] Saved %s", _path)
-        else:
-            logger.debug(
-                "[neural_ode] Latent heatmap skipped: "
-                "model does not expose latent_activations() or prior data unavailable."
+    if (
+            hasattr(model, "latent_activations")
+            and k_act_init_vals is not None
+            and s_prod_init_vals is not None
+            and t_protein is not None
+    ):
+        t_arr = np.asarray(t_protein)
+        T_obs = t_arr.shape[0]
+        t_max = float(t_arr[-1]) if T_obs > 0 else 1.0
+        k_hidden_all = []
+        s_hidden_all = []
+        for ti_idx in range(T_obs):
+            t_norm = jnp.array(
+                [t_arr[ti_idx] / t_max], dtype=jnp.float64
             )
-    except Exception as exc:
-        logger.debug("[neural_ode] Latent heatmap skipped: %s", exc)
+            k_prior = jnp.asarray(
+                k_act_init_vals[:, ti_idx], dtype=jnp.float64
+            )
+            s_prior = jnp.asarray(
+                s_prod_init_vals[:, ti_idx], dtype=jnp.float64
+            )
+            feats = jnp.concatenate([t_norm, k_prior, s_prior])
+            k_h, s_h = model.latent_activations(feats)
+            k_hidden_all.append(np.asarray(k_h))
+            s_hidden_all.append(np.asarray(s_h))
+
+        k_heatmap = np.stack(k_hidden_all, axis=0).T  # (width, T_obs)
+        s_heatmap = np.stack(s_hidden_all, axis=0).T
+
+        fig, axes = _plt.subplots(1, 2, figsize=(12, 4))
+        axes[0].imshow(k_heatmap, aspect="auto", cmap="RdBu_r", origin="lower")
+        axes[0].set_title("k_act latent activations")
+        axes[0].set_xlabel("Time index")
+        axes[0].set_ylabel("Neuron")
+        axes[1].imshow(s_heatmap, aspect="auto", cmap="RdBu_r", origin="lower")
+        axes[1].set_title("s_prod latent activations")
+        axes[1].set_xlabel("Time index")
+        axes[1].set_ylabel("Neuron")
+        _plt.tight_layout()
+        _path = os.path.join(outdir, "neural_ode_latent_heatmap.png")
+        fig.savefig(_path, dpi=150)
+        _plt.close(fig)
+        logger.info("[neural_ode] Saved %s", _path)
+    else:
+        logger.debug(
+            "[neural_ode] Latent heatmap skipped: "
+            "model does not expose latent_activations() or prior data unavailable."
+        )
 
     # ------------------------------------------------------------------ #
     # 4. Per-protein horizontal layout: mRNA | abundance | phosphosites   #
     # ------------------------------------------------------------------ #
     if proteins is not None and len(proteins) > 0:
-        try:
-            _save_neural_per_protein_plots(
-                outdir=outdir,
-                ts=ts,
-                ys=ys,
-                proteins=proteins,
-                sites=sites,
-                P_scaled=P_scaled,
-                A_scaled=A_scaled,
-                prot_idx_for_A=prot_idx_for_A,
-                t_protein=t_protein,
-                t_rna=t_rna,
-                rna_obs_matched=rna_obs_matched,
-                rna_model_prot_idx=rna_model_prot_idx,
-                k_act_init_vals=k_act_init_vals,
-                s_prod_init_vals=s_prod_init_vals,
-                k_hats_obs=k_hats_obs,
-                s_hats_obs=s_hats_obs,
-                _plt=_plt,
-            )
-        except Exception as exc:
-            logger.warning("[neural_ode] Per-protein plots skipped: %s", exc)
+        _save_neural_per_protein_plots(
+            outdir=outdir,
+            ts=ts,
+            ys=ys,
+            proteins=proteins,
+            sites=sites,
+            P_scaled=P_scaled,
+            A_scaled=A_scaled,
+            prot_idx_for_A=prot_idx_for_A,
+            t_protein=t_protein,
+            t_rna=t_rna,
+            rna_obs_matched=rna_obs_matched,
+            rna_model_prot_idx=rna_model_prot_idx,
+            k_act_init_vals=k_act_init_vals,
+            s_prod_init_vals=s_prod_init_vals,
+            k_hats_obs=k_hats_obs,
+            s_hats_obs=s_hats_obs,
+            _plt=_plt,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1932,7 +1933,7 @@ def save_neural_ode_bundle(
         try:
             eqx.tree_serialise_leaves(model_path, neural_model)
             logger.info("[neural_ode] Saved %s", model_path)
-        except Exception as exc:
+        except (OSError, IOError) as exc:
             logger.warning(
                 "[neural_ode] Could not serialise neural model with eqx: %s", exc
             )
@@ -2000,7 +2001,7 @@ def load_neural_ode_bundle(
         try:
             neural_model = eqx.tree_deserialise_leaves(model_path, skeleton)
             logger.info("[neural_ode] Loaded neural model from %s", model_path)
-        except Exception as exc:
+        except (OSError, IOError) as exc:
             logger.warning(
                 "[neural_ode] Could not deserialise neural model: %s", exc
             )
@@ -2727,66 +2728,60 @@ def run_neural_latent_rate_refinement(
     # mRNA rows: simulate at t_rna and include observed mRNA values.
     if has_mrna and t_rna is not None and len(t_rna) > 0:
         t_rna_arr = np.asarray(t_rna, dtype=np.float64)
-        try:
-            sim_rna = _neural_simulate_dense(
-                model=neural_model_opt,
-                K=K,
-                M=M,
-                N=N,
-                mechanism=mechanism,
-                theta_j=theta_for_outputs_j,
-                y0_j=y0_j,
-                t0_val=t0_val,
-                t_dense=t_rna_arr,
-                prev_site_idx_j=prev_site_idx_j,
-                Cg_j=Cg_j,
-                Cl_j=Cl_j,
-                K_sk_j=K_sk_j,
-                R_j=R_j,
-                La_j=La_j,
-                spi_j=spi_j,
-                k2p_j=k2p_j,
-                rmp_j=rmp_j,
-                rmk_j=rmk_j,
-                t_max=t_max,
-                k_act_init_fn=k_act_fn,
-                s_prod_init_fn=s_prod_fn,
-                rtol=float(neural_cfg.rtol),
-                atol=float(neural_cfg.atol),
-                dt0=float(neural_cfg.dt0),
-                max_steps=int(neural_cfg.max_steps),
-                rna_relax=float(rna_relax),
-                abundance_max=float(abundance_max),
-            )
+        sim_rna = _neural_simulate_dense(
+            model=neural_model_opt,
+            K=K,
+            M=M,
+            N=N,
+            mechanism=mechanism,
+            theta_j=theta_for_outputs_j,
+            y0_j=y0_j,
+            t0_val=t0_val,
+            t_dense=t_rna_arr,
+            prev_site_idx_j=prev_site_idx_j,
+            Cg_j=Cg_j,
+            Cl_j=Cl_j,
+            K_sk_j=K_sk_j,
+            R_j=R_j,
+            La_j=La_j,
+            spi_j=spi_j,
+            k2p_j=k2p_j,
+            rmp_j=rmp_j,
+            rmk_j=rmk_j,
+            t_max=t_max,
+            k_act_init_fn=k_act_fn,
+            s_prod_init_fn=s_prod_fn,
+            rtol=float(neural_cfg.rtol),
+            atol=float(neural_cfg.atol),
+            dt0=float(neural_cfg.dt0),
+            max_steps=int(neural_cfg.max_steps),
+            rna_relax=float(rna_relax),
+            abundance_max=float(abundance_max),
+        )
 
-            R_sim_rna = sim_rna["R_sim"]  # (K, T_rna)
-            R_sim_rna_for_return = np.asarray(R_sim_rna, dtype=np.float64)
+        R_sim_rna = sim_rna["R_sim"]  # (K, T_rna)
+        R_sim_rna_for_return = np.asarray(R_sim_rna, dtype=np.float64)
 
-            rna_obs_arr = np.asarray(rna_obs_matched, dtype=np.float64)  # (n_matched, T_rna)
+        rna_obs_arr = np.asarray(rna_obs_matched, dtype=np.float64)  # (n_matched, T_rna)
 
-            for gene_idx, p_idx in enumerate(rna_model_prot_idx):
-                prot_name = proteins[int(p_idx)]
-                for ti_idx, t_val in enumerate(t_rna_arr):
-                    obs_rna = (
-                        float(rna_obs_arr[gene_idx, ti_idx])
-                        if ti_idx < rna_obs_arr.shape[1]
-                        else float("nan")
-                    )
-                    ts_rows.append(
-                        {
-                            "time": float(t_val),
-                            "entity_type": "mrna",
-                            "entity": prot_name,
-                            "value_neural": float(R_sim_rna[int(p_idx), ti_idx]),
-                            "value_observed": obs_rna,
-                        }
-                    )
+        for gene_idx, p_idx in enumerate(rna_model_prot_idx):
+            prot_name = proteins[int(p_idx)]
+            for ti_idx, t_val in enumerate(t_rna_arr):
+                obs_rna = (
+                    float(rna_obs_arr[gene_idx, ti_idx])
+                    if ti_idx < rna_obs_arr.shape[1]
+                    else float("nan")
+                )
+                ts_rows.append(
+                    {
+                        "time": float(t_val),
+                        "entity_type": "mrna",
+                        "entity": prot_name,
+                        "value_neural": float(R_sim_rna[int(p_idx), ti_idx]),
+                        "value_observed": obs_rna,
+                    }
+                )
 
-        except Exception as exc:
-            logger.warning(
-                "[neural_ode] mRNA rows in neural_fit_timeseries.tsv skipped: %s",
-                exc,
-            )
     df_ts = pd.DataFrame(ts_rows)
     ts_path = os.path.join(neural_outdir, "neural_fit_timeseries.tsv")
     df_ts.to_csv(ts_path, sep="\t", index=False)
@@ -2980,7 +2975,8 @@ def run_neural_latent_rate_refinement(
             K=K,
             learn_theta=learn_theta,
         )
-    except Exception as exc:
+    except (OSError, IOError) as exc:
+        # Bundle save is best-effort; an I/O failure should not abort the run.
         logger.warning("[neural_ode] Could not save model bundle: %s", exc)
 
     logger.info(

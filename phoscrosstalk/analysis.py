@@ -368,84 +368,75 @@ def _save_dense_simulation(
             parts = site.split("_", 1)
             prot = parts[0]
             s = parts[1] if len(parts) > 1 else ""
-            try:
-                # data_interp_P(t_dense) returns (N_sites, T_dense) when t_dense is
-                # an array, so we index as interp_vals[i, :].
-                interp_vals = np.asarray(data_interp_P(t_dense), dtype=float)
-                if interp_vals.ndim == 2:
-                    site_vals = interp_vals[i, :]
-                else:
-                    # Fallback for callables returning flat arrays (single-site edge case)
-                    site_vals = interp_vals
-                for j, ti in enumerate(t_dense):
-                    rows.append(
-                        {
-                            "entity_type": "Phosphosite",
-                            "entity": site,
-                            "site": s,
-                            "protein": prot,
-                            "time": float(ti),
-                            "value": float(site_vals[j]),
-                            "series_type": "observed_interpolated_dense",
-                            "source": "data_interpolation",
-                            "interpolation_method": "data_interp",
-                        }
-                    )
-            except Exception:
-                pass
+            # data_interp_P(t_dense) returns (N_sites, T_dense) when t_dense is
+            # an array, so we index as interp_vals[i, :].
+            interp_vals = np.asarray(data_interp_P(t_dense), dtype=float)
+            if interp_vals.ndim == 2:
+                site_vals = interp_vals[i, :]
+            else:
+                # Fallback for callables returning flat arrays (single-site edge case)
+                site_vals = interp_vals
+            for j, ti in enumerate(t_dense):
+                rows.append(
+                    {
+                        "entity_type": "Phosphosite",
+                        "entity": site,
+                        "site": s,
+                        "protein": prot,
+                        "time": float(ti),
+                        "value": float(site_vals[j]),
+                        "series_type": "observed_interpolated_dense",
+                        "source": "data_interpolation",
+                        "interpolation_method": "data_interp",
+                    }
+                )
 
     if data_interp_A is not None and prot_idx_for_A_full is not None:
-        try:
-            # data_interp_A(t_dense) returns (K_obs, T_dense) when t_dense is an array
-            interp_A_vals = np.asarray(data_interp_A(t_dense), dtype=float)
-            for k_obs, p_idx in enumerate(prot_idx_for_A_full):
-                prot = proteins[p_idx]
-                if interp_A_vals.ndim == 2:
-                    row_vals = interp_A_vals[k_obs, :]
-                else:
-                    row_vals = interp_A_vals
-                for j, ti in enumerate(t_dense):
-                    rows.append(
-                        {
-                            "entity_type": "ProteinAbundance",
-                            "entity": prot,
-                            "site": "",
-                            "protein": prot,
-                            "time": float(ti),
-                            "value": float(row_vals[j]),
-                            "series_type": "observed_interpolated_dense",
-                            "source": "data_interpolation",
-                            "interpolation_method": "data_interp",
-                        }
-                    )
-        except Exception:
-            pass
+        # data_interp_A(t_dense) returns (K_obs, T_dense) when t_dense is an array
+        interp_A_vals = np.asarray(data_interp_A(t_dense), dtype=float)
+        for k_obs, p_idx in enumerate(prot_idx_for_A_full):
+            prot = proteins[p_idx]
+            if interp_A_vals.ndim == 2:
+                row_vals = interp_A_vals[k_obs, :]
+            else:
+                row_vals = interp_A_vals
+            for j, ti in enumerate(t_dense):
+                rows.append(
+                    {
+                        "entity_type": "ProteinAbundance",
+                        "entity": prot,
+                        "site": "",
+                        "protein": prot,
+                        "time": float(ti),
+                        "value": float(row_vals[j]),
+                        "series_type": "observed_interpolated_dense",
+                        "source": "data_interpolation",
+                        "interpolation_method": "data_interp",
+                    }
+                )
 
     # Interpolated mRNA (observed) — diagnostic only. NOT training data.
     # series_type is clearly labelled to avoid confusion with simulated_dense rows.
     if data_interp_R is not None:
-        try:
-            interp_R_vals = np.asarray(data_interp_R(t_dense), dtype=float)
-            # data_interp_R(t_dense) returns shape (K, n_dense) for array input
-            for p_idx in range(K):
-                prot = proteins[p_idx]
-                row_vals = interp_R_vals[p_idx, :] if interp_R_vals.ndim == 2 else interp_R_vals
-                for j, ti in enumerate(t_dense):
-                    rows.append(
-                        {
-                            "entity_type": "mRNA",
-                            "entity": prot,
-                            "site": "",
-                            "protein": prot,
-                            "time": float(ti),
-                            "value": float(row_vals[j]),
-                            "series_type": "observed_interpolated_dense",
-                            "source": "data_interpolation",
-                            "interpolation_method": "data_interp",
-                        }
-                    )
-        except Exception as exc:
-            logger.warning("[!] mRNA interpolated dense rows skipped: %s", exc)
+        interp_R_vals = np.asarray(data_interp_R(t_dense), dtype=float)
+        # data_interp_R(t_dense) returns shape (K, n_dense) for array input
+        for p_idx in range(K):
+            prot = proteins[p_idx]
+            row_vals = interp_R_vals[p_idx, :] if interp_R_vals.ndim == 2 else interp_R_vals
+            for j, ti in enumerate(t_dense):
+                rows.append(
+                    {
+                        "entity_type": "mRNA",
+                        "entity": prot,
+                        "site": "",
+                        "protein": prot,
+                        "time": float(ti),
+                        "value": float(row_vals[j]),
+                        "series_type": "observed_interpolated_dense",
+                        "source": "data_interpolation",
+                        "interpolation_method": "data_interp",
+                    }
+                )
 
     df_dense = pd.DataFrame(rows)
     df_dense.to_csv(
@@ -455,31 +446,28 @@ def _save_dense_simulation(
 
     # Dense mRNA / R_rna output (model only, simulated_dense series_type).
     # Saved to mrna_fit_timeseries_dense.tsv when R_sim is available.
-    try:
-        if R_sim_d is not None and np.any(np.isfinite(R_sim_d)):
-            mrna_rows = []
-            for p_idx in range(K):
-                prot = proteins[p_idx]
-                for j, ti in enumerate(t_dense):
-                    mrna_rows.append(
-                        {
-                            "gene": prot,
-                            "time": float(ti),
-                            "value": float(R_sim_d[p_idx, j]),
-                            "series_type": "simulated_dense",
-                            "source": "model",
-                            "interpolation_method": interpolation_label,
-                        }
-                    )
-            df_mrna_dense = pd.DataFrame(mrna_rows)
-            df_mrna_dense.to_csv(
-                os.path.join(outdir, "mrna_fit_timeseries_dense.tsv"),
-                sep="\t",
-                index=False,
-            )
-            logger.info("[*] Dense mRNA simulation output saved.")
-    except Exception as exc:
-        logger.warning(f"[!] Dense mRNA output skipped: {exc}")
+    if R_sim_d is not None and np.any(np.isfinite(R_sim_d)):
+        mrna_rows = []
+        for p_idx in range(K):
+            prot = proteins[p_idx]
+            for j, ti in enumerate(t_dense):
+                mrna_rows.append(
+                    {
+                        "gene": prot,
+                        "time": float(ti),
+                        "value": float(R_sim_d[p_idx, j]),
+                        "series_type": "simulated_dense",
+                        "source": "model",
+                        "interpolation_method": interpolation_label,
+                    }
+                )
+        df_mrna_dense = pd.DataFrame(mrna_rows)
+        df_mrna_dense.to_csv(
+            os.path.join(outdir, "mrna_fit_timeseries_dense.tsv"),
+            sep="\t",
+            index=False,
+        )
+        logger.info("[*] Dense mRNA simulation output saved.")
 
 
 def save_fitted_simulation(
@@ -714,89 +702,77 @@ def save_fitted_simulation(
         _data_interp_A = None
         _di_cfg = data_interpolation_cfg
         if _di_cfg is not None and getattr(_di_cfg, "enabled", False):
-            try:
-                from phoscrosstalk.derived_rates import build_data_interpolations
-                _di_method = getattr(_di_cfg, "method", "linear")
-                _di_fwd = getattr(_di_cfg, "fill_forward_nans_at_end", False)
-                _di_start = getattr(_di_cfg, "replace_nans_at_start", None)
-                _interp_result = build_data_interpolations(
-                    t_obs=t,
-                    P_data=P_scaled,
-                    A_data=A_scaled if (A_scaled is not None and np.asarray(A_scaled).size > 0) else None,
-                    method=_di_method,
-                    fill_forward_nans_at_end=_di_fwd,
-                    replace_nans_at_start=_di_start,
-                )
-                _data_interp_P = _interp_result.get("P_interp")
-                _data_interp_A = _interp_result.get("A_interp")
-                for msg in _interp_result.get("nan_fill_log", []):
-                    logger.info(f"[data_interp]{msg}")
-            except Exception as exc:
-                logger.warning(f"[!] Data interpolation build failed: {exc}")
+            from phoscrosstalk.derived_rates import build_data_interpolations
+            _di_method = getattr(_di_cfg, "method", "linear")
+            _di_fwd = getattr(_di_cfg, "fill_forward_nans_at_end", False)
+            _di_start = getattr(_di_cfg, "replace_nans_at_start", None)
+            _interp_result = build_data_interpolations(
+                t_obs=t,
+                P_data=P_scaled,
+                A_data=A_scaled if (A_scaled is not None and np.asarray(A_scaled).size > 0) else None,
+                method=_di_method,
+                fill_forward_nans_at_end=_di_fwd,
+                replace_nans_at_start=_di_start,
+            )
+            _data_interp_P = _interp_result.get("P_interp")
+            _data_interp_A = _interp_result.get("A_interp")
+            for msg in _interp_result.get("nan_fill_log", []):
+                logger.info(f"[data_interp]{msg}")
 
         # Separately build RNA interpolation using the RNA-specific time axis.
         # This must NOT reuse t (phospho time axis) — t_rna may differ.
         _data_interp_R = None
         if _di_cfg is not None and getattr(_di_cfg, "enabled", False):
             if R_data0 is not None and t_rna is not None:
-                try:
-                    from phoscrosstalk.derived_rates import build_data_interpolations as _bdi
+                from phoscrosstalk.derived_rates import build_data_interpolations as _bdi
 
-                    _di_method = getattr(_di_cfg, "method", "linear")
-                    _di_fwd = getattr(_di_cfg, "fill_forward_nans_at_end", False)
-                    _di_start = getattr(_di_cfg, "replace_nans_at_start", None)
+                _di_method = getattr(_di_cfg, "method", "linear")
+                _di_fwd = getattr(_di_cfg, "fill_forward_nans_at_end", False)
+                _di_start = getattr(_di_cfg, "replace_nans_at_start", None)
 
-                    _rna_arr = np.asarray(R_data0, dtype=float)
-                    _t_rna_arr = np.asarray(t_rna, dtype=float)
+                _rna_arr = np.asarray(R_data0, dtype=float)
+                _t_rna_arr = np.asarray(t_rna, dtype=float)
 
-                    # R_data0 may be a single RNA time series: shape (T_rna,).
-                    # build_data_interpolations expects (n_genes, T_rna), so convert:
-                    #     (T_rna,) -> (1, T_rna)
-                    if _rna_arr.ndim == 1:
-                        if _rna_arr.shape[0] != len(_t_rna_arr):
-                            logger.warning(
-                                "[data_interp/rna] Skipping RNA interpolation: "
-                                "1D R_data0 has length %d but len(t_rna)=%d.",
-                                _rna_arr.shape[0],
-                                len(_t_rna_arr),
-                            )
-                            _rna_arr = None
-                        else:
-                            _rna_arr = _rna_arr.reshape(1, -1)
+                # R_data0 may be a single RNA time series: shape (T_rna,).
+                # build_data_interpolations expects (n_genes, T_rna), so convert:
+                #     (T_rna,) -> (1, T_rna)
+                if _rna_arr.ndim == 1:
+                    if _rna_arr.shape[0] != len(_t_rna_arr):
+                        raise ValueError(
+                            f"[data_interp/rna] R_data0 appears to be an initial state "
+                            f"vector with length {_rna_arr.shape[0]} (K proteins), but "
+                            f"len(t_rna)={len(_t_rna_arr)}. "
+                            "RNA data for interpolation must have shape (n_genes, len(t_rna)) "
+                            "or a 1-D time series of length len(t_rna). "
+                            "Do not pass the initial-state vector as the RNA time series."
+                        )
+                    _rna_arr = _rna_arr.reshape(1, -1)
 
-                    if _rna_arr is not None:
-                        if _rna_arr.ndim != 2:
-                            logger.warning(
-                                "[data_interp/rna] Skipping RNA interpolation: "
-                                "expected R_data0 as (n_genes, len(t_rna)) or "
-                                "(len(t_rna),), got %s.",
-                                _rna_arr.shape,
-                            )
+                if _rna_arr.ndim != 2:
+                    raise ValueError(
+                        f"[data_interp/rna] R_data0 must be 2-D (n_genes, T_rna) after "
+                        f"reshaping, got shape {_rna_arr.shape}."
+                    )
 
-                        elif _rna_arr.shape[1] != len(_t_rna_arr):
-                            logger.warning(
-                                "[data_interp/rna] Skipping RNA interpolation: "
-                                "R_data0.shape[1]=%d but len(t_rna)=%d.",
-                                _rna_arr.shape[1],
-                                len(_t_rna_arr),
-                            )
+                if _rna_arr.shape[1] != len(_t_rna_arr):
+                    raise ValueError(
+                        f"[data_interp/rna] R_data0.shape[1]={_rna_arr.shape[1]} does not "
+                        f"match len(t_rna)={len(_t_rna_arr)}. "
+                        "RNA time-series data and the RNA time axis must have the same length."
+                    )
 
-                        else:
-                            _rna_interp_result = _bdi(
-                                t_obs=_t_rna_arr,
-                                rna_data=_rna_arr,
-                                method=_di_method,
-                                fill_forward_nans_at_end=_di_fwd,
-                                replace_nans_at_start=_di_start,
-                            )
+                _rna_interp_result = _bdi(
+                    t_obs=_t_rna_arr,
+                    rna_data=_rna_arr,
+                    method=_di_method,
+                    fill_forward_nans_at_end=_di_fwd,
+                    replace_nans_at_start=_di_start,
+                )
 
-                            _data_interp_R = _rna_interp_result.get("rna_interp")
+                _data_interp_R = _rna_interp_result.get("rna_interp")
 
-                            for msg in _rna_interp_result.get("nan_fill_log", []):
-                                logger.info("[data_interp/rna] %s", msg)
-
-                except Exception as exc:
-                    logger.warning("[!] RNA data interpolation build failed: %s", exc)
+                for msg in _rna_interp_result.get("nan_fill_log", []):
+                    logger.info("[data_interp/rna] %s", msg)
 
         if _do_dense and sim_full_override is not None:
             _save_dense_simulation(
@@ -954,13 +930,15 @@ def plot_fitted_simulation(outdir):
         t_vals = np.arange(len(sim_cols), dtype=float)
 
     # Optionally load mRNA fit data
+    # Optionally load mRNA fit data
     mrna_path = os.path.join(outdir, "mrna_fit_timeseries.tsv")
     has_rna_data = os.path.exists(mrna_path)
     df_mrna = None
     if has_rna_data:
         try:
             df_mrna = pd.read_csv(mrna_path, sep="\t")
-        except Exception:
+        except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+            logger.warning("[!] Could not read mRNA fit timeseries %s: %s", mrna_path, exc)
             df_mrna = None
             has_rna_data = False
     if has_rna_data and (df_mrna is None or df_mrna.empty):
@@ -1281,55 +1259,54 @@ def plot_goodness_of_fit(protein_fit_timeseries_path, outdir, mrna_fit_timeserie
     if os.path.exists(mrna_fit_timeseries_path):
         try:
             df_mrna = pd.read_csv(mrna_fit_timeseries_path, sep="\t")
-
-            required_cols = {"gene", "observed"}
-            if not required_cols.issubset(df_mrna.columns):
-                logger.warning(
-                    "[!] Skipping mRNA goodness-of-fit points: "
-                    f"missing required columns in {mrna_fit_timeseries_path}. "
-                    f"Required at least {required_cols}; found {set(df_mrna.columns)}"
-                )
-            else:
-                # Prefer "fitted"; fall back to "simulated" if needed.
-                if "fitted" in df_mrna.columns:
-                    fit_col = "fitted"
-                elif "simulated" in df_mrna.columns:
-                    fit_col = "simulated"
-                else:
-                    fit_col = None
-
-                if fit_col is None:
-                    logger.warning(
-                        "[!] Skipping mRNA goodness-of-fit points: neither "
-                        "'fitted' nor 'simulated' column found in "
-                        f"{mrna_fit_timeseries_path}"
-                    )
-                else:
-                    for _, row in df_mrna.iterrows():
-                        obs = row.get("observed", np.nan)
-                        sim = row.get(fit_col, np.nan)
-                        gene = row.get("gene", "NA")
-
-                        if np.isfinite(obs) and np.isfinite(sim):
-                            plot_records.append(
-                                {
-                                    "Observed": float(obs),
-                                    "Simulated": float(sim),
-                                    "Type": "mRNA",
-                                    "Label": f"{gene}_mRNA",
-                                }
-                            )
-
-                    logger.info(
-                        f"[*] Added mRNA goodness-of-fit points from "
-                        f"{mrna_fit_timeseries_path}"
-                    )
-
-        except Exception as exc:
-            logger.warning(
+        except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+            raise RuntimeError(
                 f"[!] Failed to read mRNA goodness-of-fit file "
                 f"{mrna_fit_timeseries_path}: {exc}"
+            ) from exc
+
+        required_cols = {"gene", "observed"}
+        if not required_cols.issubset(df_mrna.columns):
+            logger.warning(
+                "[!] Skipping mRNA goodness-of-fit points: "
+                f"missing required columns in {mrna_fit_timeseries_path}. "
+                f"Required at least {required_cols}; found {set(df_mrna.columns)}"
             )
+        else:
+            # Prefer "fitted"; fall back to "simulated" if needed.
+            if "fitted" in df_mrna.columns:
+                fit_col = "fitted"
+            elif "simulated" in df_mrna.columns:
+                fit_col = "simulated"
+            else:
+                fit_col = None
+
+            if fit_col is None:
+                logger.warning(
+                    "[!] Skipping mRNA goodness-of-fit points: neither "
+                    "'fitted' nor 'simulated' column found in "
+                    f"{mrna_fit_timeseries_path}"
+                )
+            else:
+                for _, row in df_mrna.iterrows():
+                    obs = row.get("observed", np.nan)
+                    sim = row.get(fit_col, np.nan)
+                    gene = row.get("gene", "NA")
+
+                    if np.isfinite(obs) and np.isfinite(sim):
+                        plot_records.append(
+                            {
+                                "Observed": float(obs),
+                                "Simulated": float(sim),
+                                "Type": "mRNA",
+                                "Label": f"{gene}_mRNA",
+                            }
+                        )
+
+                logger.info(
+                    f"[*] Added mRNA goodness-of-fit points from "
+                    f"{mrna_fit_timeseries_path}"
+                )
     else:
         logger.info(
             f"[*] No mRNA goodness-of-fit file found at {mrna_fit_timeseries_path}; "
@@ -2397,6 +2374,7 @@ def save_neural_ode_residuals(
         mech_A_sim: np.ndarray | None = None,
         mech_R_sim: np.ndarray | None = None,
         mech_t: np.ndarray | None = None,
+        mech_t_rna: np.ndarray | None = None,
 ) -> None:
     """Save per-row time-wise residuals for each ODE state.
 
@@ -2426,8 +2404,13 @@ def save_neural_ode_residuals(
         rna_model_prot_idx: Protein indices for each RNA gene row.
         mech_P_sim:     Mechanistic phosphosite simulation ``(N, T_mech)``.
         mech_A_sim:     Mechanistic abundance simulation ``(K, T_mech)``.
-        mech_R_sim:     Mechanistic mRNA simulation ``(K, T_mech)``.
-        mech_t:         Time points for mechanistic simulation (defaults to *t_protein*).
+        mech_R_sim:     Mechanistic mRNA simulation ``(K, T_mech_rna)`` — must be
+                        paired with the RNA time grid, not the protein time grid.
+        mech_t:         Time points for mechanistic P/A simulation (protein grid;
+                        defaults to *t_protein*).
+        mech_t_rna:     Time points for mechanistic mRNA simulation (RNA grid).
+                        When provided its length must equal ``mech_R_sim.shape[1]``.
+                        If omitted, ``t_rna`` is used as a fallback.
 
     Returns:
         None: ``neural_residuals.tsv`` is written to *outdir*.
@@ -2437,6 +2420,7 @@ def save_neural_ode_residuals(
     ts_arr = np.asarray(ts)
     t_prot = np.asarray(t_protein) if t_protein is not None else ts_arr
     t_mech = np.asarray(mech_t) if mech_t is not None else t_prot
+    t_mech_rna = np.asarray(mech_t_rna) if mech_t_rna is not None else None
     P_sim = np.asarray(ys.get("P_sim", np.empty((0, len(ts_arr)))))
     A_sim = np.asarray(ys.get("A_sim", np.empty((0, len(ts_arr)))))
 
@@ -2552,9 +2536,28 @@ def save_neural_ode_residuals(
                 mech_val_out = float("nan")
                 mech_resid = float("nan")
                 if mech_R_sim is not None and p_idx < mech_R_sim.shape[0]:
-                    t_ref = t_mech if mech_t is not None else (
-                        t_rna_arr if len(t_rna_arr) == mech_R_sim.shape[1] else t_mech)
+                    # mech_R_sim is on the RNA grid — must NOT use the protein-grid
+                    # t_mech for indexing.  Resolve the correct RNA reference axis:
+                    if t_mech_rna is not None and len(t_mech_rna) == mech_R_sim.shape[1]:
+                        t_ref = t_mech_rna
+                    elif t_rna_arr is not None and len(t_rna_arr) == mech_R_sim.shape[1]:
+                        t_ref = t_rna_arr
+                    else:
+                        raise ValueError(
+                            "save_neural_ode_residuals: mech_R_sim has shape "
+                            f"{mech_R_sim.shape} but no compatible RNA time axis was "
+                            f"supplied. len(t_rna)={len(t_rna_arr) if t_rna_arr is not None else None}, "
+                            f"len(mech_t)={len(t_mech)}, "
+                            f"len(mech_t_rna)={len(t_mech_rna) if t_mech_rna is not None else None}. "
+                            "Pass mech_t_rna matching the RNA grid to save_neural_ode_residuals."
+                        )
                     mech_ti = int(np.argmin(np.abs(t_ref - t_val))) if len(t_ref) > 0 else 0
+                    if mech_ti >= mech_R_sim.shape[1]:
+                        raise IndexError(
+                            f"save_neural_ode_residuals: mech_ti={mech_ti} is out of bounds "
+                            f"for mech_R_sim axis 1 with size {mech_R_sim.shape[1]}. "
+                            f"t_ref has length {len(t_ref)}, t_val={t_val}."
+                        )
                     mech_val_out = float(mech_R_sim[p_idx, mech_ti])
                     mech_resid = mech_val_out - obs_val if np.isfinite(obs_val) else float("nan")
 
@@ -2612,56 +2615,56 @@ def plot_neural_residuals(
     # ------------------------------------------------------------------ #
     # 1. Neural phosphosite residuals heatmap                             #
     # ------------------------------------------------------------------ #
-    try:
-        df_p = df[df["entity_type"] == "phosphosite"].copy()
-        if not df_p.empty and "residual_neural" in df_p.columns:
-            pivot = df_p.pivot_table(index="entity", columns="time", values="residual_neural", aggfunc="mean")
-            n_sites = len(pivot)
-            fig_h = max(6, min(40, n_sites * 0.35))
-            fig, ax = plt.subplots(figsize=(max(8, len(pivot.columns) * 1.2), fig_h))
+    df_p = df[df["entity_type"] == "phosphosite"].copy()
+    if not df_p.empty and "residual_neural" in df_p.columns:
+        try:
             import seaborn as sns  # noqa: PLC0415
-            sns.heatmap(pivot, ax=ax, cmap="vlag", center=0,
-                        xticklabels=[f"{c:.0f}" for c in pivot.columns],
-                        yticklabels=True, linewidths=0)
-            ax.set_title("Neural ODE — Phosphosite Residuals (neural − observed)", fontsize=12)
-            ax.set_xlabel("Time (min)")
-            ax.set_ylabel("Phosphosite")
-            plt.tight_layout()
-            _path = os.path.join(outdir, "neural_residuals_heatmap_phospho.png")
-            fig.savefig(_path, dpi=300)
-            plt.close(fig)
-            logger.info("[neural_ode] Saved %s", _path)
-    except Exception as exc:
-        logger.warning("[neural_ode] Phosphosite residual heatmap skipped: %s", exc)
+        except ImportError as exc:
+            raise ImportError(
+                "[neural_ode] seaborn is required for the phosphosite residual heatmap. "
+                "Install it with: pip install seaborn"
+            ) from exc
+        pivot = df_p.pivot_table(index="entity", columns="time", values="residual_neural", aggfunc="mean")
+        n_sites = len(pivot)
+        fig_h = max(6, min(40, n_sites * 0.35))
+        fig, ax = plt.subplots(figsize=(max(8, len(pivot.columns) * 1.2), fig_h))
+        sns.heatmap(pivot, ax=ax, cmap="vlag", center=0,
+                    xticklabels=[f"{c:.0f}" for c in pivot.columns],
+                    yticklabels=True, linewidths=0)
+        ax.set_title("Neural ODE — Phosphosite Residuals (neural − observed)", fontsize=12)
+        ax.set_xlabel("Time (min)")
+        ax.set_ylabel("Phosphosite")
+        plt.tight_layout()
+        _path = os.path.join(outdir, "neural_residuals_heatmap_phospho.png")
+        fig.savefig(_path, dpi=300)
+        plt.close(fig)
+        logger.info("[neural_ode] Saved %s", _path)
 
     # ------------------------------------------------------------------ #
     # 2. Neural vs mechanistic residuals scatter                          #
     # ------------------------------------------------------------------ #
-    try:
-        df_valid = df.dropna(subset=["residual_neural", "residual_mechanistic"])
-        if len(df_valid) >= 3:
-            fig, ax = plt.subplots(figsize=(8, 8))
-            entity_types = df_valid["entity_type"].unique()
-            colors = plt.cm.tab10(np.arange(len(entity_types)) / len(entity_types))
-            for et, col in zip(entity_types, colors):
-                sub = df_valid[df_valid["entity_type"] == et]
-                ax.scatter(sub["residual_mechanistic"], sub["residual_neural"],
-                           s=20, alpha=0.6, color=col, label=et)
-            lim = float(max(df_valid[["residual_neural", "residual_mechanistic"]].abs().max().max(), 1e-6))
-            ax.axline((0, 0), slope=1, color="gray", lw=1.5, linestyle="--", label="identity")
-            ax.axhline(0, color="gray", lw=0.8, alpha=0.5)
-            ax.axvline(0, color="gray", lw=0.8, alpha=0.5)
-            ax.set_xlim(-lim, lim)
-            ax.set_ylim(-lim, lim)
-            ax.set_xlabel("Mechanistic residual (mech − observed)")
-            ax.set_ylabel("Neural residual (neural − observed)")
-            ax.set_title("Neural ODE vs Mechanistic Residuals")
-            ax.legend(fontsize=9)
-            ax.grid(alpha=0.25)
-            plt.tight_layout()
-            _path = os.path.join(outdir, "neural_vs_mech_residuals.png")
-            fig.savefig(_path, dpi=300)
-            plt.close(fig)
-            logger.info("[neural_ode] Saved %s", _path)
-    except Exception as exc:
-        logger.warning("[neural_ode] Neural vs mech residuals scatter skipped: %s", exc)
+    df_valid = df.dropna(subset=["residual_neural", "residual_mechanistic"])
+    if len(df_valid) >= 3:
+        fig, ax = plt.subplots(figsize=(8, 8))
+        entity_types = df_valid["entity_type"].unique()
+        colors = plt.cm.tab10(np.arange(len(entity_types)) / len(entity_types))
+        for et, col in zip(entity_types, colors):
+            sub = df_valid[df_valid["entity_type"] == et]
+            ax.scatter(sub["residual_mechanistic"], sub["residual_neural"],
+                       s=20, alpha=0.6, color=col, label=et)
+        lim = float(max(df_valid[["residual_neural", "residual_mechanistic"]].abs().max().max(), 1e-6))
+        ax.axline((0, 0), slope=1, color="gray", lw=1.5, linestyle="--", label="identity")
+        ax.axhline(0, color="gray", lw=0.8, alpha=0.5)
+        ax.axvline(0, color="gray", lw=0.8, alpha=0.5)
+        ax.set_xlim(-lim, lim)
+        ax.set_ylim(-lim, lim)
+        ax.set_xlabel("Mechanistic residual (mech − observed)")
+        ax.set_ylabel("Neural residual (neural − observed)")
+        ax.set_title("Neural ODE vs Mechanistic Residuals")
+        ax.legend(fontsize=9)
+        ax.grid(alpha=0.25)
+        plt.tight_layout()
+        _path = os.path.join(outdir, "neural_vs_mech_residuals.png")
+        fig.savefig(_path, dpi=300)
+        plt.close(fig)
+        logger.info("[neural_ode] Saved %s", _path)
