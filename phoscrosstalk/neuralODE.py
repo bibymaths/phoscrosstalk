@@ -1762,24 +1762,22 @@ def save_neural_ode_plots(
             and s_prod_init_vals is not None
             and t_protein is not None
         ):
-            import jax.numpy as jnp_local  # noqa: PLC0415
-
             t_arr = np.asarray(t_protein)
             T_obs = t_arr.shape[0]
             t_max = float(t_arr[-1]) if T_obs > 0 else 1.0
             k_hidden_all = []
             s_hidden_all = []
             for ti_idx in range(T_obs):
-                t_norm = jnp_local.array(
-                    [t_arr[ti_idx] / t_max], dtype=jnp_local.float64
+                t_norm = jnp.array(
+                    [t_arr[ti_idx] / t_max], dtype=jnp.float64
                 )
-                k_prior = jnp_local.asarray(
-                    k_act_init_vals[:, ti_idx], dtype=jnp_local.float64
+                k_prior = jnp.asarray(
+                    k_act_init_vals[:, ti_idx], dtype=jnp.float64
                 )
-                s_prior = jnp_local.asarray(
-                    s_prod_init_vals[:, ti_idx], dtype=jnp_local.float64
+                s_prior = jnp.asarray(
+                    s_prod_init_vals[:, ti_idx], dtype=jnp.float64
                 )
-                feats = jnp_local.concatenate([t_norm, k_prior, s_prior])
+                feats = jnp.concatenate([t_norm, k_prior, s_prior])
                 k_h, s_h = model.latent_activations(feats)
                 k_hidden_all.append(np.asarray(k_h))
                 s_hidden_all.append(np.asarray(s_h))
