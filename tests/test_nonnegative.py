@@ -16,7 +16,7 @@ Test coverage
 6. Residual construction clips model outputs before computing residuals
    (no negative model outputs enter the loss).
 7. saved mrna_fit_timeseries.tsv fitted values are non-negative.
-8. saved fit_timeseries.tsv simulated (sim_t*) values are non-negative.
+8. saved protein_fit_timeseries.tsv simulated (sim_t*) values are non-negative.
 9. Negative observed phosphosite data raises ValueError in
    validate_biological_inputs.
 10. Config bounds section values are respected (positive, loaded correctly).
@@ -382,12 +382,12 @@ def test_mrna_fit_timeseries_nonneg(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# 8. fit_timeseries.tsv simulated (sim_t*) values are non-negative
+# 8. protein_fit_timeseries.tsv simulated (sim_t*) values are non-negative
 # ---------------------------------------------------------------------------
 
 
 def test_fit_timeseries_nonneg(tmp_path):
-    """fit_timeseries.tsv sim_t* columns must not contain negative values."""
+    """protein_fit_timeseries.tsv sim_t* columns must not contain negative values."""
     from phoscrosstalk.analysis import save_fitted_simulation
 
     m = _make_tiny(K=2, M=3, N=4, T=5)
@@ -432,15 +432,15 @@ def test_fit_timeseries_nonneg(tmp_path):
         kinases=kinases,
     )
 
-    df = pd.read_csv(tmp_path / "fit_timeseries.tsv", sep="\t")
+    df = pd.read_csv(tmp_path / "protein_fit_timeseries.tsv", sep="\t")
     sim_cols = [c for c in df.columns if c.startswith("sim_t")]
-    assert len(sim_cols) > 0, "fit_timeseries.tsv has no sim_t* columns"
+    assert len(sim_cols) > 0, "protein_fit_timeseries.tsv has no sim_t* columns"
 
     sim_vals = df[sim_cols].to_numpy(dtype=float)
     finite_sim = sim_vals[np.isfinite(sim_vals)]
     if finite_sim.size > 0:
         assert float(finite_sim.min()) >= -1e-7, (
-            f"fit_timeseries.tsv has negative simulated values: min={finite_sim.min()}"
+            f"protein_fit_timeseries.tsv has negative simulated values: min={finite_sim.min()}"
         )
 
 

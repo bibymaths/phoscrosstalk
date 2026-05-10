@@ -1,5 +1,4 @@
 """
-config_editor.py
 Streamlit UI panel for editing and saving a PhosCrosstalk ``config.toml``.
 
 Exposes all meaningful config sections as grouped widgets.
@@ -117,8 +116,8 @@ def save_dict_to_toml(cfg: dict[str, Any], path: str | Path) -> None:
 
 
 def render_config_editor(
-    cfg: dict[str, Any],
-    default_output_dir: str = "results",
+        cfg: dict[str, Any],
+        default_output_dir: str = "results",
 ) -> dict[str, Any]:
     """
     Render the full config editor UI and return the updated config dict.
@@ -818,7 +817,7 @@ def render_config_editor(
                     format="%.2e",
                 )
                 neural["seed"] = st.number_input(
-                    "Random seed", min_value=0, max_value=2**31,
+                    "Random seed", min_value=0, max_value=2 ** 31,
                     value=int(neural.get("seed", 0)),
                 )
             cfg["neural_ode"] = neural

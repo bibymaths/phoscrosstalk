@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: MIT
 """
-optax_backend.py
 Optax projected gradient / L-BFGS backend for the phospho-network.
 
 Two solver kinds are provided, both enforcing hard box constraints via
@@ -31,15 +30,6 @@ optax.projections.projection_box:
             value=value, grad=grad, value_fn=scalar_loss,
         )
         theta = projection_box(apply_updates(theta, updates), xl, xu)
-
-Interface (mirrors optimization.py)::
-
-    run_single_optimisation_optax(loss_fn, theta0, xl, xu, ...)
-        -> (theta_opt, total_loss, f1, f2, f3, f4)
-
-loss_fn must have the signature produced by make_loss_fn::
-
-    loss_fn(theta, args) -> (scalar_loss, (f1, f2, f3, f4))
 """
 
 from __future__ import annotations
@@ -62,17 +52,17 @@ logger = get_logger()
 
 
 def run_single_optimisation_optax(
-    loss_fn: Callable,
-    theta0: np.ndarray,
-    xl: np.ndarray,
-    xu: np.ndarray,
-    *,
-    max_steps: int = 1000,
-    learning_rate: float = 1e-3,
-    optimizer_kind: str = "adam",
-    verbose: bool = False,
-    log_every: int = 100,
-    convergence_tol: float = 1e-7,
+        loss_fn: Callable,
+        theta0: np.ndarray,
+        xl: np.ndarray,
+        xu: np.ndarray,
+        *,
+        max_steps: int = 1000,
+        learning_rate: float = 1e-3,
+        optimizer_kind: str = "adam",
+        verbose: bool = False,
+        log_every: int = 100,
+        convergence_tol: float = 1e-7,
 ) -> tuple[np.ndarray, float, float, float, float, float]:
     """
     Run projected gradient optimisation via Optax with hard box constraints.

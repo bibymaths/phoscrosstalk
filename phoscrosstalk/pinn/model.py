@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: MIT
 """
-pinn/model.py
 Equinox module for the PINN neural augmentation term.
 
 PINNAugmentation maps (x, t) -> neural residual correction of shape (state_dim,).
@@ -20,12 +19,12 @@ import equinox as eqx
 
 # Activation map — all supported string keys.
 _ACTIVATIONS = {
-    "tanh":     jax.nn.tanh,
-    "relu":     jax.nn.relu,
-    "gelu":     jax.nn.gelu,
-    "silu":     jax.nn.silu,
+    "tanh": jax.nn.tanh,
+    "relu": jax.nn.relu,
+    "gelu": jax.nn.gelu,
+    "silu": jax.nn.silu,
     "softplus": jax.nn.softplus,
-    "elu":      jax.nn.elu,
+    "elu": jax.nn.elu,
 }
 
 # Hard cap for the PINN output magnitude.  Residual terms larger than this
@@ -63,13 +62,13 @@ class PINNAugmentation(eqx.Module):
     output_scale: jax.Array  # (state_dim,) learnable per-dimension scale
 
     def __init__(
-        self,
-        state_dim: int,
-        width_size: int,
-        depth: int,
-        activation: str,
-        key: jax.Array,
-        output_clamp: float = _PINN_OUTPUT_CLAMP,
+            self,
+            state_dim: int,
+            width_size: int,
+            depth: int,
+            activation: str,
+            key: jax.Array,
+            output_clamp: float = _PINN_OUTPUT_CLAMP,
     ) -> None:
         if activation not in _ACTIVATIONS:
             raise ValueError(
@@ -94,7 +93,7 @@ class PINNAugmentation(eqx.Module):
         # Initialise scale near zero so PINN starts as a near-zero correction.
         # Small Gaussian noise breaks symmetry while keeping initialisation small.
         self.output_scale = (
-            jax.random.normal(scale_key, (state_dim,), dtype=jnp.float64) * 0.01
+                jax.random.normal(scale_key, (state_dim,), dtype=jnp.float64) * 0.01
         )
 
     def __call__(self, x: jax.Array, t: jax.Array) -> jax.Array:

@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: MIT
 """
-mpax_backend.py
 MPAX (Mathematical Programming in JAX) QP-subproblem backend.
 
 Strategy — Sequential Quadratic Programming (SQP)
@@ -89,21 +88,21 @@ _HESS_REG: float = 1e-5
 
 
 def run_single_optimisation_mpax(
-    loss_fn: Callable,
-    theta0: np.ndarray,
-    xl: np.ndarray,
-    xu: np.ndarray,
-    *,
-    max_sqp_steps: int = 30,
-    eps_abs: float = 1e-4,
-    eps_rel: float = 1e-4,
-    verbose: bool = False,
-    trust_radius: float = 1.0,
-    hess_reg: float = _HESS_REG,
-    diagonal_hessian: bool = False,
-    finetune: bool = False,
-    finetune_max_steps: int = 200,
-    finetune_gtol: float = 1e-5,
+        loss_fn: Callable,
+        theta0: np.ndarray,
+        xl: np.ndarray,
+        xu: np.ndarray,
+        *,
+        max_sqp_steps: int = 30,
+        eps_abs: float = 1e-4,
+        eps_rel: float = 1e-4,
+        verbose: bool = False,
+        trust_radius: float = 1.0,
+        hess_reg: float = _HESS_REG,
+        diagonal_hessian: bool = False,
+        finetune: bool = False,
+        finetune_max_steps: int = 200,
+        finetune_gtol: float = 1e-5,
 ) -> tuple[np.ndarray, float, float, float, float, float]:
     """
     Run SQP optimisation using MPAX as the QP subproblem solver.

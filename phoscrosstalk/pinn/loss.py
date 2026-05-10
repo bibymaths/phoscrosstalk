@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: MIT
 """
-pinn/loss.py
 PINN objective function builder.
 
 Reuses the existing residual / loss infrastructure from optimization.py and
@@ -48,6 +47,7 @@ _FAILED_SOLVE_PENALTY: float = 1e3
 # Upper bound for clipping R_rna (fold-change scale).
 _RNA_CLIP_UPPER: float = 20.0
 
+
 # ---------------------------------------------------------------------------
 # Residual standardisation helpers
 # ---------------------------------------------------------------------------
@@ -79,50 +79,51 @@ def _standardized_residual(sim, obs, scale):
     """
     return (sim - obs) / scale
 
+
 def make_pinn_loss_fn(
-    dims: ModelDims,
-    t,
-    P_data,
-    A_scaled,
-    prot_idx_for_A,
-    W_data,
-    W_data_prot,
-    Cg,
-    Cl,
-    site_prot_idx,
-    K_site_kin,
-    R,
-    L_alpha,
-    kin_to_prot_idx,
-    receptor_mask_prot,
-    receptor_mask_kin,
-    mechanism: str,
-    lambda_net: float,
-    reg_lambda: float,
-    lambda_pinn: float,
-    regularize: str = "residual_l2",
-    w_phospho: float = 1.0,
-    w_abundance: float = 1.0,
-    w_reg: float = 1.0,
-    w_mrna: float = 1.0,
-    rtol: float = 1e-6,
-    atol: float = 1e-9,
-    max_steps: int = 16384,
-    dt0: float = 0.01,
-    k_act_fn=None,
-    s_prod_fn=None,
-    t_mrna=None,
-    rna_data_scaled=None,
-    rna_model_prot_idx=None,
-    R_data0=None,
-    W_data_mrna=None,
-    rna_relax: float = 0.1,
-    abundance_max: float = 5.0,
-    ode_solver_kind: str = "tsit5",
-    ode_adjoint_kind: str = "recursive",
-    root_find_max_steps: int = 10,
-    xl=None,
-    xu=None,
+        dims: ModelDims,
+        t,
+        P_data,
+        A_scaled,
+        prot_idx_for_A,
+        W_data,
+        W_data_prot,
+        Cg,
+        Cl,
+        site_prot_idx,
+        K_site_kin,
+        R,
+        L_alpha,
+        kin_to_prot_idx,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        mechanism: str,
+        lambda_net: float,
+        reg_lambda: float,
+        lambda_pinn: float,
+        regularize: str = "residual_l2",
+        w_phospho: float = 1.0,
+        w_abundance: float = 1.0,
+        w_reg: float = 1.0,
+        w_mrna: float = 1.0,
+        rtol: float = 1e-6,
+        atol: float = 1e-9,
+        max_steps: int = 16384,
+        dt0: float = 0.01,
+        k_act_fn=None,
+        s_prod_fn=None,
+        t_mrna=None,
+        rna_data_scaled=None,
+        rna_model_prot_idx=None,
+        R_data0=None,
+        W_data_mrna=None,
+        rna_relax: float = 0.1,
+        abundance_max: float = 5.0,
+        ode_solver_kind: str = "tsit5",
+        ode_adjoint_kind: str = "recursive",
+        root_find_max_steps: int = 10,
+        xl=None,
+        xu=None,
 ):
     """
     Build a scalar loss function for PINN joint optimisation.
@@ -147,8 +148,8 @@ def make_pinn_loss_fn(
     K, M, N = dims.K, dims.M, dims.N
 
     state_dim = 3 * K + M + N
-    n_p   = max(1, P_data.size)
-    n_A   = max(1, A_scaled.size)
+    n_p = max(1, P_data.size)
+    n_A = max(1, A_scaled.size)
     n_var = 2 * K + 2 + 3 * M + N + 4
 
     prev_site_idx = compute_prev_site_idx(site_prot_idx.astype(np.int32), N)
@@ -179,31 +180,31 @@ def make_pinn_loss_fn(
     else:
         x0[:K] = 1.0
     a0 = np.nan_to_num(A0_full[:, 0], nan=1.0, posinf=5.0, neginf=0.0)
-    x0[2 * K : 3 * K] = np.clip(a0, 0.0, 5.0)
+    x0[2 * K: 3 * K] = np.clip(a0, 0.0, 5.0)
     p0 = np.nan_to_num(P_data[:, 0], nan=0.0, posinf=10.0, neginf=0.0)
-    x0[3 * K + M :] = np.clip(p0, 0.0, None)
+    x0[3 * K + M:] = np.clip(p0, 0.0, None)
 
     # Convert to JAX
-    Cg_j   = jnp.asarray(Cg,              dtype=jnp.float64)
-    Cl_j   = jnp.asarray(Cl,              dtype=jnp.float64)
-    K_sk_j = jnp.asarray(K_site_kin,      dtype=jnp.float64)
-    R_j    = jnp.asarray(R,               dtype=jnp.float64)
-    La_j   = jnp.asarray(L_alpha,         dtype=jnp.float64)
-    spi_j  = jnp.asarray(site_prot_idx,   dtype=jnp.int32)
-    k2p_j  = jnp.asarray(kin_to_prot_idx, dtype=jnp.int32)
-    rmp_j  = jnp.asarray(receptor_mask_prot, dtype=jnp.float64)
-    rmk_j  = jnp.asarray(receptor_mask_kin,  dtype=jnp.float64)
-    psi_j  = jnp.asarray(prev_site_idx,   dtype=jnp.int32)
+    Cg_j = jnp.asarray(Cg, dtype=jnp.float64)
+    Cl_j = jnp.asarray(Cl, dtype=jnp.float64)
+    K_sk_j = jnp.asarray(K_site_kin, dtype=jnp.float64)
+    R_j = jnp.asarray(R, dtype=jnp.float64)
+    La_j = jnp.asarray(L_alpha, dtype=jnp.float64)
+    spi_j = jnp.asarray(site_prot_idx, dtype=jnp.int32)
+    k2p_j = jnp.asarray(kin_to_prot_idx, dtype=jnp.int32)
+    rmp_j = jnp.asarray(receptor_mask_prot, dtype=jnp.float64)
+    rmk_j = jnp.asarray(receptor_mask_kin, dtype=jnp.float64)
+    psi_j = jnp.asarray(prev_site_idx, dtype=jnp.int32)
 
-    y0_j      = jnp.asarray(x0,       dtype=jnp.float64)
-    t_eval    = jnp.asarray(all_times, dtype=jnp.float64)
-    P_data_j  = jnp.asarray(P_data,   dtype=jnp.float64)
+    y0_j = jnp.asarray(x0, dtype=jnp.float64)
+    t_eval = jnp.asarray(all_times, dtype=jnp.float64)
+    P_data_j = jnp.asarray(P_data, dtype=jnp.float64)
     A_scaled_j = jnp.asarray(A_scaled, dtype=jnp.float64)
     prot_idx_j = jnp.asarray(prot_idx_for_A, dtype=jnp.int32)
     prot_idx_solver = jnp.asarray(prot_time_idx, dtype=jnp.int32)
 
-    W_data_j  = jnp.asarray(W_data,      dtype=jnp.float64)
-    W_prot_j  = jnp.asarray(W_data_prot, dtype=jnp.float64)
+    W_data_j = jnp.asarray(W_data, dtype=jnp.float64)
+    W_prot_j = jnp.asarray(W_data_prot, dtype=jnp.float64)
 
     # Observed-data scales for standardized f1/f2 residuals.
     P_scale_j = _row_std_scale(P_data_j)
@@ -212,28 +213,28 @@ def make_pinn_loss_fn(
     has_abundance = A_scaled.size > 0
 
     has_mrna = (
-        t_mrna is not None
-        and rna_data_scaled is not None
-        and len(t_mrna) > 0
-        and mrna_time_idx is not None
-        and rna_model_prot_idx is not None
-        and len(rna_model_prot_idx) > 0
+            t_mrna is not None
+            and rna_data_scaled is not None
+            and len(t_mrna) > 0
+            and mrna_time_idx is not None
+            and rna_model_prot_idx is not None
+            and len(rna_model_prot_idx) > 0
     )
 
     if has_mrna:
-        rna_j           = jnp.asarray(rna_data_scaled, dtype=jnp.float64)
-        mrna_idx_j      = jnp.asarray(mrna_time_idx,   dtype=jnp.int32)
-        rna_prot_idx_j  = jnp.asarray(rna_model_prot_idx, dtype=jnp.int32)
+        rna_j = jnp.asarray(rna_data_scaled, dtype=jnp.float64)
+        mrna_idx_j = jnp.asarray(mrna_time_idx, dtype=jnp.int32)
+        rna_prot_idx_j = jnp.asarray(rna_model_prot_idx, dtype=jnp.int32)
         R_scale_j = _row_std_scale(rna_j)
         n_matched = len(rna_model_prot_idx)
-        T_rna     = len(t_mrna)
+        T_rna = len(t_mrna)
         W_rna_base = (
             np.asarray(W_data_mrna, dtype=np.float64)
             if W_data_mrna is not None
             else np.ones((n_matched, T_rna), dtype=np.float64)
         )
-        W_rna_j  = jnp.asarray(W_rna_base, dtype=jnp.float64)
-        n_rna    = max(1, rna_data_scaled.size)
+        W_rna_j = jnp.asarray(W_rna_base, dtype=jnp.float64)
+        n_rna = max(1, rna_data_scaled.size)
     else:
         rna_j = mrna_idx_j = rna_prot_idx_j = W_rna_j = R_scale_j = None
         n_rna = 1
@@ -256,8 +257,8 @@ def make_pinn_loss_fn(
 
     term = diffrax.ODETerm(combined_rhs_fn)
     ode_solver = make_diffrax_solver(ode_solver_kind, root_find_max_steps=root_find_max_steps)
-    sctrl   = make_stepsize_controller(rtol=rtol, atol=atol)
-    saveat  = diffrax.SaveAt(ts=t_eval)
+    sctrl = make_stepsize_controller(rtol=rtol, atol=atol)
+    saveat = diffrax.SaveAt(ts=t_eval)
     adjoint = make_diffrax_adjoint(ode_adjoint_kind)
 
     t0_val = float(all_times[0])
@@ -287,7 +288,7 @@ def make_pinn_loss_fn(
             theta_j,
             Cg_j, Cl_j, spi_j, K_sk_j, R_j, La_j,
             k2p_j, rmp_j, rmk_j, psi_j,
-            pinn_model,   # last element – consumed by combined_rhs
+            pinn_model,  # last element – consumed by combined_rhs
         )
 
         sol = diffrax.diffeqsolve(
@@ -309,8 +310,8 @@ def make_pinn_loss_fn(
         solve_ok = jnp.all(jnp.isfinite(xs)) & (sol.result == diffrax.RESULTS.successful)
 
         xs_prot = xs[prot_idx_solver, :]
-        P_sim = jnp.clip(xs_prot[:, 3 * K + M :], 0.0, None).T  # (N, T_prot)
-        A_sim = jnp.clip(xs_prot[:, 2 * K : 3 * K], 0.0, 5.0).T  # (K, T_prot)
+        P_sim = jnp.clip(xs_prot[:, 3 * K + M:], 0.0, None).T  # (N, T_prot)
+        A_sim = jnp.clip(xs_prot[:, 2 * K: 3 * K], 0.0, 5.0).T  # (K, T_prot)
 
         # --- f1: phosphosite loss ---
         # diff_p = P_sim - P_data_j
@@ -329,7 +330,7 @@ def make_pinn_loss_fn(
         # --- f3: mechanistic regularisation (L2 + Laplacian) ---
         f3_l2 = jnp.asarray(reg_lambda, dtype=jnp.float64) * jnp.dot(theta_j, theta_j)
         if has_net_reg:
-            alpha_raw = theta_j[2 * K + 2 : 2 * K + 2 + M]
+            alpha_raw = theta_j[2 * K + 2: 2 * K + 2 + M]
             alpha = jnp.exp(jnp.clip(alpha_raw, -20.0, 10.0))
             f3_net = jnp.asarray(lambda_net, dtype=jnp.float64) * jnp.dot(alpha, La_j @ alpha)
         else:
@@ -375,11 +376,11 @@ def make_pinn_loss_fn(
         f_pinn_reg_weighted = jnp.asarray(lambda_pinn, dtype=jnp.float64) * f_pinn_reg
 
         total = (
-            jnp.asarray(w_phospho,  dtype=jnp.float64) * f1
-            + jnp.asarray(w_abundance, dtype=jnp.float64) * f2
-            + jnp.asarray(w_reg,  dtype=jnp.float64) * f3
-            + jnp.asarray(w_mrna, dtype=jnp.float64) * f4
-            + f_pinn_reg_weighted
+                jnp.asarray(w_phospho, dtype=jnp.float64) * f1
+                + jnp.asarray(w_abundance, dtype=jnp.float64) * f2
+                + jnp.asarray(w_reg, dtype=jnp.float64) * f3
+                + jnp.asarray(w_mrna, dtype=jnp.float64) * f4
+                + f_pinn_reg_weighted
         )
 
         # Guard against non-finite results

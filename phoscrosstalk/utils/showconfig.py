@@ -5,8 +5,9 @@ from phoscrosstalk.logger import get_logger
 
 logger = get_logger()
 
+
 def _save_model_entities_table(
-    outdir, proteins, sites, site_prot_idx, entity_masks, gene_ids, A_proteins
+        outdir, proteins, sites, site_prot_idx, entity_masks, gene_ids, A_proteins
 ):
     """
     Save a model_entities.tsv file recording each protein's prior support and
@@ -20,6 +21,9 @@ def _save_model_entities_table(
         entity_masks (dict): Output of ``build_protein_entity_masks()``.
         gene_ids (list[str] or None): Gene IDs in the mRNA dataset.
         A_proteins (np.ndarray or None): Protein names with abundance data.
+
+    Returns:
+        None
     """
     K = len(proteins)
     # Count phosphosites per protein
@@ -78,7 +82,16 @@ def _save_model_entities_table(
 
 
 def _print_config_summary(cfg, config_path: str) -> None:
-    """Print a compact, human-readable summary of validated configuration."""
+    """
+    Print a compact, human-readable summary of validated configuration.
+
+    Args:
+        cfg: The validated configuration object.
+        config_path: The path to the configuration file.
+
+    Returns:
+        None
+    """
     p = cfg.paths
     m = cfg.model
     o = cfg.optimisation
@@ -144,4 +157,3 @@ def _print_config_summary(cfg, config_path: str) -> None:
         ]
     logger.header("Configuration Summary")
     logger.info("\n".join(lines))
-

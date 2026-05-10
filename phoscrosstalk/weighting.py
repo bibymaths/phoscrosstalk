@@ -1,3 +1,7 @@
+"""
+Weighting functions for phospho-network model simulations.
+"""
+
 from __future__ import annotations
 
 import numpy as np
@@ -65,11 +69,11 @@ def _normalize_mean_one(w: np.ndarray) -> np.ndarray:
 
 
 def _compute_noise_weights(
-    X: np.ndarray | None,
-    *,
-    name: str,
-    min_weight: float = 0.1,
-    max_weight: float = 20.0,
+        X: np.ndarray | None,
+        *,
+        name: str,
+        min_weight: float = 0.1,
+        max_weight: float = 20.0,
 ) -> np.ndarray:
     """
     Compute entity-level inverse-noise weights from temporal jaggedness.
@@ -117,10 +121,10 @@ def _time_weights_uniform(t: np.ndarray) -> np.ndarray:
 
 
 def _time_weights_early_emphasis(
-    t: np.ndarray,
-    *,
-    t_mid: float | None = None,
-    strength: float = 2.0,
+        t: np.ndarray,
+        *,
+        t_mid: float | None = None,
+        strength: float = 2.0,
 ) -> np.ndarray:
     """
     Early-time emphasis using a smooth exponential decay.
@@ -152,10 +156,10 @@ def _time_weights_early_emphasis_moderate(t: np.ndarray) -> np.ndarray:
 
 
 def _time_weights_late_emphasis(
-    t: np.ndarray,
-    *,
-    t_mid: float | None = None,
-    strength: float = 2.0,
+        t: np.ndarray,
+        *,
+        t_mid: float | None = None,
+        strength: float = 2.0,
 ) -> np.ndarray:
     """
     Late-time emphasis. Useful when long-term convergence matters.
@@ -204,13 +208,13 @@ def _time_weights_by_scheme(t: np.ndarray, scheme: str) -> np.ndarray:
 
 
 def build_weight_matrices(
-    t: np.ndarray,
-    Y: np.ndarray,
-    A_data: np.ndarray | None = None,
-    *,
-    t_mrna: np.ndarray | None = None,
-    rna_data: np.ndarray | None = None,
-    scheme: str = "uniform",
+        t: np.ndarray,
+        Y: np.ndarray,
+        A_data: np.ndarray | None = None,
+        *,
+        t_mrna: np.ndarray | None = None,
+        rna_data: np.ndarray | None = None,
+        scheme: str = "uniform",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Build phosphosite, protein-abundance, and mRNA loss weight matrices.

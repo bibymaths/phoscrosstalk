@@ -1,5 +1,4 @@
 """
-config.py
 Global configuration and state management for the Phospho-Network Model.
 
 Provides:
@@ -139,14 +138,14 @@ _DEFAULTS = {
         "rate_min": 1e-5,
         "rate_max": 10.0,
         "protein_degradation_max": 0.5,
-        "k_deact_max": 2.0,        # upper bound for k_deact, separate from rate_max
+        "k_deact_max": 2.0,  # upper bound for k_deact, separate from rate_max
         "kinase_rate_max": 3.0,
         "phosphatase_rate_max": 5.0,
         "beta_coupling_max": 3.0,  # upper bound for beta_g / beta_l
-        "alpha_min": 0.01,         # lower bound for alpha, prevents collapse near zero
+        "alpha_min": 0.01,  # lower bound for alpha, prevents collapse near zero
         "gamma_abs_max": 2.0,
-        "rna_max": 10.0,        # used in make_rhs() R_rna clip; NOT in create_bounds()
-        "abundance_max": 5.0,   # used in make_rhs() A clip / simulation; NOT in create_bounds()
+        "rna_max": 10.0,  # used in make_rhs() R_rna clip; NOT in create_bounds()
+        "abundance_max": 5.0,  # used in make_rhs() A clip / simulation; NOT in create_bounds()
     },
     "analysis": {
         "tune": False,
@@ -204,7 +203,7 @@ _DEFAULTS = {
         "dense_n_points": 200,
         # Label written to the interpolation_method column in the dense output TSV.
         "dense_interpolation": "diffrax_dense",
-        # Write fit_timeseries_dense.tsv to the output directory.
+        # Write protein_fit_timeseries_dense.tsv to the output directory.
         "save_dense": True,
     },
     # Post-fit neural latent-rate refinement (optional).
@@ -213,6 +212,8 @@ _DEFAULTS = {
     "neural_ode": {
         # Set to true to run the neural latent-rate refinement stage.
         "enabled": False,
+        # Bool Flag for learning all parameters.
+        "learn_theta": False,
         # MLP hidden layer width.
         "width": 32,
         # MLP depth (number of hidden layers).
@@ -292,7 +293,7 @@ _DEFAULTS = {
         "save_jaxpr_reports": False,
     },
     # Continuous interpolation of observed data for diagnostics/visualisation.    # This is NOT used in the loss function and does NOT expand training targets.
-    # Interpolated observed curves are exported to fit_timeseries_dense.tsv with
+    # Interpolated observed curves are exported to protein_fit_timeseries_dense.tsv with
     # series_type = "observed_interpolated_dense" so they cannot be confused with
     # measured data.
     "data_interpolation": {
@@ -379,6 +380,7 @@ def load_config(path: str | None = None) -> SimpleNamespace:
 
     return _to_ns(merged)
 
+
 def _read_runtime_config():
     """
     Pre-parse the ``[runtime]`` section and the ``n_starts`` value from the
@@ -425,6 +427,7 @@ def _read_runtime_config():
     except Exception:
         return _defaults
 
+
 # ---------------------------------------------------------------------------
 # Config validator
 # ---------------------------------------------------------------------------
@@ -440,7 +443,7 @@ _VALID_MECHANISMS = {"dist", "seq", "rand"}
 _VALID_INTERP = {"piecewise_constant", "linear"}
 _VALID_SCALE = {"none", "minmax", "log-minmax"}
 _VALID_WEIGHT = {"uniform", "early_emphasis", "early_emphasis_moderate", "late_emphasis", "flat_no_noise"}
-_VALID_SPROD = {"softplus", "linear"}
+_VALID_DERIVED_RATE_FN = {"bounded", "softplus", "linear", "positive", "none"}
 _VALID_ODE_SOLVERS = {
     "tsit5",
     "dopri5",
@@ -453,7 +456,7 @@ _VALID_ODE_SOLVERS = {
 
 _VALID_ODE_ADJOINTS = {
     "forward",
-    "recursive",   # alias for checkpoint; both map to RecursiveCheckpointAdjoint
+    "recursive",  # alias for checkpoint; both map to RecursiveCheckpointAdjoint
     "checkpoint",
     "direct",
     "backsolve",
@@ -742,11 +745,19 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
     # -------------------------------------------------------------------
     # Derived rates
     # -------------------------------------------------------------------
-    s_prod_fn = getattr(cfg.derived_rates, "s_prod_fn", "softplus")
-    if s_prod_fn not in _VALID_SPROD:
+
+    k_act_fn = getattr(cfg.derived_rates, "k_act_fn", "bounded")
+    if k_act_fn not in _VALID_DERIVED_RATE_FN:
+        errors.append(
+            f"  [derived_rates] k_act_fn = {k_act_fn!r} is invalid. "
+            f"Must be one of: {sorted(_VALID_DERIVED_RATE_FN)}"
+        )
+
+    s_prod_fn = getattr(cfg.derived_rates, "s_prod_fn", "bounded")
+    if s_prod_fn not in _VALID_DERIVED_RATE_FN:
         errors.append(
             f"  [derived_rates] s_prod_fn = {s_prod_fn!r} is invalid. "
-            f"Must be one of: {sorted(_VALID_SPROD)}"
+            f"Must be one of: {sorted(_VALID_DERIVED_RATE_FN)}"
         )
 
     # -------------------------------------------------------------------
@@ -809,9 +820,9 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
                 f"  [steadystate] early_end = {ss_early_end!r} must be a positive number."  # noqa: E501
             )
         if (
-            isinstance(ss_t_end, (int, float))
-            and isinstance(ss_early_end, (int, float))
-            and ss_t_end <= ss_early_end
+                isinstance(ss_t_end, (int, float))
+                and isinstance(ss_early_end, (int, float))
+                and ss_t_end <= ss_early_end
         ):
             errors.append(
                 f"  [steadystate] t_end ({ss_t_end}) must be greater than "
@@ -853,13 +864,13 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
         ss_event_rtol = getattr(ss_cfg, "event_rtol", None)
         ss_event_atol = getattr(ss_cfg, "event_atol", None)
         if ss_event_rtol is not None and (
-            not isinstance(ss_event_rtol, (int, float)) or ss_event_rtol <= 0
+                not isinstance(ss_event_rtol, (int, float)) or ss_event_rtol <= 0
         ):
             errors.append(
                 f"  [steadystate] event_rtol = {ss_event_rtol!r} must be null or a positive number."
             )
         if ss_event_atol is not None and (
-            not isinstance(ss_event_atol, (int, float)) or ss_event_atol <= 0
+                not isinstance(ss_event_atol, (int, float)) or ss_event_atol <= 0
         ):
             errors.append(
                 f"  [steadystate] event_atol = {ss_event_atol!r} must be null or a positive number."

@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: MIT
 """
-pinn/runner.py
 Main PINN execution entry point.
 
 run_pinn_pipeline(...)
@@ -35,6 +34,7 @@ from phoscrosstalk.pinn.utils import pinn_param_count
 logger = get_logger()
 _debug_logger = get_logger().logger
 
+
 # ---------------------------------------------------------------------------
 # Training loop helpers
 # ---------------------------------------------------------------------------
@@ -66,11 +66,12 @@ def _theta_from_unconstrained(theta_u, xl, xu):
     xu = jnp.asarray(xu, dtype=jnp.float64)
     return xl + (xu - xl) * jax.nn.sigmoid(theta_u)
 
+
 def _run_pinn_optax(
-    *,
-    loss_fn,
-    trainable,
-    pinn_cfg: SimpleNamespace,
+        *,
+        loss_fn,
+        trainable,
+        pinn_cfg: SimpleNamespace,
 ) -> tuple:
     """
     Train (theta, pinn_model) with an Optax Adam loop.
@@ -80,10 +81,10 @@ def _run_pinn_optax(
     trainable : (theta, pinn_model) – final trained values
     loss_history : list[dict]
     """
-    lr          = float(getattr(pinn_cfg, "learning_rate", 1e-3))
-    max_steps   = int(getattr(pinn_cfg, "max_steps",    500))
+    lr = float(getattr(pinn_cfg, "learning_rate", 1e-3))
+    max_steps = int(getattr(pinn_cfg, "max_steps", 500))
     print_every = max(1, int(getattr(pinn_cfg, "print_every", 50)))
-    grad_clip   = float(getattr(pinn_cfg, "grad_clip",  1.0))
+    grad_clip = float(getattr(pinn_cfg, "grad_clip", 1.0))
 
     transforms = []
     if grad_clip > 0:
@@ -161,14 +162,15 @@ def _run_pinn_optax(
 
     return trainable, history
 
+
 def _run_pinn_optimistix_lbfgs_polish(
-    *,
-    loss_fn,
-    trainable,
-    pinn_cfg: SimpleNamespace,
-    xl,
-    xu,
-    step_offset: int = 0,
+        *,
+        loss_fn,
+        trainable,
+        pinn_cfg: SimpleNamespace,
+        xl,
+        xu,
+        step_offset: int = 0,
 ) -> tuple:
     """
     Polish an already-trained (theta, pinn_model) with Optimistix L-BFGS.
@@ -304,43 +306,44 @@ def _run_pinn_optimistix_lbfgs_polish(
 
     return (theta_final, pinn_final), history
 
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
 
 def run_pinn_pipeline(
-    cfg: SimpleNamespace,
-    *,
-    dims: ModelDims,
-    t: np.ndarray,
-    P_scaled: np.ndarray,
-    A_scaled: np.ndarray,
-    prot_idx_for_A: np.ndarray,
-    W_data: np.ndarray,
-    W_data_prot: np.ndarray,
-    Cg: np.ndarray,
-    Cl: np.ndarray,
-    site_prot_idx: np.ndarray,
-    K_site_kin: np.ndarray,
-    R: np.ndarray,
-    L_alpha: np.ndarray,
-    kin_to_prot_idx: np.ndarray,
-    receptor_mask_prot: np.ndarray,
-    receptor_mask_kin: np.ndarray,
-    mechanism: str,
-    k_act_fn=None,
-    s_prod_fn=None,
-    t_rna=None,
-    rna_obs_matched=None,
-    rna_model_prot_idx=None,
-    rna_fit_genes=None,
-    R_data0=None,
-    W_data_mrna=None,
-    outdir: str = "results",
-    proteins: list | None = None,
-    kinases: list | None = None,
-    sites: list | None = None,
+        cfg: SimpleNamespace,
+        *,
+        dims: ModelDims,
+        t: np.ndarray,
+        P_scaled: np.ndarray,
+        A_scaled: np.ndarray,
+        prot_idx_for_A: np.ndarray,
+        W_data: np.ndarray,
+        W_data_prot: np.ndarray,
+        Cg: np.ndarray,
+        Cl: np.ndarray,
+        site_prot_idx: np.ndarray,
+        K_site_kin: np.ndarray,
+        R: np.ndarray,
+        L_alpha: np.ndarray,
+        kin_to_prot_idx: np.ndarray,
+        receptor_mask_prot: np.ndarray,
+        receptor_mask_kin: np.ndarray,
+        mechanism: str,
+        k_act_fn=None,
+        s_prod_fn=None,
+        t_rna=None,
+        rna_obs_matched=None,
+        rna_model_prot_idx=None,
+        rna_fit_genes=None,
+        R_data0=None,
+        W_data_mrna=None,
+        outdir: str = "results",
+        proteins: list | None = None,
+        kinases: list | None = None,
+        sites: list | None = None,
 ) -> dict:
     """
     Run the single-start PINN / Universal ODE optimisation.
@@ -377,14 +380,14 @@ def run_pinn_pipeline(
     state_dim = 3 * K + M + N
 
     proteins_l = list(proteins) if proteins else [str(k) for k in range(K)]
-    kinases_l  = list(kinases)  if kinases  else [str(m) for m in range(M)]
-    sites_l    = list(sites)    if sites    else [str(n) for n in range(N)]
+    kinases_l = list(kinases) if kinases else [str(m) for m in range(M)]
+    sites_l = list(sites) if sites else [str(n) for n in range(N)]
 
     # ------------------------------------------------------------------
     # 1. Theta initialisation (centre of the parameter bounds)
     # ------------------------------------------------------------------
-    bounds_ns  = getattr(cfg, "bounds", None)
-    xl, xu, _  = create_bounds(K, M, N, bounds=bounds_ns)
+    bounds_ns = getattr(cfg, "bounds", None)
+    xl, xu, _ = create_bounds(K, M, N, bounds=bounds_ns)
     theta0 = np.asarray((xl + xu) / 2.0, dtype=np.float64)
     logger.info("[pinn] Initial theta created (dim=%d)", theta0.shape[0])
 
@@ -392,7 +395,7 @@ def run_pinn_pipeline(
     # 2. PINN model initialisation
     # ------------------------------------------------------------------
     seed = int(getattr(pinn_cfg, "seed", 0))
-    key  = jax.random.PRNGKey(seed)
+    key = jax.random.PRNGKey(seed)
     pinn_model = PINNAugmentation(
         state_dim=state_dim,
         width_size=int(getattr(pinn_cfg, "width_size", 64)),
@@ -407,36 +410,36 @@ def run_pinn_pipeline(
     # 3. Solver / ODE settings
     # ------------------------------------------------------------------
     solver_cfg = getattr(cfg, "solver", None)
-    opt_cfg    = getattr(cfg, "optimisation", None)
-    dr_cfg     = getattr(cfg, "derived_rates", None)
+    opt_cfg = getattr(cfg, "optimisation", None)
+    dr_cfg = getattr(cfg, "derived_rates", None)
     bounds_ns2 = getattr(cfg, "bounds", None)
 
-    ode_solver_kind      = getattr(solver_cfg,  "ode_solver",           "tsit5")
-    ode_adjoint_kind     = getattr(solver_cfg,  "ode_adjoint",          "recursive")
-    rtol                 = float(getattr(pinn_cfg, "rtol", getattr(solver_cfg, "rtol", 1e-6)))
-    atol                 = float(getattr(pinn_cfg, "atol", getattr(solver_cfg, "atol", 1e-9)))
-    solver_max_steps     = int(getattr(solver_cfg, "max_steps", 16384))
-    dt0                  = float(getattr(solver_cfg, "dt0", 0.01))
-    root_find_max_steps  = int(getattr(solver_cfg, "root_find_max_steps", 10))
-    rna_relax            = float(getattr(dr_cfg, "rna_relax", 0.1))
-    abundance_max        = float(getattr(bounds_ns2, "abundance_max", 5.0)) if bounds_ns2 else 5.0
-    lambda_net           = float(getattr(opt_cfg, "lambda_net", 1e-4)) if opt_cfg else 1e-4
-    reg_lambda           = float(getattr(opt_cfg, "reg_lambda", 1e-4)) if opt_cfg else 1e-4
-    lambda_pinn          = float(getattr(pinn_cfg, "lambda_pinn", 0.1))
-    regularize           = str(getattr(pinn_cfg, "regularize", "residual_l2"))
+    ode_solver_kind = getattr(solver_cfg, "ode_solver", "tsit5")
+    ode_adjoint_kind = getattr(solver_cfg, "ode_adjoint", "recursive")
+    rtol = float(getattr(pinn_cfg, "rtol", getattr(solver_cfg, "rtol", 1e-6)))
+    atol = float(getattr(pinn_cfg, "atol", getattr(solver_cfg, "atol", 1e-9)))
+    solver_max_steps = int(getattr(solver_cfg, "max_steps", 16384))
+    dt0 = float(getattr(solver_cfg, "dt0", 0.01))
+    root_find_max_steps = int(getattr(solver_cfg, "root_find_max_steps", 10))
+    rna_relax = float(getattr(dr_cfg, "rna_relax", 0.1))
+    abundance_max = float(getattr(bounds_ns2, "abundance_max", 5.0)) if bounds_ns2 else 5.0
+    lambda_net = float(getattr(opt_cfg, "lambda_net", 1e-4)) if opt_cfg else 1e-4
+    reg_lambda = float(getattr(opt_cfg, "reg_lambda", 1e-4)) if opt_cfg else 1e-4
+    lambda_pinn = float(getattr(pinn_cfg, "lambda_pinn", 0.1))
+    regularize = str(getattr(pinn_cfg, "regularize", "residual_l2"))
 
     lw_cfg = getattr(cfg, "loss_weights", None)
-    w_phospho  = float(getattr(lw_cfg, "phospho",   1.0)) if lw_cfg else 1.0
-    w_abundance= float(getattr(lw_cfg, "abundance", 1.0)) if lw_cfg else 1.0
-    w_reg      = float(getattr(lw_cfg, "reg",       1.0)) if lw_cfg else 1.0
-    w_mrna     = float(getattr(lw_cfg, "mrna",      1.0)) if lw_cfg else 1.0
+    w_phospho = float(getattr(lw_cfg, "phospho", 1.0)) if lw_cfg else 1.0
+    w_abundance = float(getattr(lw_cfg, "abundance", 1.0)) if lw_cfg else 1.0
+    w_reg = float(getattr(lw_cfg, "reg", 1.0)) if lw_cfg else 1.0
+    w_mrna = float(getattr(lw_cfg, "mrna", 1.0)) if lw_cfg else 1.0
 
     has_rna = (
-        t_rna is not None
-        and rna_obs_matched is not None
-        and rna_model_prot_idx is not None
-        and rna_fit_genes is not None
-        and len(rna_fit_genes) > 0
+            t_rna is not None
+            and rna_obs_matched is not None
+            and rna_model_prot_idx is not None
+            and rna_fit_genes is not None
+            and len(rna_fit_genes) > 0
     )
 
     # ------------------------------------------------------------------
@@ -493,8 +496,8 @@ def run_pinn_pipeline(
     # ------------------------------------------------------------------
     # 5. Run single-start training (no multistart)
     # ------------------------------------------------------------------
-    theta_j     = jnp.asarray(theta0, dtype=jnp.float64)
-    trainable   = (theta_j, pinn_model)
+    theta_j = jnp.asarray(theta0, dtype=jnp.float64)
+    trainable = (theta_j, pinn_model)
 
     logger.info(
         "[pinn] Starting Optax training: max_steps=%d  lr=%.2e  lambda_pinn=%.2e",
@@ -574,9 +577,9 @@ def run_pinn_pipeline(
             make_stepsize_controller,
         )
 
-        sim_cfg    = getattr(cfg, "simulation", None)
-        dense_n    = int(getattr(sim_cfg, "dense_n_points", 200)) if sim_cfg else 200
-        t_dense    = np.linspace(float(t[0]), float(t[-1]), dense_n)
+        sim_cfg = getattr(cfg, "simulation", None)
+        dense_n = int(getattr(sim_cfg, "dense_n_points", 200)) if sim_cfg else 200
+        t_dense = np.linspace(float(t[0]), float(t[-1]), dense_n)
 
         combined_rhs = make_combined_rhs(
             K, M, N, mechanism,
@@ -587,8 +590,8 @@ def run_pinn_pipeline(
         )
 
         prev_idx = compute_prev_site_idx(site_prot_idx.astype(np.int32), N)
-        T_prot   = P_scaled.shape[1]
-        A0_full  = build_full_A0(K, T_prot, A_scaled, prot_idx_for_A)
+        T_prot = P_scaled.shape[1]
+        A0_full = build_full_A0(K, T_prot, A_scaled, prot_idx_for_A)
         x0 = np.zeros(3 * K + M + N, dtype=np.float64)
         if R_data0 is not None:
             r0 = np.asarray(R_data0, dtype=np.float64)
@@ -597,23 +600,23 @@ def run_pinn_pipeline(
         else:
             x0[:K] = 1.0
         a0 = np.nan_to_num(A0_full[:, 0], nan=1.0)
-        x0[2 * K : 3 * K] = np.clip(a0, 0.0, 5.0)
-        x0[3 * K + M :]   = np.clip(np.nan_to_num(P_scaled[:, 0], nan=0.0), 0.0, None)
+        x0[2 * K: 3 * K] = np.clip(a0, 0.0, 5.0)
+        x0[3 * K + M:] = np.clip(np.nan_to_num(P_scaled[:, 0], nan=0.0), 0.0, None)
 
-        y0_j   = jnp.asarray(x0, dtype=jnp.float64)
+        y0_j = jnp.asarray(x0, dtype=jnp.float64)
         t_eval = jnp.asarray(t_dense, dtype=jnp.float64)
-        sctrl  = make_stepsize_controller(rtol=rtol, atol=atol)
+        sctrl = make_stepsize_controller(rtol=rtol, atol=atol)
 
-        Cg_j   = jnp.asarray(Cg,              dtype=jnp.float64)
-        Cl_j   = jnp.asarray(Cl,              dtype=jnp.float64)
-        K_sk_j = jnp.asarray(K_site_kin,      dtype=jnp.float64)
-        R_j    = jnp.asarray(R,               dtype=jnp.float64)
-        La_j   = jnp.asarray(L_alpha,         dtype=jnp.float64)
-        spi_j  = jnp.asarray(site_prot_idx,   dtype=jnp.int32)
-        k2p_j  = jnp.asarray(kin_to_prot_idx, dtype=jnp.int32)
-        rmp_j  = jnp.asarray(receptor_mask_prot, dtype=jnp.float64)
-        rmk_j  = jnp.asarray(receptor_mask_kin,  dtype=jnp.float64)
-        psi_j  = jnp.asarray(prev_idx,        dtype=jnp.int32)
+        Cg_j = jnp.asarray(Cg, dtype=jnp.float64)
+        Cl_j = jnp.asarray(Cl, dtype=jnp.float64)
+        K_sk_j = jnp.asarray(K_site_kin, dtype=jnp.float64)
+        R_j = jnp.asarray(R, dtype=jnp.float64)
+        La_j = jnp.asarray(L_alpha, dtype=jnp.float64)
+        spi_j = jnp.asarray(site_prot_idx, dtype=jnp.int32)
+        k2p_j = jnp.asarray(kin_to_prot_idx, dtype=jnp.int32)
+        rmp_j = jnp.asarray(receptor_mask_prot, dtype=jnp.float64)
+        rmk_j = jnp.asarray(receptor_mask_kin, dtype=jnp.float64)
+        psi_j = jnp.asarray(prev_idx, dtype=jnp.int32)
 
         theta_dense_j = jnp.asarray(theta_opt, dtype=jnp.float64)
 

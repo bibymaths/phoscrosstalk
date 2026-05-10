@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: MIT
 """
-scipy_jax_backend.py
 jax.scipy.optimize.minimize backend for the phospho-network.
 
 jax.scipy.optimize.minimize only supports unconstrained BFGS (the only
@@ -19,15 +18,6 @@ one of two strategies selectable at call time:
     Add a quadratic penalty ``_PENALTY_COEFF * sum(violation**2)`` outside
     [xl, xu].  Simpler but less accurate; the solution may sit slightly inside
     the feasible region rather than on the boundary.
-
-Interface (mirrors optimization.py)::
-
-    run_single_optimisation_scipy_jax(loss_fn, theta0, xl, xu, ...)
-        -> (theta_opt, total_loss, f1, f2, f3, f4)
-
-loss_fn must have the signature produced by make_loss_fn::
-
-    loss_fn(theta, args) -> (scalar_loss, (f1, f2, f3, f4))
 
 Note on jax.scipy.optimize.minimize:
     API (as of JAX 0.4.x)::
@@ -71,15 +61,15 @@ _PENALTY_COEFF: float = 1e4
 
 
 def run_single_optimisation_scipy_jax(
-    loss_fn: Callable,
-    theta0: np.ndarray,
-    xl: np.ndarray,
-    xu: np.ndarray,
-    *,
-    max_steps: int = 500,
-    gtol: float = 1e-5,
-    verbose: bool = False,
-    bounds_strategy: str = "reparameterize",
+        loss_fn: Callable,
+        theta0: np.ndarray,
+        xl: np.ndarray,
+        xu: np.ndarray,
+        *,
+        max_steps: int = 500,
+        gtol: float = 1e-5,
+        verbose: bool = False,
+        bounds_strategy: str = "reparameterize",
 ) -> tuple[np.ndarray, float, float, float, float, float]:
     """
     Run BFGS via jax.scipy.optimize.minimize with bounds enforced.

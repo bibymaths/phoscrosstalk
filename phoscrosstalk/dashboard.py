@@ -1,5 +1,4 @@
 """
-dashboard.py
 Helper module for the PhosCrosstalk Streamlit dashboard.
 
 Provides:
@@ -36,8 +35,8 @@ _REQUIRED = {
 
 # Optional but expected
 _OPTIONAL_FILES = [
-    "fit_timeseries.tsv",
-    "fit_timeseries_dense.tsv",
+    "protein_fit_timeseries.tsv",
+    "protein_fit_timeseries_dense.tsv",
     "mrna_fit_timeseries_dense.tsv",
     "internal_states.tsv",
     "derived_rates.npz",
@@ -301,12 +300,12 @@ def load_fitted_params(results_dir: str) -> dict[str, Any] | None:
 
 def load_fit_timeseries(results_dir: str) -> pd.DataFrame | None:
     """
-    Load fit_timeseries.tsv.
+    Load protein_fit_timeseries.tsv.
 
     Columns: Type, Protein, Residue, sim_t<j>, data_t<j>
     Returns None if missing.
     """
-    path = os.path.join(results_dir, "fit_timeseries.tsv")
+    path = os.path.join(results_dir, "protein_fit_timeseries.tsv")
     if not os.path.exists(path):
         return None
     try:
@@ -317,13 +316,13 @@ def load_fit_timeseries(results_dir: str) -> pd.DataFrame | None:
 
 def load_dense_timeseries(results_dir: str) -> pd.DataFrame | None:
     """
-    Load fit_timeseries_dense.tsv – long-format dense simulation output.
+    Load protein_fit_timeseries_dense.tsv – long-format dense simulation output.
 
     Columns: entity_type, entity, site, protein, time, value, series_type,
              source, interpolation_method
     Returns None if missing (dense output is optional).
     """
-    path = os.path.join(results_dir, "fit_timeseries_dense.tsv")
+    path = os.path.join(results_dir, "protein_fit_timeseries_dense.tsv")
     if not os.path.exists(path):
         return None
     try:
@@ -741,9 +740,9 @@ def load_dashboard_manifest(results_dir: str) -> dict[str, Any] | None:
 
 
 def _write_fitted_timeseries_npz(
-    out_path: str, df_ft: pd.DataFrame, df_is: pd.DataFrame | None
+        out_path: str, df_ft: pd.DataFrame, df_is: pd.DataFrame | None
 ) -> None:
-    """Convert fit_timeseries.tsv (and internal_states.tsv) to NPZ."""
+    """Convert protein_fit_timeseries.tsv (and internal_states.tsv) to NPZ."""
     sim_cols = [c for c in df_ft.columns if c.startswith("sim_t")]
     data_cols = [c for c in df_ft.columns if c.startswith("data_t")]
 

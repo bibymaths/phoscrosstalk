@@ -1,7 +1,4 @@
 """
-multistarts.py
-Multi-start parameter fitting using Optimistix (single-objective framework).
-
 Strategy
 --------
 1. Generate ``n_starts`` random starting points uniformly in [xl, xu] using
@@ -33,11 +30,6 @@ Returns (merged_res, best_idx, total_losses) where:
   merged_res.J  : (n_solutions,)         – total loss per run (used for selection)
   best_idx      : int                    – index of lowest-total-loss solution
   total_losses  : np.ndarray             – total loss for each solution
-
-Old pymoo-specific flags (--gen, --pop-size, --algorithm) are mapped:
-  --pop-size   → n_starts
-  --gen        → max_steps_per_run
-  --algorithm  → ignored with a warning (non-fatal)
 """
 
 import multiprocessing as mp
@@ -212,7 +204,7 @@ def _find_non_picklable_items(mapping: dict) -> list:
 
 
 def _build_residual_kwargs(
-    problem, args, w_phospho, w_abundance, w_reg, w_mrna
+        problem, args, w_phospho, w_abundance, w_reg, w_mrna
 ) -> dict:
     """
     Collect all inputs needed by ``make_residuals_fn`` into a picklable dict.
@@ -356,19 +348,19 @@ def _residuals_fn_to_loss_fn(residuals_fn):
 
 
 def _run_one_start(
-    backend: str,
-    theta0,
-    residual_kwargs: dict,
-    max_steps: int,
-    opt_rtol: float,
-    opt_atol: float,
-    opt_verbose: bool,
-    optx_adjoint: str,
-    ls_solver: str,
-    jac_mode: str,
-    backend_kwargs: dict,
-    jaxpr_out_dir=None,
-    opt_log_every: int = 100,
+        backend: str,
+        theta0,
+        residual_kwargs: dict,
+        max_steps: int,
+        opt_rtol: float,
+        opt_atol: float,
+        opt_verbose: bool,
+        optx_adjoint: str,
+        ls_solver: str,
+        jac_mode: str,
+        backend_kwargs: dict,
+        jaxpr_out_dir=None,
+        opt_log_every: int = 100,
 ):
     """
     Central single-start dispatch: builds the correct callable for the
@@ -495,17 +487,17 @@ def run_multi_start_optimization(problem, args, P_scaled):
 
     # Warn if deprecated fields were used instead of the preferred ones
     if (
-        hasattr(args, "pop_size")
-        and args.pop_size is not None
-        and (not hasattr(args, "n_starts") or args.n_starts is None)
+            hasattr(args, "pop_size")
+            and args.pop_size is not None
+            and (not hasattr(args, "n_starts") or args.n_starts is None)
     ):
         logger.warning(
             f"[!] --pop-size ({args.pop_size}) is deprecated; use --n-starts instead."
         )
     if (
-        hasattr(args, "gen")
-        and args.gen is not None
-        and (not hasattr(args, "max_steps") or args.max_steps is None)
+            hasattr(args, "gen")
+            and args.gen is not None
+            and (not hasattr(args, "max_steps") or args.max_steps is None)
     ):
         logger.warning(
             f"[!] --gen ({args.gen}) is deprecated; use --max-steps instead."
@@ -582,7 +574,8 @@ def run_multi_start_optimization(problem, args, P_scaled):
     if backend == "optimistix":
         logger.info(f"    Optimistix rtol={opt_rtol}, atol={opt_atol}")
     logger.info(
-        f"    ODE rtol={getattr(args, 'rtol', 1e-6)}, atol={getattr(args, 'atol', 1e-9)}, max_steps={getattr(args, 'solver_max_steps', 16384)}"  # noqa: E501
+        f"    ODE rtol={getattr(args, 'rtol', 1e-6)}, atol={getattr(args, 'atol', 1e-9)}, max_steps={getattr(args, 'solver_max_steps', 16384)}"
+        # noqa: E501
     )
     logger.info(
         "[runtime] CPU plan:"
@@ -651,7 +644,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
         try:
             ctx = mp.get_context("spawn")
             with ProcessPoolExecutor(
-                max_workers=cpu_plan.n_parallel_runs, mp_context=ctx
+                    max_workers=cpu_plan.n_parallel_runs, mp_context=ctx
             ) as pool:
                 future_to_i = {
                     pool.submit(_run_single_start_worker, task): task[0]
@@ -877,7 +870,7 @@ def run_multi_start_optimization(problem, args, P_scaled):
         try:
             ctx = mp.get_context("spawn")
             with ProcessPoolExecutor(
-                max_workers=cpu_plan.n_parallel_runs, mp_context=ctx
+                    max_workers=cpu_plan.n_parallel_runs, mp_context=ctx
             ) as pool:
                 for score_i, score_val in pool.map(_frechet_worker, frechet_tasks):
                     frechet_scores[score_i] = score_val

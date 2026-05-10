@@ -26,19 +26,6 @@ All backends share the same return signature::
 loss_fn must be the scalar-loss closure from make_loss_fn::
 
     loss_fn(theta, args) -> (scalar_loss, (f1, f2, f3, f4))
-
-Example:
-    xl, xu, _ = create_bounds(K, M, N)
-    loss_fn    = make_loss_fn(dims, ...)
-
-    theta_opt, loss, f1, f2, f3, f4 = dispatch_optimisation(
-        backend  = "optax_adam",
-        loss_fn  = loss_fn,
-        theta0   = theta_init,
-        xl       = xl,
-        xu       = xu,
-        max_steps = 500,
-    )
 """
 
 from __future__ import annotations
@@ -49,6 +36,7 @@ from typing import Callable
 from phoscrosstalk.logger import get_logger
 
 logger = get_logger()
+
 
 # ---------------------------------------------------------------------------
 # Lazy imports (avoid loading heavy deps at module import time)
@@ -88,23 +76,23 @@ def _import_mpax_runner():
 _DISPATCH: dict[str, tuple] = {
     # Existing Optimistix backend — uses residuals_fn, not loss_fn.
     # Pass residuals_fn as loss_fn; the optimistix runner handles has_aux.
-    "optimistix":      (_import_optimistix_runner,  {}),
+    "optimistix": (_import_optimistix_runner, {}),
 
     # JAXopt backends
-    "jaxopt_lbfgsb":   (_import_jaxopt_runner,      {"solver_kind": "lbfgsb"}),
-    "jaxopt_pgd":      (_import_jaxopt_runner,      {"solver_kind": "projected_gradient"}),
+    "jaxopt_lbfgsb": (_import_jaxopt_runner, {"solver_kind": "lbfgsb"}),
+    "jaxopt_pgd": (_import_jaxopt_runner, {"solver_kind": "projected_gradient"}),
 
     # jax.scipy.optimize backends
-    "scipy_jax":       (_import_scipy_jax_runner,   {"bounds_strategy": "reparameterize"}),
-    "scipy_jax_pen":   (_import_scipy_jax_runner,   {"bounds_strategy": "penalty"}),
+    "scipy_jax": (_import_scipy_jax_runner, {"bounds_strategy": "reparameterize"}),
+    "scipy_jax_pen": (_import_scipy_jax_runner, {"bounds_strategy": "penalty"}),
 
     # Optax backends
-    "optax_adam":      (_import_optax_runner,        {"optimizer_kind": "adam"}),
-    "optax_sgd":       (_import_optax_runner,        {"optimizer_kind": "sgd"}),
-    "optax_lbfgs":     (_import_optax_runner,        {"optimizer_kind": "lbfgs"}),
+    "optax_adam": (_import_optax_runner, {"optimizer_kind": "adam"}),
+    "optax_sgd": (_import_optax_runner, {"optimizer_kind": "sgd"}),
+    "optax_lbfgs": (_import_optax_runner, {"optimizer_kind": "lbfgs"}),
 
     # MPAX SQP backend
-    "mpax":            (_import_mpax_runner,         {}),
+    "mpax": (_import_mpax_runner, {}),
 }
 
 AVAILABLE_BACKENDS: list[str] = list(_DISPATCH.keys())
@@ -116,12 +104,12 @@ AVAILABLE_BACKENDS: list[str] = list(_DISPATCH.keys())
 
 
 def dispatch_optimisation(
-    backend: str,
-    loss_fn: Callable,
-    theta0: np.ndarray,
-    xl: np.ndarray,
-    xu: np.ndarray,
-    **kwargs: object,
+        backend: str,
+        loss_fn: Callable,
+        theta0: np.ndarray,
+        xl: np.ndarray,
+        xu: np.ndarray,
+        **kwargs: object,
 ) -> tuple[np.ndarray, float, float, float, float, float]:
     """
     Dispatch a single optimisation to the requested solver backend.

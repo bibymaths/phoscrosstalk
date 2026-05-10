@@ -7,7 +7,7 @@ After a successful run, PhosCrosstalk writes all results to `--outdir`.
 | File                        | Description                                         |
 |-----------------------------|-----------------------------------------------------|
 | `fitted_params.npz`         | Optimized parameter vector and decoded per-element arrays |
-| `fit_timeseries.tsv`        | Simulated vs observed phosphosite and protein time-series |
+| `protein_fit_timeseries.tsv`        | Simulated vs observed phosphosite and protein time-series |
 | `internal_states.tsv`       | Simulated `S(t)` (protein activity) and `Kdyn(t)` (kinase activity) |
 | `parameter_summary_proteins.tsv` | Per-protein parameters (`k_deact`, `d_deg`)   |
 | `parameter_summary_kinases.tsv`  | Per-kinase parameters (`alpha`, `kK_act`, `kK_deact`) |
@@ -87,8 +87,8 @@ contains all input matrices, labels, and configuration for reproducibility:
 
 ## Interpreting outputs
 
-- **`p(t)` in `fit_timeseries.tsv`** = relative phosphosite signal fit. Compare `sim_t*` vs `data_t*` columns.
-- **`A(t)` in `fit_timeseries.tsv`** = protein abundance fit.
+- **`p(t)` in `protein_fit_timeseries.tsv`** = relative phosphosite signal fit. Compare `sim_t*` vs `data_t*` columns.
+- **`A(t)` in `protein_fit_timeseries.tsv`** = protein abundance fit.
 - **`R(t)` in `mrna_fit_timeseries.tsv`** = mRNA level fit (only when RNA ODE state is active).
 - **`S(t)` in `internal_states.tsv`** = protein activation state (not directly observed; derived from model).
 - **`Kdyn(t)` in `internal_states.tsv`** = kinase activity (derived; not directly fitted to data).

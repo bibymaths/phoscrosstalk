@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: MIT
 """
-jaxpr_reporter.py
 Diagnostic-only module for jaxpr inspection, parsing, and report saving.
 
 Captures JAX computation graphs (jaxprs) at key flow steps and renders
@@ -39,6 +38,7 @@ from pathlib import Path
 import jax
 
 logger = logging.getLogger("phoscrosstalk.jaxpr_reporter")
+
 
 # ---------------------------------------------------------------------------
 # Jaxpr parsing
@@ -327,12 +327,12 @@ def write_index_html(out_dir: Path, all_parsed: dict[str, dict]) -> None:
 
 
 def capture_and_save_jaxpr(
-    fn,
-    example_args: tuple,
-    step_label: str,
-    module_label: str,
-    out_dir: Path,
-    save_json: bool = True,
+        fn,
+        example_args: tuple,
+        step_label: str,
+        module_label: str,
+        out_dir: Path,
+        save_json: bool = True,
 ) -> dict:
     """Trace ``fn`` with ``example_args``, parse the jaxpr, and save reports.
 

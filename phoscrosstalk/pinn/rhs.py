@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: MIT
 """
-pinn/rhs.py
 PINN-augmented RHS factory.
 
 The mechanistic RHS is imported and reused directly from mechanisms.py.
@@ -20,15 +19,15 @@ from phoscrosstalk.mechanisms import make_rhs
 
 
 def make_combined_rhs(
-    K: int,
-    M: int,
-    N: int,
-    mechanism: str,
-    *,
-    k_act_fn=None,
-    s_prod_fn=None,
-    rna_relax: float = 0.1,
-    abundance_max: float = 5.0,
+        K: int,
+        M: int,
+        N: int,
+        mechanism: str,
+        *,
+        k_act_fn=None,
+        s_prod_fn=None,
+        rna_relax: float = 0.1,
+        abundance_max: float = 5.0,
 ):
     """
     Build a PINN-augmented ODE RHS function compatible with diffrax.ODETerm.

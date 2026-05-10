@@ -1,7 +1,5 @@
 # SPDX-License-Identifier: MIT
 """
-phoscrosstalk.pinn
-==================
 PINN / Universal ODE subpackage for PhosCrosstalk.
 
 Implements an additive neural augmentation to the mechanistic ODE RHS::

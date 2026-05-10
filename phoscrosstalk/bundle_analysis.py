@@ -1,7 +1,5 @@
 # SPDX-License-Identifier: MIT
 """
-bundle_analysis.py
-==================
 Plotting and inspection utilities for saved PINN and neuralODE model bundles.
 
 Both model families produce self-contained bundle directories on disk.  This
@@ -60,17 +58,18 @@ from __future__ import annotations
 
 import csv
 import json
-import logging
 import pathlib
-import warnings
 from typing import Any, Sequence
 
 import matplotlib
+
+from phoscrosstalk.logger import get_logger
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-_logger = logging.getLogger(__name__)
+_logger = get_logger()
 
 
 # ---------------------------------------------------------------------------
@@ -149,9 +148,9 @@ def _savefig(fig: plt.Figure, output_dir: pathlib.Path, stem: str) -> None:
 
 
 def _get_labels(
-    labels_json: dict | None,
-    key: str,
-    fallback_count: int,
+        labels_json: dict | None,
+        key: str,
+        fallback_count: int,
 ) -> list[str]:
     """Return label list from *labels_json[key]* or generic fallbacks."""
     if labels_json is not None and key in labels_json:
@@ -175,13 +174,13 @@ def _safe_array(x: Any) -> np.ndarray | None:
 
 
 def _plot_matrix_heatmap(
-    ax: plt.Axes,
-    matrix: np.ndarray,
-    row_labels: Sequence[str],
-    col_labels: Sequence[str],
-    title: str = "",
-    cmap: str = "RdBu_r",
-    fmt: str = ".2f",
+        ax: plt.Axes,
+        matrix: np.ndarray,
+        row_labels: Sequence[str],
+        col_labels: Sequence[str],
+        title: str = "",
+        cmap: str = "RdBu_r",
+        fmt: str = ".2f",
 ) -> None:
     """Draw a labelled heatmap on *ax*.
 
@@ -221,11 +220,11 @@ def _plot_matrix_heatmap(
 
 
 def _plot_timeseries_grid(
-    axes: Sequence[plt.Axes],
-    t: np.ndarray,
-    trajectories: Sequence[tuple[str, np.ndarray, str]],
-    scatter_data: Sequence[tuple[str, np.ndarray, np.ndarray]] | None = None,
-    title: str = "",
+        axes: Sequence[plt.Axes],
+        t: np.ndarray,
+        trajectories: Sequence[tuple[str, np.ndarray, str]],
+        scatter_data: Sequence[tuple[str, np.ndarray, np.ndarray]] | None = None,
+        title: str = "",
 ) -> None:
     """
     Plot multiple time series into *axes* (one entity per axis).
@@ -279,11 +278,11 @@ def _infer_state_slices(metadata: dict) -> dict[str, slice]:
         if K <= 0:
             return {}
         slices: dict[str, slice] = {
-            "mRNA (R)":        slice(0,          K),
-            "Kinase (S)":      slice(K,          K + M),
-            "Abundance (A)":   slice(K + M,      2 * K + M),
-            "Kinase dyn (Kd)": slice(2 * K + M,  3 * K + M),
-            "Phosphosite (P)": slice(3 * K + M,  3 * K + M + N),
+            "mRNA (R)": slice(0, K),
+            "Kinase (S)": slice(K, K + M),
+            "Abundance (A)": slice(K + M, 2 * K + M),
+            "Kinase dyn (Kd)": slice(2 * K + M, 3 * K + M),
+            "Phosphosite (P)": slice(3 * K + M, 3 * K + M + N),
         }
         return slices
     except Exception:
@@ -295,8 +294,8 @@ def _infer_state_slices(metadata: dict) -> dict[str, slice]:
 # ---------------------------------------------------------------------------
 
 def plot_pinn_bundle_analysis(
-    model_dir: str | pathlib.Path,
-    output_dir: str | pathlib.Path | None = None,
+        model_dir: str | pathlib.Path,
+        output_dir: str | pathlib.Path | None = None,
 ) -> None:
     """
     Load a PINN model bundle and produce a comprehensive set of diagnostic plots.
@@ -337,20 +336,20 @@ def plot_pinn_bundle_analysis(
     # ------------------------------------------------------------------ #
     # Load data                                                           #
     # ------------------------------------------------------------------ #
-    bundle_meta  = _read_json(model_dir / "pinn_bundle_meta.json")
-    run_meta     = _read_json(run_dir   / "pinn_metadata.json")
-    labels_json  = _read_json(run_dir   / "labels.json")
+    bundle_meta = _read_json(model_dir / "pinn_bundle_meta.json")
+    run_meta = _read_json(run_dir / "pinn_metadata.json")
+    labels_json = _read_json(run_dir / "labels.json")
     meta = bundle_meta or run_meta or {}
 
-    theta        = _safe_array(
+    theta = _safe_array(
         np.load(model_dir / "theta_opt.npy")
         if (model_dir / "theta_opt.npy").is_file()
         else (np.load(run_dir / "theta_opt.npy") if (run_dir / "theta_opt.npy").is_file() else None)
     )
-    loss_rows    = _read_csv_if_exists(run_dir / "pinn_loss_components.tsv")
-    ts_rows      = _read_csv_if_exists(run_dir / "pinn_fit_timeseries.tsv")
-    resid_rows   = _read_csv_if_exists(run_dir / "pinn_residuals.tsv")
-    bounds       = _load_npz_if_exists(run_dir / "bounds.npz")
+    loss_rows = _read_csv_if_exists(run_dir / "pinn_loss_components.tsv")
+    ts_rows = _read_csv_if_exists(run_dir / "pinn_fit_timeseries.tsv")
+    resid_rows = _read_csv_if_exists(run_dir / "pinn_residuals.tsv")
+    bounds = _load_npz_if_exists(run_dir / "bounds.npz")
 
     # ------------------------------------------------------------------ #
     # Plot 1: Bundle metadata summary (text table)                       #
@@ -381,9 +380,9 @@ def plot_pinn_bundle_analysis(
 
 
 def _pinn_plot_metadata(
-    meta: dict,
-    output_dir: pathlib.Path,
-    labels_json: dict | None,
+        meta: dict,
+        output_dir: pathlib.Path,
+        labels_json: dict | None,
 ) -> None:
     """Text-table summary of PINN bundle metadata.
 
@@ -422,9 +421,9 @@ def _pinn_plot_metadata(
 
 
 def _pinn_plot_loss_components(
-    loss_rows: list[dict] | None,
-    run_meta: dict | None,
-    output_dir: pathlib.Path,
+        loss_rows: list[dict] | None,
+        run_meta: dict | None,
+        output_dir: pathlib.Path,
 ) -> None:
     """Bar chart of PINN loss components."""
     # Prefer explicit loss_components TSV; fall back to meta scalars.
@@ -446,8 +445,8 @@ def _pinn_plot_loss_components(
             "f4": "mRNA (f₄)",
             "f_pinn_reg": "PINN reg",
         }
-        keys  = list(loss.keys())
-        vals  = [loss[k] for k in keys]
+        keys = list(loss.keys())
+        vals = [loss[k] for k in keys]
         xlabs = [_PRETTY.get(k, k) for k in keys]
         colors = plt.cm.tab10(np.linspace(0, 0.9, len(keys)))
 
@@ -467,10 +466,10 @@ def _pinn_plot_loss_components(
 
 
 def _pinn_plot_theta(
-    theta: np.ndarray | None,
-    bounds: dict | None,
-    labels_json: dict | None,
-    output_dir: pathlib.Path,
+        theta: np.ndarray | None,
+        bounds: dict | None,
+        labels_json: dict | None,
+        output_dir: pathlib.Path,
 ) -> None:
     """Bar chart of mechanistic parameter vector with optional bounds."""
     if theta is None or theta.ndim != 1:
@@ -501,9 +500,9 @@ def _pinn_plot_theta(
 
 
 def _pinn_plot_timeseries(
-    ts_rows: list[dict] | None,
-    labels_json: dict | None,
-    output_dir: pathlib.Path,
+        ts_rows: list[dict] | None,
+        labels_json: dict | None,
+        output_dir: pathlib.Path,
 ) -> None:
     """Per-entity fitted vs observed timeseries plots."""
     if not ts_rows:
@@ -530,8 +529,8 @@ def _pinn_plot_timeseries(
             for ax_idx, ename in enumerate(enames):
                 rows_e = sorted(entities[ename], key=lambda r: r.get("time", 0))
                 t_vals = np.array([r.get("time", 0) for r in rows_e], dtype=float)
-                sim    = np.array([r.get("value_sim", np.nan) for r in rows_e], dtype=float)
-                obs    = np.array([r.get("value_obs", np.nan) for r in rows_e], dtype=float)
+                sim = np.array([r.get("value_sim", np.nan) for r in rows_e], dtype=float)
+                obs = np.array([r.get("value_obs", np.nan) for r in rows_e], dtype=float)
                 ax = axes_flat[ax_idx]
                 ax.plot(t_vals, sim, color="#2196F3", lw=1.5, label="PINN fit")
                 mask = np.isfinite(obs)
@@ -555,9 +554,9 @@ def _pinn_plot_timeseries(
 
 
 def _pinn_plot_residuals(
-    resid_rows: list[dict] | None,
-    labels_json: dict | None,
-    output_dir: pathlib.Path,
+        resid_rows: list[dict] | None,
+        labels_json: dict | None,
+        output_dir: pathlib.Path,
 ) -> None:
     """Residual scatter plot (sim - obs) per entity type."""
     if not resid_rows:
@@ -601,8 +600,8 @@ def _pinn_plot_residuals(
 # ---------------------------------------------------------------------------
 
 def plot_neuralode_bundle_analysis(
-    model_dir: str | pathlib.Path,
-    output_dir: str | pathlib.Path | None = None,
+        model_dir: str | pathlib.Path,
+        output_dir: str | pathlib.Path | None = None,
 ) -> None:
     """
     Load a neuralODE model bundle and produce a comprehensive set of diagnostic
@@ -642,17 +641,17 @@ def plot_neuralode_bundle_analysis(
     # Load data                                                           #
     # ------------------------------------------------------------------ #
     bundle_meta = _read_json(model_dir / "neural_ode_bundle_meta.json")
-    run_meta    = _read_json(run_dir   / "neural_metadata.json")
-    labels_json = _read_json(run_dir   / "labels.json")
+    run_meta = _read_json(run_dir / "neural_metadata.json")
+    labels_json = _read_json(run_dir / "labels.json")
     meta = bundle_meta or run_meta or {}
 
     theta_path = model_dir / "theta_refined.npy"
     theta = _safe_array(np.load(theta_path) if theta_path.is_file() else None)
 
-    loss_rows   = _read_csv_if_exists(run_dir / "neural_training_losses.tsv")
-    ts_rows     = _read_csv_if_exists(run_dir / "neural_fit_timeseries.tsv")
-    rates_rows  = _read_csv_if_exists(run_dir / "neural_latent_rates.tsv")
-    rates_npz   = _load_npz_if_exists(run_dir / "neural_latent_rates.npz")
+    loss_rows = _read_csv_if_exists(run_dir / "neural_training_losses.tsv")
+    ts_rows = _read_csv_if_exists(run_dir / "neural_fit_timeseries.tsv")
+    rates_rows = _read_csv_if_exists(run_dir / "neural_latent_rates.tsv")
+    rates_npz = _load_npz_if_exists(run_dir / "neural_latent_rates.npz")
 
     # ------------------------------------------------------------------ #
     # Plot 1: Metadata summary                                            #
@@ -711,8 +710,8 @@ def _neuralode_plot_metadata(meta: dict, output_dir: pathlib.Path) -> None:
 
 
 def _neuralode_plot_loss_history(
-    loss_rows: list[dict] | None,
-    output_dir: pathlib.Path,
+        loss_rows: list[dict] | None,
+        output_dir: pathlib.Path,
 ) -> None:
     """Line plot of neuralODE training loss over steps."""
     if not loss_rows:
@@ -765,9 +764,9 @@ def _neuralode_plot_loss_history(
 
 
 def _neuralode_plot_theta(
-    theta: np.ndarray | None,
-    labels_json: dict | None,
-    output_dir: pathlib.Path,
+        theta: np.ndarray | None,
+        labels_json: dict | None,
+        output_dir: pathlib.Path,
 ) -> None:
     """Bar chart of refined mechanistic parameter vector."""
     if theta is None or theta.ndim != 1:
@@ -791,9 +790,9 @@ def _neuralode_plot_theta(
 
 
 def _neuralode_plot_latent_rates(
-    rates_rows: list[dict] | None,
-    rates_npz: dict | None,
-    output_dir: pathlib.Path,
+        rates_rows: list[dict] | None,
+        rates_npz: dict | None,
+        output_dir: pathlib.Path,
 ) -> None:
     """
     Line plots of mechanistic prior vs neural learned rates (k_act, s_prod).
@@ -806,11 +805,11 @@ def _neuralode_plot_latent_rates(
             # From TSV (long format): rate_type, entity, time, mechanistic_prior, neural_learned
             by_rate: dict[str, dict[str, list]] = {}
             for row in rates_rows:
-                rt    = str(row.get("rate_type", "unknown"))
-                ent   = str(row.get("entity", "unknown"))
+                rt = str(row.get("rate_type", "unknown"))
+                ent = str(row.get("entity", "unknown"))
                 t_val = float(row.get("time", 0.0))
-                mech  = float(row.get("mechanistic_prior", np.nan))
-                neu   = float(row.get("neural_learned", np.nan))
+                mech = float(row.get("mechanistic_prior", np.nan))
+                neu = float(row.get("neural_learned", np.nan))
                 by_rate.setdefault(rt, {}).setdefault(ent, {"t": [], "mech": [], "neural": []})
                 by_rate[rt][ent]["t"].append(t_val)
                 by_rate[rt][ent]["mech"].append(mech)
@@ -854,22 +853,22 @@ def _neuralode_plot_latent_rates(
 
 
 def _neuralode_plot_latent_rates_npz(
-    rates_npz: dict,
-    output_dir: pathlib.Path,
+        rates_npz: dict,
+        output_dir: pathlib.Path,
 ) -> None:
     """Heatmap of learned latent rates from npz arrays."""
     try:
-        t_obs     = _safe_array(rates_npz.get("t_obs"))
-        t_kact    = _safe_array(rates_npz.get("t_kact"))
-        k_act_mech   = _safe_array(rates_npz.get("k_act_mechanistic"))   # (K, T)
-        k_act_neural = _safe_array(rates_npz.get("k_act_neural"))        # (K, T)
-        s_prod_mech  = _safe_array(rates_npz.get("s_prod_mechanistic"))  # (K, T)
-        s_prod_neural = _safe_array(rates_npz.get("s_prod_neural"))      # (K, T)
+        t_obs = _safe_array(rates_npz.get("t_obs"))
+        t_kact = _safe_array(rates_npz.get("t_kact"))
+        k_act_mech = _safe_array(rates_npz.get("k_act_mechanistic"))  # (K, T)
+        k_act_neural = _safe_array(rates_npz.get("k_act_neural"))  # (K, T)
+        s_prod_mech = _safe_array(rates_npz.get("s_prod_mechanistic"))  # (K, T)
+        s_prod_neural = _safe_array(rates_npz.get("s_prod_neural"))  # (K, T)
         proteins_arr = rates_npz.get("proteins")
         proteins = list(proteins_arr) if proteins_arr is not None else None
 
         for rate_name, mech_arr, neural_arr, t_arr in [
-            ("k_act",  k_act_mech,  k_act_neural,  t_kact),
+            ("k_act", k_act_mech, k_act_neural, t_kact),
             ("s_prod", s_prod_mech, s_prod_neural, t_obs),
         ]:
             if mech_arr is None or neural_arr is None or t_arr is None:
@@ -880,11 +879,11 @@ def _neuralode_plot_latent_rates_npz(
             delta = neural_arr - mech_arr
 
             fig, axes = plt.subplots(1, 3, figsize=(14, max(3, 0.6 * K + 1)))
-            _plot_matrix_heatmap(axes[0], mech_arr,  row_labels, col_labels,
-                                 title=f"{rate_name}: Prior",  cmap="YlOrRd")
+            _plot_matrix_heatmap(axes[0], mech_arr, row_labels, col_labels,
+                                 title=f"{rate_name}: Prior", cmap="YlOrRd")
             _plot_matrix_heatmap(axes[1], neural_arr, row_labels, col_labels,
                                  title=f"{rate_name}: Neural", cmap="YlOrRd")
-            _plot_matrix_heatmap(axes[2], delta,      row_labels, col_labels,
+            _plot_matrix_heatmap(axes[2], delta, row_labels, col_labels,
                                  title=f"{rate_name}: Δ (Neural − Prior)", cmap="RdBu_r")
             fig.suptitle(f"neuralODE: {rate_name} Rate Heatmaps", fontsize=11)
             fig.tight_layout()
@@ -894,9 +893,9 @@ def _neuralode_plot_latent_rates_npz(
 
 
 def _neuralode_plot_timeseries(
-    ts_rows: list[dict] | None,
-    labels_json: dict | None,
-    output_dir: pathlib.Path,
+        ts_rows: list[dict] | None,
+        labels_json: dict | None,
+        output_dir: pathlib.Path,
 ) -> None:
     """Per-entity fitted vs observed timeseries plots."""
     if not ts_rows:
@@ -905,7 +904,7 @@ def _neuralode_plot_timeseries(
     try:
         by_type: dict[str, dict[str, list[dict]]] = {}
         for row in ts_rows:
-            etype  = str(row.get("entity_type", "unknown"))
+            etype = str(row.get("entity_type", "unknown"))
             entity = str(row.get("entity", "unknown"))
             by_type.setdefault(etype, {}).setdefault(entity, []).append(row)
 
@@ -919,9 +918,9 @@ def _neuralode_plot_timeseries(
             axes_flat = axes.flatten()
             for ax_idx, ename in enumerate(enames):
                 rows_e = sorted(entities[ename], key=lambda r: r.get("time", 0))
-                t_vals  = np.array([r.get("time", 0) for r in rows_e], dtype=float)
-                neural  = np.array([r.get("value_neural", np.nan) for r in rows_e], dtype=float)
-                obs     = np.array([r.get("value_observed", np.nan) for r in rows_e], dtype=float)
+                t_vals = np.array([r.get("time", 0) for r in rows_e], dtype=float)
+                neural = np.array([r.get("value_neural", np.nan) for r in rows_e], dtype=float)
+                obs = np.array([r.get("value_observed", np.nan) for r in rows_e], dtype=float)
                 ax = axes_flat[ax_idx]
                 ax.plot(t_vals, neural, color="#7B1FA2", lw=1.5, label="neural")
                 mask = np.isfinite(obs)
@@ -949,9 +948,9 @@ def _neuralode_plot_timeseries(
 # ---------------------------------------------------------------------------
 
 def plot_model_comparison(
-    pinn_dir: str | pathlib.Path,
-    neuralode_dir: str | pathlib.Path,
-    output_dir: str | pathlib.Path,
+        pinn_dir: str | pathlib.Path,
+        neuralode_dir: str | pathlib.Path,
+        output_dir: str | pathlib.Path,
 ) -> None:
     """
     Produce side-by-side comparison plots for a PINN bundle and a neuralODE
@@ -975,9 +974,9 @@ def plot_model_comparison(
                        (e.g. ``…/neural_ode_bundle/``).
         output_dir:    Directory where comparison plots are written.
     """
-    pinn_dir      = pathlib.Path(pinn_dir)
+    pinn_dir = pathlib.Path(pinn_dir)
     neuralode_dir = pathlib.Path(neuralode_dir)
-    output_dir    = pathlib.Path(output_dir)
+    output_dir = pathlib.Path(output_dir)
     _ensure_dir(output_dir)
 
     _logger.info(
@@ -985,8 +984,8 @@ def plot_model_comparison(
         pinn_dir, neuralode_dir, output_dir,
     )
 
-    pinn_run_dir  = pinn_dir.parent
-    node_run_dir  = neuralode_dir.parent
+    pinn_run_dir = pinn_dir.parent
+    node_run_dir = neuralode_dir.parent
 
     # ------------------------------------------------------------------ #
     # Load theta vectors                                                  #
@@ -1011,18 +1010,19 @@ def plot_model_comparison(
     # Load loss data for comparison bar chart                             #
     # ------------------------------------------------------------------ #
     pinn_loss_rows = _read_csv_if_exists(pinn_run_dir / "pinn_loss_components.tsv")
-    pinn_meta      = _read_json(pinn_dir / "pinn_bundle_meta.json") or _read_json(pinn_run_dir / "pinn_metadata.json") or {}
+    pinn_meta = _read_json(pinn_dir / "pinn_bundle_meta.json") or _read_json(pinn_run_dir / "pinn_metadata.json") or {}
     node_loss_rows = _read_csv_if_exists(node_run_dir / "neural_training_losses.tsv")
-    node_meta      = _read_json(neuralode_dir / "neural_ode_bundle_meta.json") or _read_json(node_run_dir / "neural_metadata.json") or {}
+    node_meta = _read_json(neuralode_dir / "neural_ode_bundle_meta.json") or _read_json(
+        node_run_dir / "neural_metadata.json") or {}
 
     _comparison_plot_loss(pinn_loss_rows, pinn_meta, node_loss_rows, node_meta, output_dir)
 
     # ------------------------------------------------------------------ #
     # Load timeseries data for comparison                                 #
     # ------------------------------------------------------------------ #
-    pinn_ts   = _read_csv_if_exists(pinn_run_dir   / "pinn_fit_timeseries.tsv")
-    node_ts   = _read_csv_if_exists(node_run_dir   / "neural_fit_timeseries.tsv")
-    labels    = _read_json(pinn_run_dir / "labels.json") or _read_json(node_run_dir / "labels.json")
+    pinn_ts = _read_csv_if_exists(pinn_run_dir / "pinn_fit_timeseries.tsv")
+    node_ts = _read_csv_if_exists(node_run_dir / "neural_fit_timeseries.tsv")
+    labels = _read_json(pinn_run_dir / "labels.json") or _read_json(node_run_dir / "labels.json")
 
     _comparison_plot_timeseries(pinn_ts, node_ts, labels, output_dir)
 
@@ -1030,9 +1030,9 @@ def plot_model_comparison(
 
 
 def _comparison_plot_theta(
-    pinn_theta: np.ndarray | None,
-    node_theta: np.ndarray | None,
-    output_dir: pathlib.Path,
+        pinn_theta: np.ndarray | None,
+        node_theta: np.ndarray | None,
+        output_dir: pathlib.Path,
 ) -> None:
     """Bar chart comparing PINN theta_opt and neuralODE theta_refined."""
     if pinn_theta is None and node_theta is None:
@@ -1068,11 +1068,11 @@ def _comparison_plot_theta(
 
 
 def _comparison_plot_loss(
-    pinn_loss_rows: list[dict] | None,
-    pinn_meta: dict,
-    node_loss_rows: list[dict] | None,
-    node_meta: dict,
-    output_dir: pathlib.Path,
+        pinn_loss_rows: list[dict] | None,
+        pinn_meta: dict,
+        node_loss_rows: list[dict] | None,
+        node_meta: dict,
+        output_dir: pathlib.Path,
 ) -> None:
     """Grouped bar chart comparing key loss components."""
     _COMMON_KEYS = ["f1", "f2", "f3", "f4"]
@@ -1087,7 +1087,7 @@ def _comparison_plot_loss(
     if node_loss_rows:
         last = node_loss_rows[-1]
         for k, mapping in [("f1", "neural_loss_phospho"), ("f2", "neural_loss_abundance"),
-                            ("f3", "neural_loss_k_act_prior"), ("f4", "neural_loss_mrna")]:
+                           ("f3", "neural_loss_k_act_prior"), ("f4", "neural_loss_mrna")]:
             if mapping in last:
                 node_loss[k] = float(last[mapping])
     elif node_meta:
@@ -1101,7 +1101,7 @@ def _comparison_plot_loss(
     try:
         all_keys = sorted(set(list(pinn_loss.keys()) + list(node_loss.keys())))
         _PRETTY = {"f1": "Phospho (f₁)", "f2": "Abund. (f₂)",
-                   "f3": "Reg. (f₃)",    "f4": "mRNA (f₄)"}
+                   "f3": "Reg. (f₃)", "f4": "mRNA (f₄)"}
         x = np.arange(len(all_keys))
         width = 0.38
         fig, ax = plt.subplots(figsize=(max(5, len(all_keys) * 1.2), 4))
@@ -1127,10 +1127,10 @@ def _comparison_plot_loss(
 
 
 def _comparison_plot_timeseries(
-    pinn_ts: list[dict] | None,
-    node_ts: list[dict] | None,
-    labels_json: dict | None,
-    output_dir: pathlib.Path,
+        pinn_ts: list[dict] | None,
+        node_ts: list[dict] | None,
+        labels_json: dict | None,
+        output_dir: pathlib.Path,
 ) -> None:
     """Side-by-side timeseries comparison for each entity type."""
     if not pinn_ts and not node_ts:
@@ -1142,14 +1142,14 @@ def _comparison_plot_timeseries(
             if not rows:
                 return g
             for row in rows:
-                etype  = str(row.get("entity_type", "unknown"))
+                etype = str(row.get("entity_type", "unknown"))
                 entity = str(row.get("entity", "unknown"))
                 g.setdefault(etype, {}).setdefault(entity, []).append(row)
             return g
 
         pinn_grouped = _group(pinn_ts)
         node_grouped = _group(node_ts)
-        all_etypes   = sorted(set(list(pinn_grouped.keys()) + list(node_grouped.keys())))
+        all_etypes = sorted(set(list(pinn_grouped.keys()) + list(node_grouped.keys())))
 
         for etype in all_etypes:
             pe = pinn_grouped.get(etype, {})
@@ -1167,20 +1167,20 @@ def _comparison_plot_timeseries(
             )
 
             for en_idx, ename in enumerate(all_enames):
-                row_i  = en_idx // ncols
-                col_i  = (en_idx % ncols) * 2  # left = PINN, right = neuralODE
+                row_i = en_idx // ncols
+                col_i = (en_idx % ncols) * 2  # left = PINN, right = neuralODE
 
                 for col_offset, model_name, rows_d, sim_key, color in [
-                    (0, "PINN",      pe.get(ename, []), "value_sim",    "#4C72B0"),
-                    (1, "neuralODE", ne.get(ename, []), "value_neural",  "#7B1FA2"),
+                    (0, "PINN", pe.get(ename, []), "value_sim", "#4C72B0"),
+                    (1, "neuralODE", ne.get(ename, []), "value_neural", "#7B1FA2"),
                 ]:
                     ax = axes[row_i, col_i + col_offset]
                     if rows_d:
                         rows_sorted = sorted(rows_d, key=lambda r: r.get("time", 0))
                         t_vals = np.array([r.get("time", 0) for r in rows_sorted], dtype=float)
-                        sim    = np.array([r.get(sim_key, np.nan) for r in rows_sorted], dtype=float)
-                        obs_k  = "value_obs" if model_name == "PINN" else "value_observed"
-                        obs    = np.array([r.get(obs_k, np.nan) for r in rows_sorted], dtype=float)
+                        sim = np.array([r.get(sim_key, np.nan) for r in rows_sorted], dtype=float)
+                        obs_k = "value_obs" if model_name == "PINN" else "value_observed"
+                        obs = np.array([r.get(obs_k, np.nan) for r in rows_sorted], dtype=float)
                         ax.plot(t_vals, sim, color=color, lw=1.5, label=model_name)
                         mask = np.isfinite(obs)
                         if mask.any():

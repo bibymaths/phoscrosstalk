@@ -169,7 +169,7 @@ class TestPlotBiologicalScores:
 # ---------------------------------------------------------------------------
 class TestPlotGoodnessOfFit:
     def _make_tsv(self, tmp_path):
-        """Create a minimal fit_timeseries.tsv for testing."""
+        """Create a minimal protein_fit_timeseries.tsv for testing."""
         T = 4
         records = []
         sim_cols = [f"sim_t{j}" for j in range(T)]
@@ -181,7 +181,7 @@ class TestPlotGoodnessOfFit:
                 rec[data_cols[j]] = 1.0 + 0.1 * j + 0.02 * i
             records.append(rec)
         df = pd.DataFrame(records)
-        p = tmp_path / "fit_timeseries.tsv"
+        p = tmp_path / "protein_fit_timeseries.tsv"
         df.to_csv(p, sep="\t", index=False)
         return str(p)
 
@@ -451,7 +451,7 @@ class TestSaveDenseSimulationExceptionBranches:
         with patch("phoscrosstalk.analysis.simulate_dense", return_value=_dense_result()):
             _save_dense_simulation(**kwargs, data_interp_P=broken_P)
         # File should still be created
-        assert os.path.exists(tmp_path / "fit_timeseries_dense.tsv")
+        assert os.path.exists(tmp_path / "protein_fit_timeseries_dense.tsv")
 
     def test_broken_interp_A_does_not_raise(self, tmp_path):
         """A data_interp_A that raises should be silently skipped."""
@@ -465,7 +465,7 @@ class TestSaveDenseSimulationExceptionBranches:
         with patch("phoscrosstalk.analysis.simulate_dense", return_value=_dense_result()):
             _save_dense_simulation(**kwargs, data_interp_A=broken_A,
                                    prot_idx_for_A_full=np.array([0, 1], dtype=int))
-        assert os.path.exists(tmp_path / "fit_timeseries_dense.tsv")
+        assert os.path.exists(tmp_path / "protein_fit_timeseries_dense.tsv")
 
     def test_broken_interp_R_logs_warning(self, tmp_path, caplog):
         """A data_interp_R that raises should log a warning."""
@@ -480,7 +480,7 @@ class TestSaveDenseSimulationExceptionBranches:
         with patch("phoscrosstalk.analysis.simulate_dense", return_value=_dense_result()):
             with caplog.at_level(logging.WARNING, logger="phoscrosstalk.analysis"):
                 _save_dense_simulation(**kwargs, data_interp_R=broken_R)
-        assert os.path.exists(tmp_path / "fit_timeseries_dense.tsv")
+        assert os.path.exists(tmp_path / "protein_fit_timeseries_dense.tsv")
 
     def test_flat_array_interp_P_fallback(self, tmp_path):
         """When interp_P returns a 1-D array instead of 2-D, fallback is used."""
@@ -494,7 +494,7 @@ class TestSaveDenseSimulationExceptionBranches:
 
         with patch("phoscrosstalk.analysis.simulate_dense", return_value=_dense_result(10)):
             _save_dense_simulation(**kwargs, data_interp_P=flat_P)
-        df = pd.read_csv(tmp_path / "fit_timeseries_dense.tsv", sep="\t")
+        df = pd.read_csv(tmp_path / "protein_fit_timeseries_dense.tsv", sep="\t")
         assert len(df) > 0
 
     def test_mrna_dense_tsv_created_when_R_sim_finite(self, tmp_path):
@@ -577,7 +577,7 @@ class TestSaveFittedSimulationInterpExceptions:
                     with caplog.at_level(logging.WARNING, logger="phoscrosstalk.analysis"):
                         save_fitted_simulation(**kwargs)
         # Main output should still be created
-        assert os.path.exists(tmp_path / "fit_timeseries.tsv")
+        assert os.path.exists(tmp_path / "protein_fit_timeseries.tsv")
 
     def test_rna_interp_logs_message_when_successful(self, tmp_path, caplog):
         """When RNA interp is built successfully, messages are logged."""
@@ -597,4 +597,4 @@ class TestSaveFittedSimulationInterpExceptions:
         with patch("phoscrosstalk.analysis.simulate", return_value=self._sim_result()):
             with patch("phoscrosstalk.analysis.simulate_dense", return_value=_dense_result()):
                 save_fitted_simulation(**kwargs)
-        assert os.path.exists(tmp_path / "fit_timeseries.tsv")
+        assert os.path.exists(tmp_path / "protein_fit_timeseries.tsv")

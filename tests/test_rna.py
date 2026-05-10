@@ -462,7 +462,7 @@ def test_plot_three_panel_fit(tmp_path):
 
     outdir = str(tmp_path)
 
-    # Write minimal fit_timeseries.tsv (2 phosphosites)
+    # Write minimal protein_fit_timeseries.tsv (2 phosphosites)
     t_cols_sim = [f"sim_t{j}" for j in range(3)]
     t_cols_dat = [f"data_t{j}" for j in range(3)]
     rows = []
@@ -479,7 +479,7 @@ def test_plot_three_panel_fit(tmp_path):
         row[t_cols_dat[j]] = 1.0
     rows.append(row)
     pd.DataFrame(rows).to_csv(
-        os.path.join(outdir, "fit_timeseries.tsv"), sep="\t", index=False
+        os.path.join(outdir, "protein_fit_timeseries.tsv"), sep="\t", index=False
     )
 
     # Write minimal mrna_fit_timeseries.tsv
@@ -554,7 +554,7 @@ def test_mrna_tsv_simulated_column_alias(tmp_path):
 
     outdir = str(tmp_path)
 
-    # Minimal fit_timeseries.tsv
+    # Minimal protein_fit_timeseries.tsv
     t_cols_sim = [f"sim_t{j}" for j in range(3)]
     t_cols_dat = [f"data_t{j}" for j in range(3)]
     rows = []
@@ -564,7 +564,7 @@ def test_mrna_tsv_simulated_column_alias(tmp_path):
         row[t_cols_dat[j]] = 0.6
     rows.append(row)
     pd.DataFrame(rows).to_csv(
-        os.path.join(outdir, "fit_timeseries.tsv"), sep="\t", index=False
+        os.path.join(outdir, "protein_fit_timeseries.tsv"), sep="\t", index=False
     )
 
     # Write mrna_fit_timeseries.tsv with "simulated" column (not "fitted")

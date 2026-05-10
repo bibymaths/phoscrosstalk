@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: MIT
 """
-optimization.py
 Optimistix-based objective functions and parameter fitting for the phospho-network.
 
 Primary fitting path (canonical Diffrax + Optimistix approach):
@@ -66,6 +65,7 @@ def _log_residuals_step(total_loss):
     """Plain Python callback for jax.debug.callback — logs the scalar total loss."""
     _debug_logger.info("[fit]  step  loss=%.4e", float(total_loss))
 
+
 # ---------------------------------------------------------------------------
 # Module-level constants
 # ---------------------------------------------------------------------------
@@ -79,6 +79,7 @@ _RNA_CLIP_UPPER: float = 20.0
 # Per-element penalty value returned when the ODE solve fails or produces non-finite
 # states.  Large enough to guide the optimizer away from bad regions.
 _FAILED_SOLVE_PENALTY: float = 1e3
+
 
 @partial(jax.jit, static_argnames=("K", "M", "N"))
 def bio_score_jax(theta, K: int, M: int, N: int):
@@ -116,14 +117,14 @@ def bio_score_jax(theta, K: int, M: int, N: int):
     median_t_protein = jnp.median(t_half_protein)
 
     score_kinase = (
-        jnp.log10(jnp.maximum(median_t_kinase, eps))
-        - jnp.log10(jnp.asarray(10.0, dtype=theta.dtype))
-    ) ** 2
+                           jnp.log10(jnp.maximum(median_t_kinase, eps))
+                           - jnp.log10(jnp.asarray(10.0, dtype=theta.dtype))
+                   ) ** 2
 
     score_protein = (
-        jnp.log10(jnp.maximum(median_t_protein, eps))
-        - jnp.log10(jnp.asarray(600.0, dtype=theta.dtype))
-    ) ** 2
+                            jnp.log10(jnp.maximum(median_t_protein, eps))
+                            - jnp.log10(jnp.asarray(600.0, dtype=theta.dtype))
+                    ) ** 2
 
     return score_kinase + score_protein
 
@@ -148,6 +149,7 @@ def bio_score(theta, dims: ModelDims | None = None):
             N=int(dims.N),
         )
     )
+
 
 def create_bounds(K, M, N, bounds=None):
     """
@@ -226,40 +228,40 @@ def create_bounds(K, M, N, bounds=None):
     """
     # Resolve bound values from config or fall back to hard-coded defaults.
     if bounds is not None:
-        _rate_min  = float(getattr(bounds, "rate_min",                1e-5))
-        _rate_max  = float(getattr(bounds, "rate_max",                10.0))
-        _ddeg_max  = float(getattr(bounds, "protein_degradation_max", 0.5))
-        _kdeact_max = float(getattr(bounds, "k_deact_max",             2.0))
-        _kin_max   = float(getattr(bounds, "kinase_rate_max",          3.0))
-        _phos_max  = float(getattr(bounds, "phosphatase_rate_max",     5.0))
-        _beta_max  = float(getattr(bounds, "beta_coupling_max",        3.0))
-        _alpha_min = float(getattr(bounds, "alpha_min",                0.01))
-        _gamma_max = float(getattr(bounds, "gamma_abs_max",            3.0))
+        _rate_min = float(getattr(bounds, "rate_min", 1e-5))
+        _rate_max = float(getattr(bounds, "rate_max", 10.0))
+        _ddeg_max = float(getattr(bounds, "protein_degradation_max", 0.5))
+        _kdeact_max = float(getattr(bounds, "k_deact_max", 2.0))
+        _kin_max = float(getattr(bounds, "kinase_rate_max", 3.0))
+        _phos_max = float(getattr(bounds, "phosphatase_rate_max", 5.0))
+        _beta_max = float(getattr(bounds, "beta_coupling_max", 3.0))
+        _alpha_min = float(getattr(bounds, "alpha_min", 0.01))
+        _gamma_max = float(getattr(bounds, "gamma_abs_max", 3.0))
         # rna_max is consumed by make_rhs() as a clipping value, not by create_bounds().
         # abundance_max is consumed by make_rhs() / simulation code as a clipping value,
         # not by create_bounds().
     else:
-        _rate_min   = 1e-5
-        _rate_max   = 10.0
-        _ddeg_max   = 0.5
+        _rate_min = 1e-5
+        _rate_max = 10.0
+        _ddeg_max = 0.5
         _kdeact_max = 2.0
-        _kin_max    = 3.0
-        _phos_max   = 5.0
-        _beta_max   = 3.0
-        _alpha_min  = 0.01
-        _gamma_max  = 3.0
+        _kin_max = 3.0
+        _phos_max = 5.0
+        _beta_max = 3.0
+        _alpha_min = 0.01
+        _gamma_max = 3.0
 
     dim = 2 * K + 2 + 3 * M + N + 4
     xl, xu = np.zeros(dim), np.zeros(dim)
     idx = 0
     # Protein: k_deact, d_deg (k_act and s_prod removed – derived from data)
     # k_deact — dedicated ceiling separate from generic rate_max
-    xl[idx : idx + K] = np.log(_rate_min)
-    xu[idx : idx + K] = np.log(_kdeact_max)
+    xl[idx: idx + K] = np.log(_rate_min)
+    xu[idx: idx + K] = np.log(_kdeact_max)
     idx += K  # k_deact
     # d_deg (restricted upper bound for biological plausibility)
-    xl[idx : idx + K] = np.log(_rate_min)
-    xu[idx : idx + K] = np.log(_ddeg_max)
+    xl[idx: idx + K] = np.log(_rate_min)
+    xu[idx: idx + K] = np.log(_ddeg_max)
     idx += K
     # Coupling — dedicated beta_coupling_max ceiling, not generic rate_max
     xl[idx] = np.log(_rate_min)
@@ -270,24 +272,25 @@ def create_bounds(K, M, N, bounds=None):
     idx += 1  # beta_l
     # Kinase: alpha, kK_act, kK_deact
     # alpha — dedicated lower bound to prevent collapse near zero
-    xl[idx : idx + M] = np.log(_alpha_min)
-    xu[idx : idx + M] = np.log(_rate_max)
+    xl[idx: idx + M] = np.log(_alpha_min)
+    xu[idx: idx + M] = np.log(_rate_max)
     idx += M  # alpha
-    xl[idx : idx + M] = np.log(_rate_min)
-    xu[idx : idx + M] = np.log(_kin_max)
+    xl[idx: idx + M] = np.log(_rate_min)
+    xu[idx: idx + M] = np.log(_kin_max)
     idx += M
-    xl[idx : idx + M] = np.log(_rate_min)
-    xu[idx : idx + M] = np.log(_kin_max)
+    xl[idx: idx + M] = np.log(_rate_min)
+    xu[idx: idx + M] = np.log(_kin_max)
     idx += M
     # Site: k_off
-    xl[idx : idx + N] = np.log(_rate_min)
-    xu[idx : idx + N] = np.log(_phos_max)
+    xl[idx: idx + N] = np.log(_rate_min)
+    xu[idx: idx + N] = np.log(_phos_max)
     idx += N
     # Gammas (tanh raw)
-    xl[idx : idx + 4] = -_gamma_max
-    xu[idx : idx + 4] = _gamma_max
+    xl[idx: idx + 4] = -_gamma_max
+    xu[idx: idx + 4] = _gamma_max
     idx += 4
     return xl, xu, dim
+
 
 def bounds_to_original_scale(xl, xu, K, M, N):
     """
@@ -306,13 +309,13 @@ def bounds_to_original_scale(xl, xu, K, M, N):
     idx = 0
 
     # k_deact, length K
-    xl_orig[idx : idx + K] = np.exp(xl[idx : idx + K])
-    xu_orig[idx : idx + K] = np.exp(xu[idx : idx + K])
+    xl_orig[idx: idx + K] = np.exp(xl[idx: idx + K])
+    xu_orig[idx: idx + K] = np.exp(xu[idx: idx + K])
     idx += K
 
     # d_deg, length K
-    xl_orig[idx : idx + K] = np.exp(xl[idx : idx + K])
-    xu_orig[idx : idx + K] = np.exp(xu[idx : idx + K])
+    xl_orig[idx: idx + K] = np.exp(xl[idx: idx + K])
+    xu_orig[idx: idx + K] = np.exp(xu[idx: idx + K])
     idx += K
 
     # beta_g, scalar
@@ -326,23 +329,23 @@ def bounds_to_original_scale(xl, xu, K, M, N):
     idx += 1
 
     # alpha, length M
-    xl_orig[idx : idx + M] = np.exp(xl[idx : idx + M])
-    xu_orig[idx : idx + M] = np.exp(xu[idx : idx + M])
+    xl_orig[idx: idx + M] = np.exp(xl[idx: idx + M])
+    xu_orig[idx: idx + M] = np.exp(xu[idx: idx + M])
     idx += M
 
     # kK_act, length M
-    xl_orig[idx : idx + M] = np.exp(xl[idx : idx + M])
-    xu_orig[idx : idx + M] = np.exp(xu[idx : idx + M])
+    xl_orig[idx: idx + M] = np.exp(xl[idx: idx + M])
+    xu_orig[idx: idx + M] = np.exp(xu[idx: idx + M])
     idx += M
 
     # kK_deact, length M
-    xl_orig[idx : idx + M] = np.exp(xl[idx : idx + M])
-    xu_orig[idx : idx + M] = np.exp(xu[idx : idx + M])
+    xl_orig[idx: idx + M] = np.exp(xl[idx: idx + M])
+    xu_orig[idx: idx + M] = np.exp(xu[idx: idx + M])
     idx += M
 
     # k_off, length N
-    xl_orig[idx : idx + N] = np.exp(xl[idx : idx + N])
-    xu_orig[idx : idx + N] = np.exp(xu[idx : idx + N])
+    xl_orig[idx: idx + N] = np.exp(xl[idx: idx + N])
+    xu_orig[idx: idx + N] = np.exp(xu[idx: idx + N])
     idx += N
 
     # gamma values, length 4
@@ -352,6 +355,7 @@ def bounds_to_original_scale(xl, xu, K, M, N):
     assert idx == len(xl), f"Parameter dimension mismatch: idx={idx}, len(xl)={len(xl)}"
 
     return xl_orig, xu_orig
+
 
 def build_parameter_labels(K: int, M: int, N: int) -> list[str]:
     """
@@ -417,29 +421,30 @@ def build_parameter_labels(K: int, M: int, N: int) -> list[str]:
         labels.append(f"gamma_raw[{i}]")
     return labels
 
+
 # ---------------------------------------------------------------------------
 # JAX objective computation (loss components)
 # ---------------------------------------------------------------------------
 
 
 def compute_objectives_jax(
-    theta,
-    P_data,
-    P_sim,
-    A_scaled,
-    A_sim,
-    W_data,
-    W_data_prot,
-    prot_idx_for_A,
-    L_alpha,
-    lambda_net: float,
-    reg_lambda: float,
-    n_p: int,
-    n_A: int,
-    n_var: int,
-    K: int,
-    M: int,
-    N: int,
+        theta,
+        P_data,
+        P_sim,
+        A_scaled,
+        A_sim,
+        W_data,
+        W_data_prot,
+        prot_idx_for_A,
+        L_alpha,
+        lambda_net: float,
+        reg_lambda: float,
+        n_p: int,
+        n_A: int,
+        n_var: int,
+        K: int,
+        M: int,
+        N: int,
 ):
     """
     Compute the three objective components of the loss in JAX.
@@ -486,49 +491,50 @@ def compute_objectives_jax(
 
     return f1, f2, f3
 
+
 # ---------------------------------------------------------------------------
 # Scalarized JAX loss for Optimistix
 # ---------------------------------------------------------------------------
 def make_loss_fn(
-    dims: ModelDims,
-    t,
-    P_data,
-    A_scaled,
-    prot_idx_for_A,
-    W_data,
-    W_data_prot,
-    Cg,
-    Cl,
-    site_prot_idx,
-    K_site_kin,
-    R,
-    L_alpha,
-    kin_to_prot_idx,
-    receptor_mask_prot,
-    receptor_mask_kin,
-    mechanism,
-    lambda_net,
-    reg_lambda,
-    w_phospho=1.0,
-    w_abundance=1.0,
-    w_reg=1.0,
-    rtol=1e-6,
-    atol=1e-9,
-    max_steps=16384,
-    k_act_fn=None,
-    s_prod_fn=None,
-    t_mrna=None,
-    rna_data_scaled=None,
-    w_mrna=1.0,
-    rna_model_prot_idx=None,
-    R_data0=None,
-    W_data_rna=None,
-    rna_relax=0.1,
-    ode_solver_kind="tsit5",
-    ode_adjoint_kind="forward",
-    dt0=0.01,
-    root_find_max_steps=10,
-    scan_kind=None,
+        dims: ModelDims,
+        t,
+        P_data,
+        A_scaled,
+        prot_idx_for_A,
+        W_data,
+        W_data_prot,
+        Cg,
+        Cl,
+        site_prot_idx,
+        K_site_kin,
+        R,
+        L_alpha,
+        kin_to_prot_idx,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        mechanism,
+        lambda_net,
+        reg_lambda,
+        w_phospho=1.0,
+        w_abundance=1.0,
+        w_reg=1.0,
+        rtol=1e-6,
+        atol=1e-9,
+        max_steps=16384,
+        k_act_fn=None,
+        s_prod_fn=None,
+        t_mrna=None,
+        rna_data_scaled=None,
+        w_mrna=1.0,
+        rna_model_prot_idx=None,
+        R_data0=None,
+        W_data_rna=None,
+        rna_relax=0.1,
+        ode_solver_kind="tsit5",
+        ode_adjoint_kind="forward",
+        dt0=0.01,
+        root_find_max_steps=10,
+        scan_kind=None,
 ):
     """
     Build a JAX-differentiable scalarized loss function for Optimistix.
@@ -585,10 +591,10 @@ def make_loss_fn(
         x0[:K] = 1.0  # default fold-change = 1.0
     # A initial condition
     a0 = np.nan_to_num(A0_full[:, 0], nan=1.0, posinf=5.0, neginf=0.0)
-    x0[2 * K : 3 * K] = np.clip(a0, 0.0, 5.0)
+    x0[2 * K: 3 * K] = np.clip(a0, 0.0, 5.0)
     # p initial condition
     p0 = np.nan_to_num(P_data[:, 0], nan=0.0, posinf=10.0, neginf=0.0)
-    x0[3 * K + M :] = np.clip(p0, 0.0, None)
+    x0[3 * K + M:] = np.clip(p0, 0.0, None)
 
     # JAX static arrays
     Cg_j = jnp.asarray(Cg, dtype=jnp.float64)
@@ -619,12 +625,12 @@ def make_loss_fn(
     # W_data_rna, rna_obs_idx, and rna_fit_genes are optional metadata; when
     # W_data_rna is absent a uniform (all-ones) weight matrix is used.
     has_mrna = (
-        t_mrna is not None
-        and rna_data_scaled is not None
-        and len(t_mrna) > 0
-        and mrna_time_idx is not None
-        and rna_model_prot_idx is not None
-        and len(rna_model_prot_idx) > 0
+            t_mrna is not None
+            and rna_data_scaled is not None
+            and len(t_mrna) > 0
+            and mrna_time_idx is not None
+            and rna_model_prot_idx is not None
+            and len(rna_model_prot_idx) > 0
     )
 
     if has_mrna:
@@ -704,8 +710,8 @@ def make_loss_fn(
         # Sample at protein time indices
         xs_prot = xs[prot_idx_solver, :]
         # New slicing: [R_rna, S, A, Kdyn, p]
-        P_sim = jnp.clip(xs_prot[:, 3 * K + M :], 0.0, None).T  # (N, T_prot)
-        A_sim = jnp.clip(xs_prot[:, 2 * K : 3 * K], 0.0, 5.0).T  # (K, T_prot)
+        P_sim = jnp.clip(xs_prot[:, 3 * K + M:], 0.0, None).T  # (N, T_prot)
+        A_sim = jnp.clip(xs_prot[:, 2 * K: 3 * K], 0.0, 5.0).T  # (K, T_prot)
 
         f1, f2, f3 = compute_objectives_jax(
             theta_j,
@@ -741,10 +747,10 @@ def make_loss_fn(
             f4 = jnp.asarray(0.0, dtype=jnp.float64)
 
         total = (
-            jnp.asarray(w_phospho, dtype=jnp.float64) * f1
-            + jnp.asarray(w_abundance, dtype=jnp.float64) * f2
-            + jnp.asarray(w_reg, dtype=jnp.float64) * f3
-            + jnp.asarray(w_mrna, dtype=jnp.float64) * f4
+                jnp.asarray(w_phospho, dtype=jnp.float64) * f1
+                + jnp.asarray(w_abundance, dtype=jnp.float64) * f2
+                + jnp.asarray(w_reg, dtype=jnp.float64) * f3
+                + jnp.asarray(w_mrna, dtype=jnp.float64) * f4
         )
 
         # Penalise non-finite results without crashing
@@ -755,48 +761,48 @@ def make_loss_fn(
 
 
 def make_residuals_fn(
-    dims: ModelDims,
-    t,
-    P_data,
-    A_scaled,
-    prot_idx_for_A,
-    W_data,
-    W_data_prot,
-    Cg,
-    Cl,
-    site_prot_idx,
-    K_site_kin,
-    R,
-    L_alpha,
-    kin_to_prot_idx,
-    receptor_mask_prot,
-    receptor_mask_kin,
-    mechanism,
-    lambda_net,
-    reg_lambda,
-    w_phospho=1.0,
-    w_abundance=1.0,
-    w_reg=1.0,
-    rtol=1e-6,
-    atol=1e-9,
-    max_steps=16384,
-    k_act_fn=None,
-    s_prod_fn=None,
-    t_mrna=None,
-    rna_data_scaled=None,
-    w_mrna=1.0,
-    rna_model_prot_idx=None,
-    rna_obs_idx=None,
-    rna_fit_genes=None,
-    R_data0=None,
-    W_data_mrna=None,
-    rna_relax=0.1,
-    ode_solver_kind="tsit5",
-    ode_adjoint_kind="forward",
-    dt0=0.01,
-    root_find_max_steps=10,
-    xl=None,
-    xu=None,
+        dims: ModelDims,
+        t,
+        P_data,
+        A_scaled,
+        prot_idx_for_A,
+        W_data,
+        W_data_prot,
+        Cg,
+        Cl,
+        site_prot_idx,
+        K_site_kin,
+        R,
+        L_alpha,
+        kin_to_prot_idx,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        mechanism,
+        lambda_net,
+        reg_lambda,
+        w_phospho=1.0,
+        w_abundance=1.0,
+        w_reg=1.0,
+        rtol=1e-6,
+        atol=1e-9,
+        max_steps=16384,
+        k_act_fn=None,
+        s_prod_fn=None,
+        t_mrna=None,
+        rna_data_scaled=None,
+        w_mrna=1.0,
+        rna_model_prot_idx=None,
+        rna_obs_idx=None,
+        rna_fit_genes=None,
+        R_data0=None,
+        W_data_mrna=None,
+        rna_relax=0.1,
+        ode_solver_kind="tsit5",
+        ode_adjoint_kind="forward",
+        dt0=0.01,
+        root_find_max_steps=10,
+        xl=None,
+        xu=None,
 ):
     """
     Build a JAX-differentiable residual-vector function for Optimistix least_squares.
@@ -861,9 +867,9 @@ def make_residuals_fn(
     else:
         x0[:K] = 1.0
     a0 = np.nan_to_num(A0_full[:, 0], nan=1.0, posinf=5.0, neginf=0.0)
-    x0[2 * K : 3 * K] = np.clip(a0, 0.0, 5.0)
+    x0[2 * K: 3 * K] = np.clip(a0, 0.0, 5.0)
     p0 = np.nan_to_num(P_data[:, 0], nan=0.0, posinf=10.0, neginf=0.0)
-    x0[3 * K + M :] = np.clip(p0, 0.0, None)
+    x0[3 * K + M:] = np.clip(p0, 0.0, None)
 
     # JAX static arrays
     Cg_j = jnp.asarray(Cg, dtype=jnp.float64)
@@ -906,12 +912,12 @@ def make_residuals_fn(
 
     # mRNA arrays
     has_mrna = (
-        t_mrna is not None
-        and rna_data_scaled is not None
-        and len(t_mrna) > 0
-        and mrna_time_idx is not None
-        and rna_model_prot_idx is not None
-        and len(rna_model_prot_idx) > 0
+            t_mrna is not None
+            and rna_data_scaled is not None
+            and len(t_mrna) > 0
+            and mrna_time_idx is not None
+            and rna_model_prot_idx is not None
+            and len(rna_model_prot_idx) > 0
     )
 
     if has_mrna:
@@ -1015,13 +1021,13 @@ def make_residuals_fn(
         # A successful solve requires both finite states AND that the solver
         # did not stop early (e.g. hit max_steps with throw=False).
         solve_ok = jnp.all(jnp.isfinite(xs)) & (
-            sol.result == diffrax.RESULTS.successful
+                sol.result == diffrax.RESULTS.successful
         )
 
         # Sample at protein time indices (new layout: [R_rna, S, A, Kdyn, p])
         xs_prot = xs[prot_idx_solver, :]
-        P_sim = jnp.clip(xs_prot[:, 3 * K + M :], 0.0, None).T  # (N, T_prot)
-        A_sim = jnp.clip(xs_prot[:, 2 * K : 3 * K], 0.0, 5.0).T  # (K, T_prot)
+        P_sim = jnp.clip(xs_prot[:, 3 * K + M:], 0.0, None).T  # (N, T_prot)
+        A_sim = jnp.clip(xs_prot[:, 2 * K: 3 * K], 0.0, 5.0).T  # (K, T_prot)
 
         # --- Phosphosite residuals ---
         diff_p = P_sim - P_data_j  # (N, T_prot)
@@ -1058,7 +1064,7 @@ def make_residuals_fn(
         r_reg_l2 = sqrt_reg * theta_j  # (n_var,)
         # Laplacian network regularisation on alpha (decoded from theta)
         if has_net_reg:
-            alpha_raw = theta_j[2 * K + 2 : 2 * K + 2 + M]
+            alpha_raw = theta_j[2 * K + 2: 2 * K + 2 + M]
             alpha = jnp.exp(jnp.clip(alpha_raw, -20.0, 10.0))
             r_reg_net = sqrt_lnet * (La_j @ alpha)  # (M,)
             r_reg = jnp.concatenate([r_reg_l2, r_reg_net])
@@ -1068,7 +1074,7 @@ def make_residuals_fn(
         # f3 diagnostic
         f3_l2 = jnp.asarray(reg_lambda, dtype=jnp.float64) * jnp.dot(theta_j, theta_j)
         if has_net_reg:
-            alpha_raw = theta_j[2 * K + 2 : 2 * K + 2 + M]
+            alpha_raw = theta_j[2 * K + 2: 2 * K + 2 + M]
             alpha = jnp.exp(jnp.clip(alpha_raw, -20.0, 10.0))
             f3_net = jnp.asarray(lambda_net, dtype=jnp.float64) * jnp.dot(alpha, La_j @ alpha)
         else:
@@ -1099,17 +1105,17 @@ def make_residuals_fn(
 
 
 def run_single_optimisation(
-    residuals_fn,
-    theta0,
-    max_steps: int = 500,
-    rtol: float = 1e-8,
-    atol: float = 1e-8,
-    verbose: bool = False,
-    *,
-    ls_solver: str = "lm",
-    optx_adjoint: str = "implicit",
-    jac_mode: str = "fwd",
-    jaxpr_out_dir=None,
+        residuals_fn,
+        theta0,
+        max_steps: int = 500,
+        rtol: float = 1e-8,
+        atol: float = 1e-8,
+        verbose: bool = False,
+        *,
+        ls_solver: str = "lm",
+        optx_adjoint: str = "implicit",
+        jac_mode: str = "fwd",
+        jaxpr_out_dir=None,
 ):
     """
     Run a single Optimistix least-squares optimisation of the parameter vector.
@@ -1280,11 +1286,11 @@ def validate_problem_shapes(problem):
 
     # RNA shape checks
     has_rna = (
-        problem.t_rna is not None
-        and problem.rna_obs_matched is not None
-        and problem.rna_model_prot_idx is not None
-        and getattr(problem, "rna_fit_genes", None) is not None
-        and len(getattr(problem, "rna_fit_genes", [])) > 0
+            problem.t_rna is not None
+            and problem.rna_obs_matched is not None
+            and problem.rna_model_prot_idx is not None
+            and getattr(problem, "rna_fit_genes", None) is not None
+            and len(getattr(problem, "rna_fit_genes", [])) > 0
     )
     if has_rna:
         T_rna = len(problem.t_rna)
@@ -1301,7 +1307,8 @@ def validate_problem_shapes(problem):
         n_matched = obs_shape[0]
         _chk(
             len(problem.rna_model_prot_idx) == n_matched,
-            f"len(rna_model_prot_idx)={len(problem.rna_model_prot_idx)} != rna_obs_matched.shape[0]={n_matched}",  # noqa: E501
+            f"len(rna_model_prot_idx)={len(problem.rna_model_prot_idx)} != rna_obs_matched.shape[0]={n_matched}",
+            # noqa: E501
         )
         if len(problem.rna_model_prot_idx) > 0:
             _chk(
@@ -1330,15 +1337,15 @@ def validate_problem_shapes(problem):
 
 
 def validate_biological_inputs(
-    P_data=None,
-    A_scaled=None,
-    rna_data_scaled=None,
-    W_data=None,
-    W_data_prot=None,
-    theta=None,
-    K=None,
-    M=None,
-    N=None,
+        P_data=None,
+        A_scaled=None,
+        rna_data_scaled=None,
+        W_data=None,
+        W_data_prot=None,
+        theta=None,
+        K=None,
+        M=None,
+        N=None,
 ):
     """
     Defensive validation of biological inputs before fitting.
@@ -1490,48 +1497,48 @@ class NetworkProblem:
     """  # noqa: E501
 
     def __init__(
-        self,
-        dims: ModelDims,
-        t,
-        P_data,
-        Cg,
-        Cl,
-        site_prot_idx,
-        K_site_kin,
-        R,
-        A_scaled,
-        prot_idx_for_A,
-        W_data,
-        W_data_prot,
-        L_alpha,
-        kin_to_prot_idx,
-        lambda_net,
-        reg_lambda,
-        receptor_mask_prot,
-        receptor_mask_kin,
-        mechanism,
-        xl,
-        xu,
-        k_act_fn=None,
-        s_prod_fn=None,
-        t_rna=None,
-        rna_obs_matched=None,
-        rna_model_prot_idx=None,
-        rna_obs_idx=None,
-        rna_fit_genes=None,
-        loss_weight_rna=1.0,
-        R_data0=None,
-        rna_relax=0.1,
-        W_data_mrna=None,
-        ode_solver_kind="tsit5",
-        ode_dt0=0.01,
-        ode_root_find_max_steps=10,
-        ode_adjoint_kind="forward",
-        rtol=1e-6,
-        atol=1e-9,
-        max_steps=16384,
-        pinn_model=None,
-        **kwargs,  # absorb legacy keyword args (elementwise_runner, etc.)
+            self,
+            dims: ModelDims,
+            t,
+            P_data,
+            Cg,
+            Cl,
+            site_prot_idx,
+            K_site_kin,
+            R,
+            A_scaled,
+            prot_idx_for_A,
+            W_data,
+            W_data_prot,
+            L_alpha,
+            kin_to_prot_idx,
+            lambda_net,
+            reg_lambda,
+            receptor_mask_prot,
+            receptor_mask_kin,
+            mechanism,
+            xl,
+            xu,
+            k_act_fn=None,
+            s_prod_fn=None,
+            t_rna=None,
+            rna_obs_matched=None,
+            rna_model_prot_idx=None,
+            rna_obs_idx=None,
+            rna_fit_genes=None,
+            loss_weight_rna=1.0,
+            R_data0=None,
+            rna_relax=0.1,
+            W_data_mrna=None,
+            ode_solver_kind="tsit5",
+            ode_dt0=0.01,
+            ode_root_find_max_steps=10,
+            ode_adjoint_kind="forward",
+            rtol=1e-6,
+            atol=1e-9,
+            max_steps=16384,
+            pinn_model=None,
+            **kwargs,  # absorb legacy keyword args (elementwise_runner, etc.)
     ):
         # Note: ode_adjoint_kind was previously defaulted to the non-existent value
         # "adjoint".  The corrected default is "forward", which is the right choice
@@ -1709,12 +1716,12 @@ class NetworkProblem:
         else:
             x0[:K] = 1.0
 
-        x0[2 * K : 3 * K] = np.clip(
+        x0[2 * K: 3 * K] = np.clip(
             np.nan_to_num(A0[:, 0], nan=1.0),
             0.0,
             5.0,
         )
-        x0[3 * K + M :] = np.clip(
+        x0[3 * K + M:] = np.clip(
             np.nan_to_num(self.P_data[:, 0], nan=0.0),
             0.0,
             None,
@@ -1811,14 +1818,14 @@ class NetworkProblem:
         xs_prot = ys[self.prot_time_idx, :]  # (T_prot, state_dim)
 
         R_sim = xs_prot[:, 0:K].T
-        S_sim = xs_prot[:, K : 2 * K].T
-        A_sim = xs_prot[:, 2 * K : 3 * K].T
-        Kdyn_sim = xs_prot[:, 3 * K : 3 * K + M].T
-        P_sim = xs_prot[:, 3 * K + M : 3 * K + M + N].T
+        S_sim = xs_prot[:, K: 2 * K].T
+        A_sim = xs_prot[:, 2 * K: 3 * K].T
+        Kdyn_sim = xs_prot[:, 3 * K: 3 * K + M].T
+        P_sim = xs_prot[:, 3 * K + M: 3 * K + M + N].T
 
         if self.mrna_time_idx is not None:
             xs_rna = ys[self.mrna_time_idx, :]  # (T_rna, state_dim)
-            self.R_sim_rna = xs_rna[:, 0:K].T   # (K, T_rna)
+            self.R_sim_rna = xs_rna[:, 0:K].T  # (K, T_rna)
         else:
             self.R_sim_rna = None
 
@@ -1850,12 +1857,12 @@ NetworkOptimizationProblem = NetworkProblem
 
 
 def compute_second_order_sensitivities(
-    theta: np.ndarray,
-    loss_fn: Callable[[jnp.ndarray, object], tuple],
-    param_labels: Sequence[str],
-    out_dir: str | os.PathLike,
-    prefix: str = "loss_hessian",
-    jit: bool = True,
+        theta: np.ndarray,
+        loss_fn: Callable[[jnp.ndarray, object], tuple],
+        param_labels: Sequence[str],
+        out_dir: str | os.PathLike,
+        prefix: str = "loss_hessian",
+        jit: bool = True,
 ) -> np.ndarray:
     """
     Compute and save the Hessian of the scalarised loss w.r.t. the parameter vector.

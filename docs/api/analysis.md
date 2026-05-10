@@ -19,13 +19,13 @@ The main entry point is `save_run_results`, which orchestrates the full export p
 | `pareto_points.tsv` | All solutions with `bio_score` |
 | `pareto_front.npz` | Binary archive: `F`, `X`, `J` arrays |
 | `fitted_params.npz` | Decoded theta + protein/site arrays |
-| `fit_timeseries.tsv` | Wide-format sim vs data (`sim_t0`, `data_t0`, …) |
+| `protein_fit_timeseries.tsv` | Wide-format sim vs data (`sim_t0`, `data_t0`, …) |
 | `internal_states.tsv` | `S_sim` (protein activity) + `Kdyn_sim` (kinase activity) |
-| `fit_timeseries_dense.tsv` | Long-format dense output (only when `data_interpolation.enabled`) |
+| `protein_fit_timeseries_dense.tsv` | Long-format dense output (only when `data_interpolation.enabled`) |
 | `mrna_fit_timeseries.tsv` | mRNA simulation output (skipped with warning if no RNA data) |
 | `mrna_fit_timeseries_dense.tsv` | Dense mRNA output |
 
-**`fit_timeseries_dense.tsv` column schema:**
+**`protein_fit_timeseries_dense.tsv` column schema:**
 
 | Column | Description |
 |--------|-------------|
@@ -46,7 +46,7 @@ The main entry point is `save_run_results`, which orchestrates the full export p
 | `[simulation] t_dense_n` | `int` | `200` | Number of dense time points for `simulate_dense` |
 | `[simulation] t_dense_min` | `float` | `0.0` | Start of dense time grid |
 | `[simulation] t_dense_max` | `float` | `120.0` | End of dense time grid |
-| `[data_interpolation] enabled` | `bool` | `false` | Write `fit_timeseries_dense.tsv` |
+| `[data_interpolation] enabled` | `bool` | `false` | Write `protein_fit_timeseries_dense.tsv` |
 | `[data_interpolation] method` | `str` | `"linear"` | Interpolation method for observed data in dense output |
 | `[analysis] plot_format` | `str` | `"png"` | Plot output format |
 | `[analysis] dpi` | `int` | `150` | Plot resolution |
@@ -77,7 +77,7 @@ def save_fitted_simulation(
     output_dir: str,
     cfg=None,
 ) -> None:
-    """Write fit_timeseries.tsv and optionally fit_timeseries_dense.tsv."""
+    """Write protein_fit_timeseries.tsv and optionally protein_fit_timeseries_dense.tsv."""
 
 def plot_fitted_simulation(
     fit_df: pd.DataFrame,

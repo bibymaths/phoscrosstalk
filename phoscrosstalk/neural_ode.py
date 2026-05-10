@@ -1,5 +1,4 @@
 """
-neural_ode.py
 PEP-8 alias for phoscrosstalk.neuralODE – re-exports the public API unchanged.
 """
 

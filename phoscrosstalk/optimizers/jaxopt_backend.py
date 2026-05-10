@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: MIT
 """
-jaxopt_backend.py
 JAXopt-based bounded optimisation backend for the phospho-network.
 
 Solver options
@@ -20,15 +19,6 @@ Warning:
     JAXopt is no longer actively developed upstream (as of 2025).  Use this
     module for legacy compatibility or when ProjectedGradient differentiability
     is strictly required.  Prefer optax_backend.py for new work.
-
-Interface (mirrors optimization.py)::
-
-    run_single_optimisation_jaxopt(loss_fn, theta0, xl, xu, ...)
-        -> (theta_opt, total_loss, f1, f2, f3, f4)
-
-loss_fn must have the signature produced by make_loss_fn in optimization.py::
-
-    loss_fn(theta, args) -> (scalar_loss, (f1, f2, f3, f4))
 """
 
 from __future__ import annotations
@@ -50,9 +40,11 @@ logger = get_logger()
 
 def _strip_aux(loss_fn):
     """Return a scalar-only wrapper; JAXopt solvers do not support has_aux."""
+
     def _fn(theta, *args, **kwargs):
         val, _ = loss_fn(theta, None)
         return val
+
     return _fn
 
 
@@ -62,18 +54,18 @@ def _strip_aux(loss_fn):
 
 
 def run_single_optimisation_jaxopt(
-    loss_fn: Callable,
-    theta0: np.ndarray,
-    xl: np.ndarray,
-    xu: np.ndarray,
-    *,
-    max_steps: int = 500,
-    tol: float = 1e-6,
-    verbose: bool = False,
-    solver_kind: str = "lbfgsb",
-    # ProjectedGradient-specific
-    stepsize: float = 1e-3,
-    acceleration: bool = True,
+        loss_fn: Callable,
+        theta0: np.ndarray,
+        xl: np.ndarray,
+        xu: np.ndarray,
+        *,
+        max_steps: int = 500,
+        tol: float = 1e-6,
+        verbose: bool = False,
+        solver_kind: str = "lbfgsb",
+        # ProjectedGradient-specific
+        stepsize: float = 1e-3,
+        acceleration: bool = True,
 ) -> tuple[np.ndarray, float, float, float, float, float]:
     """
     Run a single JAXopt bounded optimisation.

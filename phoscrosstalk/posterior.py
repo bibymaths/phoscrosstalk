@@ -1,6 +1,4 @@
 """
-posterior.py
-============
 Monte-Carlo (MCMC) posterior inference for phoscrosstalk model parameters.
 
 Uses BlackJax (NUTS / HMC) to sample the posterior distribution of estimated
@@ -30,19 +28,11 @@ Outputs written to ``{outdir}/posterior/``:
 * ``posterior_trace.png``    – trace plots (first 8 parameters).
 * ``posterior_pairs.png``    – pairplot for the first 8 parameters.
 * ``posterior_metadata.json`` – sampler settings and diagnostics.
-
-Requirements
-------------
-    blackjax >= 1.0
-
-If BlackJax is not installed the module raises ``ImportError`` with a
-descriptive message pointing to the dependency.
 """
 
 from __future__ import annotations
 
 import json
-import logging
 import os
 import time
 import types
@@ -50,7 +40,9 @@ from typing import Any, Callable
 
 import numpy as np
 
-logger = logging.getLogger("phoscrosstalk")
+from phoscrosstalk.logger import get_logger
+
+logger = get_logger()
 
 
 # ---------------------------------------------------------------------------
@@ -107,13 +99,13 @@ def _merge_cfg(user_cfg) -> types.SimpleNamespace:
 
 
 def make_log_posterior_fn(
-    *,
-    residuals_fn: Callable,
-    theta_lower: np.ndarray,
-    theta_upper: np.ndarray,
-    theta_prior_mean: np.ndarray | None = None,
-    theta_prior_std: np.ndarray | None = None,
-    sigma_noise: float = 0.1,
+        *,
+        residuals_fn: Callable,
+        theta_lower: np.ndarray,
+        theta_upper: np.ndarray,
+        theta_prior_mean: np.ndarray | None = None,
+        theta_prior_std: np.ndarray | None = None,
+        sigma_noise: float = 0.1,
 ) -> Callable:
     """Build a JAX-compatible log-posterior function for NUTS sampling.
 
@@ -194,12 +186,12 @@ def make_log_posterior_fn(
 
 
 def run_posterior_inference(
-    *,
-    outdir: str,
-    theta_best: np.ndarray,
-    log_posterior_fn: Callable,
-    posterior_cfg=None,
-    theta_names: list[str] | None = None,
+        *,
+        outdir: str,
+        theta_best: np.ndarray,
+        log_posterior_fn: Callable,
+        posterior_cfg=None,
+        theta_names: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run NUTS posterior inference and save results.
 
@@ -323,7 +315,7 @@ def run_posterior_inference(
     # ------------------------------------------------------------------ #
     # 3. Extract and thin samples                                          #
     # ------------------------------------------------------------------ #
-    all_positions = np.asarray(states.position)   # (num_samples, dim)
+    all_positions = np.asarray(states.position)  # (num_samples, dim)
     acceptance_rate = float(jnp.mean(infos.acceptance_rate))
     logger.info("[posterior] Mean acceptance rate: %.3f", acceptance_rate)
 
@@ -429,12 +421,12 @@ def run_posterior_inference(
 
 
 def posterior_predict(
-    *,
-    samples: np.ndarray,
-    simulate_fn: Callable,
-    t_eval: np.ndarray,
-    thin_factor: int = 1,
-    credible_intervals: tuple[float, float] = (2.5, 97.5),
+        *,
+        samples: np.ndarray,
+        simulate_fn: Callable,
+        t_eval: np.ndarray,
+        thin_factor: int = 1,
+        credible_intervals: tuple[float, float] = (2.5, 97.5),
 ) -> dict[str, Any]:
     """Draw posterior-predictive trajectories.
 
@@ -497,15 +489,15 @@ def posterior_predict(
 
 
 def plot_posterior_predictive(
-    outdir: str,
-    *,
-    pred: dict,
-    t_eval: np.ndarray,
-    entity_names: list[str],
-    key: str = "P_sim",
-    observed: np.ndarray | None = None,
-    t_observed: np.ndarray | None = None,
-    max_entities: int = 12,
+        outdir: str,
+        *,
+        pred: dict,
+        t_eval: np.ndarray,
+        entity_names: list[str],
+        key: str = "P_sim",
+        observed: np.ndarray | None = None,
+        t_observed: np.ndarray | None = None,
+        max_entities: int = 12,
 ) -> None:
     """Plot posterior-predictive mean ± 95 % CI vs. observations.
 

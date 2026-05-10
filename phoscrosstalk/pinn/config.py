@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: MIT
 """
-pinn/config.py
 PINN-specific configuration helpers.
 
 Provides:

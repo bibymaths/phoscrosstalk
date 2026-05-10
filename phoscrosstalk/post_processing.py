@@ -1,5 +1,4 @@
 """
-post_processing.py
 Advanced diagnostics, network topology export, and provenance tracking.
 """
 
@@ -45,7 +44,7 @@ def save_run_metadata(outdir, dims: ModelDims, args, execution_time=None):
 
 
 def export_network_for_cytoscape(
-    outdir, dims: ModelDims, theta_opt, proteins, kinases, sites, K_site_kin, site_prot_idx
+        outdir, dims: ModelDims, theta_opt, proteins, kinases, sites, K_site_kin, site_prot_idx
 ):
     """
     Exports the fitted network topology as a Cytoscape-compatible Edge List (SIF/CSV).

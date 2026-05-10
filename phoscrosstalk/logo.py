@@ -37,7 +37,7 @@ def printable_clip(text: str, max_width: int) -> str:
                 continue
 
         # OSC8 hyperlink escape
-        if text[i] == "\x1b" and text[i : i + 5] == "\x1b]8;;":
+        if text[i] == "\x1b" and text[i: i + 5] == "\x1b]8;;":
             end_meta = text.find("\x1b\\", i)
             if end_meta == -1:
                 break
@@ -70,18 +70,18 @@ def printable_clip(text: str, max_width: int) -> str:
 
 
 def print_logo(
-    name: str,
-    version: str = "",
-    tagline: str = "",
-    author: str = "",
-    email: str = "",
-    orcid: str = "",
-    website: str = "",
-    font: str = "slant",
-    color: str = "bright_green",
-    animate: bool = True,
-    min_width: int = 80,
-    max_width: int = 120,
+        name: str,
+        version: str = "",
+        tagline: str = "",
+        author: str = "",
+        email: str = "",
+        orcid: str = "",
+        website: str = "",
+        font: str = "slant",
+        color: str = "bright_green",
+        animate: bool = True,
+        min_width: int = 80,
+        max_width: int = 120,
 ):
     """
     Animated terminal logo with centered figlet art and safe borders.

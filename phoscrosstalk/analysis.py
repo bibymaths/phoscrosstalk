@@ -1,6 +1,8 @@
 """
-analysis.py
-Post-optimization analysis, file export, and plotting.
+PhosCrossTalk Post-optimization analysis, file export, and plotting.
+
+This module provides functions for analyzing the results of PhosCrossTalk optimization,
+exporting simulation results to files, and generating visualizations.
 """
 
 import os
@@ -8,6 +10,8 @@ import os
 import numpy as np
 import pandas as pd
 import seaborn as sns
+import matplotlib
+matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 
 from phoscrosstalk.config import DEFAULT_TIMEPOINTS, ModelDims
@@ -80,10 +84,6 @@ def save_run_results(outdir, F, X, f1, f2, f3, J, F_best, f4=None, dims: ModelDi
     np.savez(os.path.join(outdir, "pareto_front.npz"), F=F, X=X, J=J)
 
 
-# Backward-compatibility alias
-save_pareto_results = save_run_results
-
-
 def plot_run_diagnostics(outdir, F, F_best, f1, f2, f3, X, f4=None):
     """
     Plot diagnostic visualizations for the multi-start optimization results.
@@ -146,11 +146,6 @@ def plot_run_diagnostics(outdir, F, F_best, f1, f2, f3, X, f4=None):
     sns.heatmap(np.corrcoef(X.T), ax=ax, cmap="coolwarm", center=0.0, square=True)
     fig.savefig(os.path.join(outdir, "pareto_param_corr.png"), dpi=300)
     plt.close(fig)
-
-
-# Backward-compatibility alias
-plot_pareto_diagnostics = plot_run_diagnostics
-
 
 def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites, dims: ModelDims | None = None):
     """
@@ -229,40 +224,40 @@ def print_parameter_summary(outdir, theta_opt, proteins, kinases, sites, dims: M
 
 
 def _save_dense_simulation(
-    outdir,
-    theta_opt,
-    t_obs,
-    sites,
-    proteins,
-    P_scaled,
-    A_scaled,
-    prot_idx_for_A,
-    Cg,
-    Cl,
-    site_prot_idx,
-    K_site_kin,
-    R,
-    L_alpha,
-    kin_to_prot_idx,
-    mask_p,
-    mask_k,
-    mechanism,
-    dims: ModelDims | None = None,
-    k_act_fn=None,
-    s_prod_fn=None,
-    R_data0=None,
-    n_dense: int = 200,
-    interpolation_label: str = "diffrax_dense",
-    data_interp_P=None,
-    data_interp_A=None,
-    data_interp_R=None,
-    prot_idx_for_A_full=None,
+        outdir,
+        theta_opt,
+        t_obs,
+        sites,
+        proteins,
+        P_scaled,
+        A_scaled,
+        prot_idx_for_A,
+        Cg,
+        Cl,
+        site_prot_idx,
+        K_site_kin,
+        R,
+        L_alpha,
+        kin_to_prot_idx,
+        mask_p,
+        mask_k,
+        mechanism,
+        dims: ModelDims | None = None,
+        k_act_fn=None,
+        s_prod_fn=None,
+        R_data0=None,
+        n_dense: int = 200,
+        interpolation_label: str = "diffrax_dense",
+        data_interp_P=None,
+        data_interp_A=None,
+        data_interp_R=None,
+        prot_idx_for_A_full=None,
 ):
     """Run a dense-grid simulation and save long-format output for visualisation.
 
     Runs an additional forward ODE simulation over a uniform grid of *n_dense*
     points spanning ``[0, max(t_obs)]`` using :func:`simulate_dense` and writes
-    ``fit_timeseries_dense.tsv`` in a long format suitable for the dashboard.
+    ``protein_fit_timeseries_dense.tsv`` in a long format suitable for the dashboard.
 
     This function is called by ``save_fitted_simulation`` and does **not** affect
     the optimisation objective or loss values.  It is best-effort; failures are
@@ -454,7 +449,7 @@ def _save_dense_simulation(
 
     df_dense = pd.DataFrame(rows)
     df_dense.to_csv(
-        os.path.join(outdir, "fit_timeseries_dense.tsv"), sep="\t", index=False
+        os.path.join(outdir, "protein_fit_timeseries_dense.tsv"), sep="\t", index=False
     )
     logger.info(f"[*] Dense simulation output saved ({len(t_dense)} time points).")
 
@@ -488,39 +483,39 @@ def _save_dense_simulation(
 
 
 def save_fitted_simulation(
-    outdir,
-    theta_opt,
-    t,
-    sites,
-    proteins,
-    P_scaled,
-    A_scaled,
-    prot_idx_for_A,
-    baselines,
-    amplitudes,
-    Y,
-    A_data,
-    A_bases,
-    A_amps,
-    mechanism,
-    Cg,
-    Cl,
-    site_prot_idx,
-    K_site_kin,
-    R,
-    L_alpha,
-    kin_to_prot_idx,
-    mask_p,
-    mask_k,
-    dims: ModelDims | None = None,
-    k_act_fn=None,
-    s_prod_fn=None,
-    R_data0=None,
-    kinases=None,
-    simulation_cfg=None,
-    data_interpolation_cfg=None,
-    t_rna=None,
-    sim_full_override=None,
+        outdir,
+        theta_opt,
+        t,
+        sites,
+        proteins,
+        P_scaled,
+        A_scaled,
+        prot_idx_for_A,
+        baselines,
+        amplitudes,
+        Y,
+        A_data,
+        A_bases,
+        A_amps,
+        mechanism,
+        Cg,
+        Cl,
+        site_prot_idx,
+        K_site_kin,
+        R,
+        L_alpha,
+        kin_to_prot_idx,
+        mask_p,
+        mask_k,
+        dims: ModelDims | None = None,
+        k_act_fn=None,
+        s_prod_fn=None,
+        R_data0=None,
+        kinases=None,
+        simulation_cfg=None,
+        data_interpolation_cfg=None,
+        t_rna=None,
+        sim_full_override=None,
 ):
     """
     Run a simulation with optimized parameters,
@@ -564,7 +559,7 @@ def save_fitted_simulation(
         data_interpolation_cfg (SimpleNamespace | None): Optional
             ``[data_interpolation]`` config section.  When
             ``data_interpolation_cfg.enabled`` is True, diagnostic interpolated
-            observed curves are added to ``fit_timeseries_dense.tsv``.  The
+            observed curves are added to ``protein_fit_timeseries_dense.tsv``.  The
             original sparse observed arrays in the loss are never modified.
         t_rna (np.ndarray | None): RNA-specific time vector.  Must be provided
             when *R_data0* is not None and RNA data uses a different time axis
@@ -575,7 +570,7 @@ def save_fitted_simulation(
             used.
 
     Returns:
-        (None): Saves 'fitted_params.npz' and 'fit_timeseries.tsv' to `outdir`.
+        (None): Saves 'fitted_params.npz' and 'protein_fit_timeseries.tsv' to `outdir`.
     """
     if dims is None:
         dims = ModelDims.set_dims(len(proteins), len(kin_to_prot_idx), len(sites))
@@ -641,16 +636,25 @@ def save_fitted_simulation(
         )
 
     # Rescale Sites (model)
-    Y_sim_rescaled = np.zeros_like(P_sim)
+    Y_sim_rescaled = np.zeros_like(P_sim, dtype=float)
     for i in range(len(sites)):
         Y_sim_rescaled[i] = baselines[i] + amplitudes[i] * P_sim[i]
 
-    # Rescale Sites (data) – from original Y or from P_scaled if you prefer
-    Y_data_rescaled = Y  # if Y is already in FC units
-    # or:
-    # Y_data_rescaled = np.zeros_like(P_scaled)
-    # for i in range(len(sites)):
-    #     Y_data_rescaled[i] = baselines[i] + amplitudes[i] * P_scaled[i]
+    # Rescale Sites (data)
+    # Y is expected to be the original phosphosite data in FC/original units.
+    # If Y is unavailable, reconstruct the original-scale data from P_scaled.
+    if Y is not None:
+        Y_data_rescaled = np.asarray(Y, dtype=float)
+    else:
+        Y_data_rescaled = np.zeros_like(P_scaled, dtype=float)
+        for i in range(len(sites)):
+            Y_data_rescaled[i] = baselines[i] + amplitudes[i] * P_scaled[i]
+
+    if Y_data_rescaled.shape != Y_sim_rescaled.shape:
+        raise ValueError(
+            "Y_data_rescaled and Y_sim_rescaled must have the same shape. "
+            f"Got data={Y_data_rescaled.shape}, sim={Y_sim_rescaled.shape}."
+        )
 
     # Rescale Proteins
     A_sim_rescaled = A_sim.copy()
@@ -693,11 +697,11 @@ def save_fitted_simulation(
             records.append(record)
 
     df_out = pd.DataFrame.from_records(records)
-    df_out.to_csv(os.path.join(outdir, "fit_timeseries.tsv"), sep="\t", index=False)
+    df_out.to_csv(os.path.join(outdir, "protein_fit_timeseries.tsv"), sep="\t", index=False)
 
     # Dense continuous output for smooth dashboard visualisation.
     # Runs a separate forward simulation over a fine time grid [0, t_max] and
-    # saves the result in long format to fit_timeseries_dense.tsv.
+    # saves the result in long format to protein_fit_timeseries_dense.tsv.
     # This does NOT affect optimisation or loss computation.
     _sim_cfg = simulation_cfg
     _do_dense = _sim_cfg is None or getattr(_sim_cfg, "save_dense", True)
@@ -737,19 +741,60 @@ def save_fitted_simulation(
             if R_data0 is not None and t_rna is not None:
                 try:
                     from phoscrosstalk.derived_rates import build_data_interpolations as _bdi
+
                     _di_method = getattr(_di_cfg, "method", "linear")
                     _di_fwd = getattr(_di_cfg, "fill_forward_nans_at_end", False)
                     _di_start = getattr(_di_cfg, "replace_nans_at_start", None)
-                    _rna_interp_result = _bdi(
-                        t_obs=t_rna,
-                        rna_data=R_data0,
-                        method=_di_method,
-                        fill_forward_nans_at_end=_di_fwd,
-                        replace_nans_at_start=_di_start,
-                    )
-                    _data_interp_R = _rna_interp_result.get("rna_interp")
-                    for msg in _rna_interp_result.get("nan_fill_log", []):
-                        logger.info("[data_interp/rna] %s", msg)
+
+                    _rna_arr = np.asarray(R_data0, dtype=float)
+                    _t_rna_arr = np.asarray(t_rna, dtype=float)
+
+                    # R_data0 may be a single RNA time series: shape (T_rna,).
+                    # build_data_interpolations expects (n_genes, T_rna), so convert:
+                    #     (T_rna,) -> (1, T_rna)
+                    if _rna_arr.ndim == 1:
+                        if _rna_arr.shape[0] != len(_t_rna_arr):
+                            logger.warning(
+                                "[data_interp/rna] Skipping RNA interpolation: "
+                                "1D R_data0 has length %d but len(t_rna)=%d.",
+                                _rna_arr.shape[0],
+                                len(_t_rna_arr),
+                            )
+                            _rna_arr = None
+                        else:
+                            _rna_arr = _rna_arr.reshape(1, -1)
+
+                    if _rna_arr is not None:
+                        if _rna_arr.ndim != 2:
+                            logger.warning(
+                                "[data_interp/rna] Skipping RNA interpolation: "
+                                "expected R_data0 as (n_genes, len(t_rna)) or "
+                                "(len(t_rna),), got %s.",
+                                _rna_arr.shape,
+                            )
+
+                        elif _rna_arr.shape[1] != len(_t_rna_arr):
+                            logger.warning(
+                                "[data_interp/rna] Skipping RNA interpolation: "
+                                "R_data0.shape[1]=%d but len(t_rna)=%d.",
+                                _rna_arr.shape[1],
+                                len(_t_rna_arr),
+                            )
+
+                        else:
+                            _rna_interp_result = _bdi(
+                                t_obs=_t_rna_arr,
+                                rna_data=_rna_arr,
+                                method=_di_method,
+                                fill_forward_nans_at_end=_di_fwd,
+                                replace_nans_at_start=_di_start,
+                            )
+
+                            _data_interp_R = _rna_interp_result.get("rna_interp")
+
+                            for msg in _rna_interp_result.get("nan_fill_log", []):
+                                logger.info("[data_interp/rna] %s", msg)
+
                 except Exception as exc:
                     logger.warning("[!] RNA data interpolation build failed: %s", exc)
 
@@ -877,7 +922,7 @@ def plot_fitted_simulation(outdir):
     """
     Generate per-protein plots comparing simulated trajectories to experimental data.
 
-    Reads ``fit_timeseries.tsv`` from *outdir*. When ``mrna_fit_timeseries.tsv``
+    Reads ``protein_fit_timeseries.tsv`` from *outdir*. When ``mrna_fit_timeseries.tsv``
     is also present, creates three-panel figures (mRNA / protein abundance /
     phosphosites); otherwise creates two-panel figures (protein abundance /
     phosphosites).
@@ -890,9 +935,9 @@ def plot_fitted_simulation(outdir):
     """
 
     # Load protein/phosphosite fit data
-    ts_path = os.path.join(outdir, "fit_timeseries.tsv")
+    ts_path = os.path.join(outdir, "protein_fit_timeseries.tsv")
     if not os.path.exists(ts_path):
-        logger.warning(f"[!] fit_timeseries.tsv not found in {outdir}; skipping.")
+        logger.warning(f"[!] protein_fit_timeseries.tsv not found in {outdir}; skipping.")
         return
 
     df = pd.read_csv(ts_path, sep="\t")
@@ -927,18 +972,27 @@ def plot_fitted_simulation(outdir):
 
         # Determine number of panels
         has_rna_for_prot = (
-            has_rna_data and df_mrna is not None and prot in df_mrna["gene"].values
+                has_rna_data and df_mrna is not None and prot in df_mrna["gene"].values
         )
         n_panels = 3 if has_rna_for_prot else 2
         color = plt.cm.tab10(proteins.index(prot) % 10)
 
+        figsize = (16, 9) if n_panels == 2 else (24, 13.5)
+
         fig, axes = plt.subplots(
             1,
             n_panels,
-            figsize=(9 * n_panels, 7),
-            gridspec_kw={"wspace": 0.12},
-            constrained_layout=True,
+            figsize=figsize,
         )
+
+        fig.set_layout_engine(
+            "constrained",
+            w_pad=0.04,
+            h_pad=0.12,
+            hspace=0.28,
+            wspace=0.12,
+        )
+
         axes = list(axes)
 
         panel_idx = 0
@@ -1081,9 +1135,12 @@ def plot_fitted_simulation(outdir):
         )
         axS.grid(alpha=0.25)
 
-        fig.suptitle(f"{prot}", fontsize=14, fontweight="bold", y=1.01)
+        fig.suptitle(f"{prot}", fontsize=16, fontweight="bold")
+
         plt.savefig(
-            os.path.join(outdir, f"fit_{prot}.png"), dpi=300, bbox_inches="tight"
+            os.path.join(outdir, f"fit_{prot}.png"),
+            dpi=300,
+            bbox_inches="tight",
         )
         plt.close(fig)
 
@@ -1136,200 +1193,328 @@ def plot_biological_scores(outdir, X, F):
     plt.close()
 
 
-def plot_goodness_of_fit(file, outdir):
+def plot_goodness_of_fit(protein_fit_timeseries_path, outdir, mrna_fit_timeseries_path=None):
     """
-    Generate a global goodness-of-fit scatter plot (Observed vs. Simulated).
+    Generate a global goodness-of-fit scatter plot: observed vs simulated/fitted.
 
-    Calculates R-squared, MSE, and MAE metrics, and visualizes the data with
-    an identity line and a 95% confidence interval band. Outliers are labeled.
+    Reads protein/phosphosite fit data from a wide-format TSV file containing
+    sim_t*/data_t* columns. Optionally also reads mRNA fit data from
+    mrna_fit_timeseries.tsv.
 
     Args:
-        file (str): Path to the time-series TSV file (output of `save_fitted_simulation`).
+        protein_fit_timeseries_path (str): Path to the main time-series TSV file.
         outdir (str): Directory to save the plot.
+        mrna_fit_timeseries_path (str | None): Optional path to
+            mrna_fit_timeseries.tsv. If None, the function looks for this file
+            inside outdir.
 
     Returns:
-        (None): Saves 'goodness_of_fit.png' to `outdir`.
-    """  # noqa: E501
-    df = pd.read_csv(file, sep="\t")
+        None: Saves 'goodness_of_fit.png' to outdir.
+    """
+    df = pd.read_csv(protein_fit_timeseries_path, sep="\t")
 
     sim_cols = [c for c in df.columns if c.startswith("sim_t")]
     data_cols = [c for c in df.columns if c.startswith("data_t")]
 
     if len(sim_cols) == 0 or len(data_cols) == 0:
         logger.warning(
-            f"[!] Skipping goodness-of-fit plot: no sim_t*/data_t* columns found in {file}"
+            f"[!] Skipping goodness-of-fit plot: no sim_t*/data_t* columns found in {protein_fit_timeseries_path}"
         )
         return
 
-    # Construct labels
+    if len(sim_cols) != len(data_cols):
+        logger.warning(
+            "[!] Skipping goodness-of-fit plot: number of sim_t* and data_t* "
+            f"columns differs: sim={len(sim_cols)}, data={len(data_cols)}"
+        )
+        return
+
+    # ------------------------------------------------------------------
+    # Build row labels for protein/phosphosite data
+    # ------------------------------------------------------------------
     labels = []
     for _, row in df.iterrows():
-        if row.get("Type", "") == "Phosphosite":
-            # Residue can be missing; keep robust
+        row_type = row.get("Type", "")
+
+        if row_type == "Phosphosite":
             residue = row.get("Residue", "")
             if pd.notna(residue) and str(residue) != "":
                 labels.append(f"{row.get('Protein', 'NA')}_{residue}")
             else:
                 labels.append(f"{row.get('Protein', 'NA')}_site")
-        else:
+        elif row_type == "ProteinAbundance":
             labels.append(f"{row.get('Protein', 'NA')}_Abundance")
+        else:
+            labels.append(f"{row.get('Protein', 'NA')}_{row_type}")
+
     df["Label"] = labels
 
-    # --- Flatten all points for global stats ---
-    data_all = df[data_cols].to_numpy(dtype=float).reshape(-1)
-    sim_all = df[sim_cols].to_numpy(dtype=float).reshape(-1)
-    mask_all = np.isfinite(data_all) & np.isfinite(sim_all)
+    # ------------------------------------------------------------------
+    # Flatten main wide-format fit data
+    # ------------------------------------------------------------------
+    plot_records = []
 
-    if mask_all.sum() < 3:
+    for _, row in df.iterrows():
+        row_type = row.get("Type", "Unknown")
+        label = row.get("Label", "Unknown")
+
+        sim_vals = row[sim_cols].values.astype(float)
+        data_vals = row[data_cols].values.astype(float)
+
+        for obs, sim in zip(data_vals, sim_vals, strict=True):
+            if np.isfinite(obs) and np.isfinite(sim):
+                plot_records.append(
+                    {
+                        "Observed": float(obs),
+                        "Simulated": float(sim),
+                        "Type": row_type,
+                        "Label": label,
+                    }
+                )
+
+    # ------------------------------------------------------------------
+    # Optionally append mRNA long-format fit data
+    # ------------------------------------------------------------------
+    if mrna_fit_timeseries_path is None:
+        mrna_fit_timeseries_path = os.path.join(outdir, "mrna_fit_timeseries.tsv")
+
+    if os.path.exists(mrna_fit_timeseries_path):
+        try:
+            df_mrna = pd.read_csv(mrna_fit_timeseries_path, sep="\t")
+
+            required_cols = {"gene", "observed"}
+            if not required_cols.issubset(df_mrna.columns):
+                logger.warning(
+                    "[!] Skipping mRNA goodness-of-fit points: "
+                    f"missing required columns in {mrna_fit_timeseries_path}. "
+                    f"Required at least {required_cols}; found {set(df_mrna.columns)}"
+                )
+            else:
+                # Prefer "fitted"; fall back to "simulated" if needed.
+                if "fitted" in df_mrna.columns:
+                    fit_col = "fitted"
+                elif "simulated" in df_mrna.columns:
+                    fit_col = "simulated"
+                else:
+                    fit_col = None
+
+                if fit_col is None:
+                    logger.warning(
+                        "[!] Skipping mRNA goodness-of-fit points: neither "
+                        "'fitted' nor 'simulated' column found in "
+                        f"{mrna_fit_timeseries_path}"
+                    )
+                else:
+                    for _, row in df_mrna.iterrows():
+                        obs = row.get("observed", np.nan)
+                        sim = row.get(fit_col, np.nan)
+                        gene = row.get("gene", "NA")
+
+                        if np.isfinite(obs) and np.isfinite(sim):
+                            plot_records.append(
+                                {
+                                    "Observed": float(obs),
+                                    "Simulated": float(sim),
+                                    "Type": "mRNA",
+                                    "Label": f"{gene}_mRNA",
+                                }
+                            )
+
+                    logger.info(
+                        f"[*] Added mRNA goodness-of-fit points from "
+                        f"{mrna_fit_timeseries_path}"
+                    )
+
+        except Exception as exc:
+            logger.warning(
+                f"[!] Failed to read mRNA goodness-of-fit file "
+                f"{mrna_fit_timeseries_path}: {exc}"
+            )
+    else:
+        logger.info(
+            f"[*] No mRNA goodness-of-fit file found at {mrna_fit_timeseries_path}; "
+            "plotting protein/phosphosite data only."
+        )
+
+    if len(plot_records) < 3:
         logger.warning(
             "[!] Skipping goodness-of-fit plot: fewer than 3 finite observed/simulated "
             "points are available."
         )
         return
 
-    x = data_all[mask_all]
-    y = sim_all[mask_all]
+    df_plot = pd.DataFrame.from_records(plot_records)
+
+    x = df_plot["Observed"].to_numpy(dtype=float)
+    y = df_plot["Simulated"].to_numpy(dtype=float)
     resid = y - x
 
+    # ------------------------------------------------------------------
     # Global metrics
+    # ------------------------------------------------------------------
     mse = float(np.mean((y - x) ** 2))
     mae = float(np.mean(np.abs(y - x)))
 
-    # R^2 (safe)
-    y_mean = float(np.mean(y))
-    ss_res = float(
-        np.sum((y - x) ** 2)
-    )  # here "residual" is y-x (since identity is the target)
-    ss_tot = float(np.sum((y - y_mean) ** 2))
+    # R² against identity target: observed is target, simulated is prediction.
+    x_mean = float(np.mean(x))
+    ss_res = float(np.sum((y - x) ** 2))
+    ss_tot = float(np.sum((x - x_mean) ** 2))
     r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 0 else float("nan")
 
-    # --- 95% CI band: parallel to identity line ---
-    # Interpret as 95% of residuals around identity (robust to heavy tails):
-    # Use empirical 97.5th percentile of |residual| as band half-width.
+    # Empirical 95% residual band around identity.
     abs_resid = np.abs(resid)
     delta = float(np.quantile(abs_resid, 0.975))
 
-    # Identify outside-band points at the per-item level (row label)
-    # We'll label only those with any timepoint outside band, and choose the worst deviation.  # noqa: E501
+    # ------------------------------------------------------------------
+    # Label worst outside-band items
+    # ------------------------------------------------------------------
     outside_items = []
-    outside_points = []  # (x, y, label, dev)
+    outside_points = []
 
-    for _, row in df.iterrows():
-        sim_vals = row[sim_cols].values.astype(float)
-        data_vals = row[data_cols].values.astype(float)
-        m = np.isfinite(sim_vals) & np.isfinite(data_vals)
-        if not np.any(m):
-            continue
-        rv = sim_vals[m] - data_vals[m]
-        ar = np.abs(rv)
+    for label, sub in df_plot.groupby("Label"):
+        sub_x = sub["Observed"].to_numpy(dtype=float)
+        sub_y = sub["Simulated"].to_numpy(dtype=float)
+        ar = np.abs(sub_y - sub_x)
+
         if np.any(ar > delta):
-            # pick the worst point for labeling
             j = int(np.argmax(ar))
-            outside_items.append(row["Label"])
+            outside_items.append(label)
             outside_points.append(
                 (
-                    float(data_vals[m][j]),
-                    float(sim_vals[m][j]),
-                    row["Label"],
+                    float(sub_x[j]),
+                    float(sub_y[j]),
+                    label,
                     float(ar[j]),
                 )
             )
 
-    # Sort by deviation and limit labels to avoid unreadable plot
     outside_points.sort(key=lambda t: t[3], reverse=True)
-    max_labels = 25
-    outside_points = outside_points[:max_labels]
+    outside_points = outside_points[:25]
 
-    # --- Plot ---
-    plt.figure(figsize=(10, 10))
+    # ------------------------------------------------------------------
+    # Plot
+    # ------------------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(10, 10))
 
-    # Plot scatter points grouped by Type (so legend is meaningful and not cluttered)
-    # Phosphosite
-    for idx, row in df[df["Type"] == "Phosphosite"].iterrows():
-        sim_vals = row[sim_cols].values.astype(float)
-        data_vals = row[data_cols].values.astype(float)
-        m = np.isfinite(sim_vals) & np.isfinite(data_vals)
-        if not np.any(m):
-            continue
-        plt.scatter(
-            data_vals[m],
-            sim_vals[m],
-            alpha=0.35,
-            color="green",
-            s=40,
-            label="Phosphosite"
-            if idx == df[df["Type"] == "Phosphosite"].index[0]
-            else None,
+    type_styles = {
+        "Phosphosite": {
+            "color": "green",
+            "alpha": 0.35,
+            "s": 40,
+            "label": "Phosphosite",
+        },
+        "ProteinAbundance": {
+            "color": "blue",
+            "alpha": 0.55,
+            "s": 40,
+            "label": "Protein abundance",
+        },
+        "mRNA": {
+            "color": "purple",
+            "alpha": 0.55,
+            "s": 40,
+            "label": "mRNA",
+        },
+    }
+
+    plotted_labels = set()
+
+    for row_type, sub in df_plot.groupby("Type"):
+        style = type_styles.get(
+            row_type,
+            {
+                "color": "gray",
+                "alpha": 0.45,
+                "s": 35,
+                "label": str(row_type),
+            },
         )
 
-    # Abundance (protein / kinases, depending on your file semantics)
-    for idx, row in df[df["Type"] != "Phosphosite"].iterrows():
-        sim_vals = row[sim_cols].values.astype(float)
-        data_vals = row[data_cols].values.astype(float)
-        m = np.isfinite(sim_vals) & np.isfinite(data_vals)
-        if not np.any(m):
-            continue
-        plt.scatter(
-            data_vals[m],
-            sim_vals[m],
-            alpha=0.55,
-            color="blue",
-            s=40,
-            label="Abundance"
-            if idx == df[df["Type"] != "Phosphosite"].index[0]
-            else None,
+        legend_label = style["label"]
+        if legend_label in plotted_labels:
+            legend_label = None
+        else:
+            plotted_labels.add(style["label"])
+
+        ax.scatter(
+            sub["Observed"],
+            sub["Simulated"],
+            alpha=style["alpha"],
+            color=style["color"],
+            s=style["s"],
+            label=legend_label,
         )
 
-    # Identity line and CI band
+    # Identity line and residual band
     max_val = float(np.nanmax(np.r_[x, y]))
     min_val = float(np.nanmin(np.r_[x, y]))
     pad = 0.05 * (max_val - min_val + 1e-12)
+
     lo = min_val - pad
     hi = max_val + pad
-
     xx = np.array([lo, hi], dtype=float)
-    plt.plot(xx, xx, "r--", lw=2, label="Identity (y=x)")
-    plt.plot(xx, xx + delta, "k:", lw=1.5, label="95% band (parallel)")
-    plt.plot(xx, xx - delta, "k:", lw=1.5)
 
-    # Label outside-band points (top deviators only)
+    ax.plot(xx, xx, "r--", lw=2, label="Identity (y=x)")
+    ax.plot(xx, xx + delta, "k:", lw=1.5, label="95% band")
+    ax.plot(xx, xx - delta, "k:", lw=1.5)
+
+    # Label top outside-band points
     for px, py, lab, _dev in outside_points:
-        plt.scatter(
-            [px], [py], s=70, facecolors="none", edgecolors="black", linewidths=1.5
+        ax.scatter(
+            [px],
+            [py],
+            s=70,
+            facecolors="none",
+            edgecolors="black",
+            linewidths=1.5,
         )
-        plt.text(px, py, f"  {lab}", fontsize=9, va="center")
+        ax.text(px, py, f"  {lab}", fontsize=9, va="center")
 
     # Metrics box
+    type_counts = df_plot["Type"].value_counts().to_dict()
+    type_counts_txt = "\n".join(
+        f"{k}: {v}" for k, v in sorted(type_counts.items())
+    )
+
     txt = (
-        f"N={mask_all.sum()}\n"
+        f"N={len(df_plot)}\n"
         f"R²={r2:.4f}\n"
         f"MSE={mse:.4g}\n"
         f"MAE={mae:.4g}\n"
         f"95% band: |sim-obs| ≤ {delta:.4g}\n"
-        f"Outside band (items): {len(set(outside_items))}"
+        f"Outside band items: {len(set(outside_items))}\n"
+        f"\n{type_counts_txt}"
     )
-    plt.gca().text(
+
+    ax.text(
         0.02,
         0.98,
         txt,
-        transform=plt.gca().transAxes,
+        transform=ax.transAxes,
         va="top",
         ha="left",
         fontsize=10,
-        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8, edgecolor="gray"),
+        bbox=dict(
+            boxstyle="round",
+            facecolor="white",
+            alpha=0.8,
+            edgecolor="gray",
+        ),
     )
 
-    plt.xlabel("Observed")
-    plt.ylabel("Simulated")
-    plt.title("Goodness of Fit: Observed vs Simulated")
-    plt.xlim(lo, hi)
-    plt.ylim(lo, hi)
-    plt.legend(loc="lower right")
+    ax.set_xlabel("Observed")
+    ax.set_ylabel("Simulated / fitted")
+    ax.set_title("Goodness of Fit: Observed vs Simulated/Fitted")
+    ax.set_xlim(lo, hi)
+    ax.set_ylim(lo, hi)
+    ax.legend(loc="lower right")
+    ax.grid(alpha=0.25)
 
-    plt.tight_layout()
+    fig.tight_layout()
+
     os.makedirs(outdir, exist_ok=True)
-    plt.savefig(f"{outdir}/goodness_of_fit.png", dpi=300)
-    plt.close()
+    fig.savefig(os.path.join(outdir, "goodness_of_fit.png"), dpi=300)
+    plt.close(fig)
 
 
 def _save_txt(path: str, text: str) -> None:
@@ -1396,32 +1581,32 @@ def _save_index_tsv(path: str, vec: np.ndarray) -> None:
 
 
 def _save_preopt_snapshot_txt_csv(
-    outdir,
-    *,
-    t,
-    sites,
-    proteins,
-    kinases,
-    positions,
-    P_scaled,
-    Y,
-    A_scaled,
-    A_data,
-    A_proteins,
-    W_data,
-    W_data_prot,
-    Cg,
-    Cl,
-    site_prot_idx,
-    K_site_kin,
-    R,
-    L_alpha,
-    kin_to_prot_idx,
-    receptor_mask_prot,
-    receptor_mask_kin,
-    xl,
-    xu,
-    args,
+        outdir,
+        *,
+        t,
+        sites,
+        proteins,
+        kinases,
+        positions,
+        P_scaled,
+        Y,
+        A_scaled,
+        A_data,
+        A_proteins,
+        W_data,
+        W_data_prot,
+        Cg,
+        Cl,
+        site_prot_idx,
+        K_site_kin,
+        R,
+        L_alpha,
+        kin_to_prot_idx,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        xl,
+        xu,
+        args,
 ) -> None:
     """
     Save a comprehensive snapshot of all model inputs and configuration before optimization.
@@ -1587,27 +1772,27 @@ def _save_preopt_snapshot_txt_csv(
 
 
 def save_preopt_snapshot_npz(
-    snap_dir,
-    *,
-    t,
-    Y,
-    P_scaled,
-    A_data,
-    A_scaled,
-    Cg,
-    Cl,
-    K_site_kin,
-    R,
-    L_alpha,
-    W_data,
-    W_data_prot,
-    site_prot_idx,
-    kin_to_prot_idx,
-    receptor_mask_prot,
-    receptor_mask_kin,
-    positions,
-    xl,
-    xu,
+        snap_dir,
+        *,
+        t,
+        Y,
+        P_scaled,
+        A_data,
+        A_scaled,
+        Cg,
+        Cl,
+        K_site_kin,
+        R,
+        L_alpha,
+        W_data,
+        W_data_prot,
+        site_prot_idx,
+        kin_to_prot_idx,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        positions,
+        xl,
+        xu,
 ) -> None:
     """
     Save a consolidated machine-readable NPZ of all pre-optimisation inputs.
@@ -1772,8 +1957,8 @@ def save_mrna_outputs(outdir, gene_ids, t_rna, rna_data_obs, rna_simulated):
         gene_sim_min = float(np.nanmin(fit))
         gene_sim_max = float(np.nanmax(fit))
         gene_sim_mean = float(np.nanmean(fit))
-        rmse = float(np.sqrt(np.mean(resid**2)))
-        ss_res = float(np.sum(resid**2))
+        rmse = float(np.sqrt(np.mean(resid ** 2)))
+        ss_res = float(np.sum(resid ** 2))
         ss_tot = float(np.sum((obs - np.mean(obs)) ** 2))
         r2 = float(1.0 - ss_res / ss_tot) if ss_tot > 1e-12 else float("nan")
         diag_records.append(
@@ -1876,12 +2061,12 @@ def plot_mrna_fit(outdir, gene_ids=None, max_genes=12):
 
 
 def save_derived_rates(
-    outdir,
-    proteins,
-    t_protein,
-    k_act_fn=None,
-    s_prod_fn=None,
-    t_rna=None,
+        outdir,
+        proteins,
+        t_protein,
+        k_act_fn=None,
+        s_prod_fn=None,
+        t_rna=None,
 ):
     """
     Save derived k_act and s_prod trajectories.
@@ -1889,13 +2074,16 @@ def save_derived_rates(
     k_act and s_prod are not optimized parameters. They are time-dependent
     derived rates computed from network/input closures.
 
-    Outputs
-    -------
-    derived_rates.npz
-        Compact NumPy archive.
+    Args:
+        outdir (str): Directory to save derived rate data.
+        proteins (list[str]): List of protein names.
+        t_protein (list[float]): Time points for protein data.
+        k_act_fn (callable | None): Function to compute k_act.
+        s_prod_fn (callable | None): Function to compute s_prod.
+        t_rna (list[float] | None): Time points for RNA data.
 
-    derived_rates_long.tsv
-        Long-format table for inspection and plotting.
+    Returns
+        None
     """
     os.makedirs(outdir, exist_ok=True)
 
@@ -1985,23 +2173,23 @@ def save_derived_rates(
 
 
 def plot_neural_ode_overlay(
-    outdir: str,
-    *,
-    ts: np.ndarray,
-    ys: dict,
-    proteins: list,
-    sites: list,
-    P_scaled: np.ndarray | None = None,
-    A_scaled: np.ndarray | None = None,
-    prot_idx_for_A: np.ndarray | None = None,
-    t_protein: np.ndarray | None = None,
-    t_rna: np.ndarray | None = None,
-    rna_obs_matched: np.ndarray | None = None,
-    rna_model_prot_idx: np.ndarray | None = None,
-    k_act_init_vals: np.ndarray | None = None,
-    s_prod_init_vals: np.ndarray | None = None,
-    k_hats_obs: np.ndarray | None = None,
-    s_hats_obs: np.ndarray | None = None,
+        outdir: str,
+        *,
+        ts: np.ndarray,
+        ys: dict,
+        proteins: list,
+        sites: list,
+        P_scaled: np.ndarray | None = None,
+        A_scaled: np.ndarray | None = None,
+        prot_idx_for_A: np.ndarray | None = None,
+        t_protein: np.ndarray | None = None,
+        t_rna: np.ndarray | None = None,
+        rna_obs_matched: np.ndarray | None = None,
+        rna_model_prot_idx: np.ndarray | None = None,
+        k_act_init_vals: np.ndarray | None = None,
+        s_prod_init_vals: np.ndarray | None = None,
+        k_hats_obs: np.ndarray | None = None,
+        s_hats_obs: np.ndarray | None = None,
 ) -> None:
     """Plot observed values and mechanistic + neural fit curves as overlays.
 
@@ -2012,9 +2200,6 @@ def plot_neural_ode_overlay(
     * Mechanistic prior trajectory (dashed line, when *k_act_init_vals* /
       *s_prod_init_vals* are provided).
     * Learned k_act and s_prod curves in a bottom strip below the ODE state panels.
-
-    This function reuses the same file-reading pattern as
-    :func:`plot_fitted_simulation`.
 
     Args:
         outdir:           Directory to write PNG files.
@@ -2037,10 +2222,6 @@ def plot_neural_ode_overlay(
     Returns:
         None: PNG files are written to *outdir*.
     """
-    import matplotlib  # noqa: PLC0415
-    matplotlib.use("Agg")
-    from matplotlib import pyplot as _plt  # noqa: PLC0415
-
     os.makedirs(outdir, exist_ok=True)
 
     ts_arr = np.asarray(ts)
@@ -2074,7 +2255,7 @@ def plot_neural_ode_overlay(
     # inside the per-protein/per-site loop (which would be O(N_sites²) overall).
     site_to_index: dict[str, int] = {s: i for i, s in enumerate(sites)}
 
-    cmap10 = _plt.cm.tab10
+    cmap10 = plt.cm.tab10
 
     for p_idx, prot in enumerate(proteins):
         color = cmap10(p_idx % 10)
@@ -2087,7 +2268,7 @@ def plot_neural_ode_overlay(
         n_rows = 2 if n_rate_panels > 0 else 1
 
         if n_rate_panels > 0:
-            fig, axes = _plt.subplots(
+            fig, axes = plt.subplots(
                 n_rows, max(n_state_panels, n_rate_panels),
                 figsize=(9 * max(n_state_panels, n_rate_panels), 12),
                 gridspec_kw={"height_ratios": [3, 1], "wspace": 0.15, "hspace": 0.35},
@@ -2099,8 +2280,8 @@ def plot_neural_ode_overlay(
             for ax in axes[1, n_rate_panels:]:
                 ax.set_visible(False)
         else:
-            fig, axes_1d = _plt.subplots(1, n_state_panels, figsize=(9 * n_state_panels, 7),
-                                          gridspec_kw={"wspace": 0.15}, constrained_layout=True)
+            fig, axes_1d = plt.subplots(1, n_state_panels, figsize=(9 * n_state_panels, 7),
+                                         gridspec_kw={"wspace": 0.15}, constrained_layout=True)
             state_axes = [axes_1d] if n_state_panels == 1 else list(axes_1d)
             rate_axes = []
 
@@ -2139,7 +2320,7 @@ def plot_neural_ode_overlay(
 
         # Phosphosites panel
         ax_sites = state_axes[panel_idx]
-        cmap20 = _plt.cm.tab20
+        cmap20 = plt.cm.tab20
         for si, site in enumerate(prot_sites):
             s_idx = site_to_index.get(site, -1)
             if s_idx < 0:
@@ -2194,28 +2375,28 @@ def plot_neural_ode_overlay(
         fig.suptitle(f"{prot} — Neural ODE overlay", fontsize=14, fontweight="bold", y=1.01)
         _path = os.path.join(outdir, f"neural_overlay_{prot}.png")
         fig.savefig(_path, dpi=300, bbox_inches="tight")
-        _plt.close(fig)
+        plt.close(fig)
         logger.info("[neural_ode] Saved overlay plot %s", _path)
 
 
 def save_neural_ode_residuals(
-    outdir: str,
-    *,
-    ts: np.ndarray,
-    ys: dict,
-    proteins: list,
-    sites: list,
-    P_scaled: np.ndarray | None = None,
-    A_scaled: np.ndarray | None = None,
-    prot_idx_for_A: np.ndarray | None = None,
-    t_protein: np.ndarray | None = None,
-    t_rna: np.ndarray | None = None,
-    rna_obs_matched: np.ndarray | None = None,
-    rna_model_prot_idx: np.ndarray | None = None,
-    mech_P_sim: np.ndarray | None = None,
-    mech_A_sim: np.ndarray | None = None,
-    mech_R_sim: np.ndarray | None = None,
-    mech_t: np.ndarray | None = None,
+        outdir: str,
+        *,
+        ts: np.ndarray,
+        ys: dict,
+        proteins: list,
+        sites: list,
+        P_scaled: np.ndarray | None = None,
+        A_scaled: np.ndarray | None = None,
+        prot_idx_for_A: np.ndarray | None = None,
+        t_protein: np.ndarray | None = None,
+        t_rna: np.ndarray | None = None,
+        rna_obs_matched: np.ndarray | None = None,
+        rna_model_prot_idx: np.ndarray | None = None,
+        mech_P_sim: np.ndarray | None = None,
+        mech_A_sim: np.ndarray | None = None,
+        mech_R_sim: np.ndarray | None = None,
+        mech_t: np.ndarray | None = None,
 ) -> None:
     """Save per-row time-wise residuals for each ODE state.
 
@@ -2371,7 +2552,8 @@ def save_neural_ode_residuals(
                 mech_val_out = float("nan")
                 mech_resid = float("nan")
                 if mech_R_sim is not None and p_idx < mech_R_sim.shape[0]:
-                    t_ref = t_mech if mech_t is not None else (t_rna_arr if len(t_rna_arr) == mech_R_sim.shape[1] else t_mech)
+                    t_ref = t_mech if mech_t is not None else (
+                        t_rna_arr if len(t_rna_arr) == mech_R_sim.shape[1] else t_mech)
                     mech_ti = int(np.argmin(np.abs(t_ref - t_val))) if len(t_ref) > 0 else 0
                     mech_val_out = float(mech_R_sim[p_idx, mech_ti])
                     mech_resid = mech_val_out - obs_val if np.isfinite(obs_val) else float("nan")
@@ -2395,9 +2577,9 @@ def save_neural_ode_residuals(
 
 
 def plot_neural_residuals(
-    outdir: str,
-    *,
-    residuals_tsv: str | None = None,
+        outdir: str,
+        *,
+        residuals_tsv: str | None = None,
 ) -> None:
     """Visualise and compare neural vs mechanistic residuals.
 
@@ -2418,10 +2600,6 @@ def plot_neural_residuals(
     Returns:
         None: PNG files are written to *outdir*.
     """
-    import matplotlib  # noqa: PLC0415
-    matplotlib.use("Agg")
-    from matplotlib import pyplot as _plt  # noqa: PLC0415
-
     os.makedirs(outdir, exist_ok=True)
 
     tsv_path = residuals_tsv or os.path.join(outdir, "neural_residuals.tsv")
@@ -2440,7 +2618,7 @@ def plot_neural_residuals(
             pivot = df_p.pivot_table(index="entity", columns="time", values="residual_neural", aggfunc="mean")
             n_sites = len(pivot)
             fig_h = max(6, min(40, n_sites * 0.35))
-            fig, ax = _plt.subplots(figsize=(max(8, len(pivot.columns) * 1.2), fig_h))
+            fig, ax = plt.subplots(figsize=(max(8, len(pivot.columns) * 1.2), fig_h))
             import seaborn as sns  # noqa: PLC0415
             sns.heatmap(pivot, ax=ax, cmap="vlag", center=0,
                         xticklabels=[f"{c:.0f}" for c in pivot.columns],
@@ -2448,10 +2626,10 @@ def plot_neural_residuals(
             ax.set_title("Neural ODE — Phosphosite Residuals (neural − observed)", fontsize=12)
             ax.set_xlabel("Time (min)")
             ax.set_ylabel("Phosphosite")
-            _plt.tight_layout()
+            plt.tight_layout()
             _path = os.path.join(outdir, "neural_residuals_heatmap_phospho.png")
             fig.savefig(_path, dpi=300)
-            _plt.close(fig)
+            plt.close(fig)
             logger.info("[neural_ode] Saved %s", _path)
     except Exception as exc:
         logger.warning("[neural_ode] Phosphosite residual heatmap skipped: %s", exc)
@@ -2462,9 +2640,9 @@ def plot_neural_residuals(
     try:
         df_valid = df.dropna(subset=["residual_neural", "residual_mechanistic"])
         if len(df_valid) >= 3:
-            fig, ax = _plt.subplots(figsize=(8, 8))
+            fig, ax = plt.subplots(figsize=(8, 8))
             entity_types = df_valid["entity_type"].unique()
-            colors = _plt.cm.tab10(np.arange(len(entity_types)) / len(entity_types))
+            colors = plt.cm.tab10(np.arange(len(entity_types)) / len(entity_types))
             for et, col in zip(entity_types, colors):
                 sub = df_valid[df_valid["entity_type"] == et]
                 ax.scatter(sub["residual_mechanistic"], sub["residual_neural"],
@@ -2480,11 +2658,10 @@ def plot_neural_residuals(
             ax.set_title("Neural ODE vs Mechanistic Residuals")
             ax.legend(fontsize=9)
             ax.grid(alpha=0.25)
-            _plt.tight_layout()
+            plt.tight_layout()
             _path = os.path.join(outdir, "neural_vs_mech_residuals.png")
             fig.savefig(_path, dpi=300)
-            _plt.close(fig)
+            plt.close(fig)
             logger.info("[neural_ode] Saved %s", _path)
     except Exception as exc:
         logger.warning("[neural_ode] Neural vs mech residuals scatter skipped: %s", exc)
-

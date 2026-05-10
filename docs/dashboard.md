@@ -36,7 +36,7 @@ The dashboard reads the following files from the results directory:
 |-------------------------|----------|
 | `fitted_params.npz`     | Yes      |
 | `preopt_snapshot/`      | Yes      |
-| `fit_timeseries.tsv`    | Yes      |
+| `protein_fit_timeseries.tsv`    | Yes      |
 | `mrna_fit_timeseries.tsv` | No (optional) |
 | `knockouts/`            | No (optional) |
 

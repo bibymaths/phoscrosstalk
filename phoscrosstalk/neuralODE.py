@@ -1,5 +1,4 @@
 """
-neuralODE.py
 Post-fit neural latent-rate refinement for the phospho-network model.
 
 Implements a Mechanistic Graph-Constrained Latent Neural ODE.
@@ -22,11 +21,6 @@ Two training modes are supported:
 
 The mechanistic equations are unchanged.  The learned neural rate functions only
 replace the derived latent rate closures k_act_fn and s_prod_fn inside the ODE.
-
-Public API
-----------
-run_neural_latent_rate_refinement(...)
-    Main entry point called by main.py after the mechanistic fit.
 """
 
 from __future__ import annotations
@@ -71,17 +65,17 @@ _neural_log_every: int = 1
 
 
 def _append_neural_loss_history(
-    *,
-    loss: float,
-    f_phospho: float,
-    f_abund: float,
-    f_mrna: float,
-    f_k_prior: float,
-    f_s_prior: float,
-    f_theta_prior: float = 0.0,
-    f_traj_prior: float = 0.0,
-    force_print: bool = False,
-    log_to_console: bool = True,
+        *,
+        loss: float,
+        f_phospho: float,
+        f_abund: float,
+        f_mrna: float,
+        f_k_prior: float,
+        f_s_prior: float,
+        f_theta_prior: float = 0.0,
+        f_traj_prior: float = 0.0,
+        force_print: bool = False,
+        log_to_console: bool = True,
 ) -> None:
     """Append one neural training loss row and optionally print it."""
     step = len(_neural_loss_history)
@@ -115,14 +109,14 @@ def _append_neural_loss_history(
 
 
 def _log_neural_loss_step(
-    loss,
-    f_phospho,
-    f_abund,
-    f_mrna,
-    f_k_prior,
-    f_s_prior,
-    f_theta_prior=0.0,
-    f_traj_prior=0.0,
+        loss,
+        f_phospho,
+        f_abund,
+        f_mrna,
+        f_k_prior,
+        f_s_prior,
+        f_theta_prior=0.0,
+        f_traj_prior=0.0,
 ):
     """
     Plain Python callback executable from jax.debug.callback.
@@ -167,12 +161,12 @@ class LatentRateMLP(eqx.Module):
     out_scale: jax.Array
 
     def __init__(
-        self,
-        in_size: int,
-        K: int,
-        width: int,
-        depth: int,
-        key: jax.Array,
+            self,
+            in_size: int,
+            K: int,
+            width: int,
+            depth: int,
+            key: jax.Array,
     ) -> None:
         self.mlp = eqx.nn.MLP(
             in_size=in_size,
@@ -265,12 +259,12 @@ class JointNeuralMechanisticModel(eqx.Module):
     theta: jax.Array
 
     def __init__(
-        self,
-        K: int,
-        width: int,
-        depth: int,
-        theta_best: np.ndarray,
-        key: jax.Array,
+            self,
+            K: int,
+            width: int,
+            depth: int,
+            theta_best: np.ndarray,
+            key: jax.Array,
     ) -> None:
         self.neural = NeuralRateGenerator(K=K, width=width, depth=depth, key=key)
         self.theta = jnp.asarray(theta_best, dtype=jnp.float64)
@@ -293,8 +287,8 @@ def _evaluate_mechanistic_rate_priors(k_act_fn, s_prod_fn, t_obs: np.ndarray):
     t_obs_j = jnp.asarray(t_obs, dtype=jnp.float64)
 
     try:
-        k_vals_j = jax.vmap(k_act_fn)(t_obs_j)      # (T_obs, K)
-        s_vals_j = jax.vmap(s_prod_fn)(t_obs_j)    # (T_obs, K)
+        k_vals_j = jax.vmap(k_act_fn)(t_obs_j)  # (T_obs, K)
+        s_vals_j = jax.vmap(s_prod_fn)(t_obs_j)  # (T_obs, K)
 
         k_vals = np.asarray(k_vals_j, dtype=np.float64).T
         s_vals = np.asarray(s_vals_j, dtype=np.float64).T
@@ -315,13 +309,14 @@ def _evaluate_mechanistic_rate_priors(k_act_fn, s_prod_fn, t_obs: np.ndarray):
         )
         return k_vals, s_vals, "python-loop"
 
+
 def _eval_neural_rates_on_observed_grid(
-    model,
-    *,
-    t_obs_j: jax.Array,
-    t_max_j: jax.Array,
-    k_act_init_obs_j: jax.Array,
-    s_prod_init_obs_j: jax.Array,
+        model,
+        *,
+        t_obs_j: jax.Array,
+        t_max_j: jax.Array,
+        k_act_init_obs_j: jax.Array,
+        s_prod_init_obs_j: jax.Array,
 ):
     """
     Evaluate neural k_hat/s_hat on all observed times using vmap.
@@ -341,6 +336,7 @@ def _eval_neural_rates_on_observed_grid(
 
     k_hats_obs, s_hats_obs = jax.vmap(model)(features_obs)
     return k_hats_obs.T, s_hats_obs.T
+
 
 def _make_optax_optimizer(neural_cfg):
     """Build an Optax optimizer from neural_cfg."""
@@ -483,6 +479,7 @@ def _train_with_optax(*, loss_fn, params, neural_cfg):
     elapsed = time.perf_counter() - t0
     return params, float(last_loss), last_aux, elapsed, time_history
 
+
 def _train_with_optax_scan(*, loss_fn, params, neural_cfg):
     """
     Train params with Optax using a single JIT-compiled lax.scan loop.
@@ -582,6 +579,7 @@ def _train_with_optax_scan(*, loss_fn, params, neural_cfg):
     final_aux = tuple(jnp.asarray(x, dtype=jnp.float64) for x in logs_np[-1, 1:])
 
     return params, final_loss, final_aux, elapsed
+
 
 def _block_until_ready_tree(tree) -> None:
     """Synchronise a JAX pytree."""
@@ -708,61 +706,63 @@ def _train_with_lbfgs_polish(*, loss_fn, params, neural_cfg):
 
     total_elapsed = time.perf_counter() - t0
     return params, float(last_loss), last_aux, total_elapsed, last_result
+
+
 # ---------------------------------------------------------------------------
 # Neural loss function builders
 # ---------------------------------------------------------------------------
 
 
 def _make_neural_loss_fn(
-    *,
-    K: int,
-    M: int,
-    N: int,
-    mechanism: str,
-    theta_j: jax.Array,
-    y0_j: jax.Array,
-    t0_val: float,
-    t1_val: float,
-    t_eval_j: jax.Array,
-    prot_idx_solver_j: jax.Array,
-    prev_site_idx_j: jax.Array,
-    Cg_j: jax.Array,
-    Cl_j: jax.Array,
-    K_sk_j: jax.Array,
-    R_j: jax.Array,
-    La_j: jax.Array,
-    spi_j: jax.Array,
-    k2p_j: jax.Array,
-    rmp_j: jax.Array,
-    rmk_j: jax.Array,
-    P_data_j: jax.Array,
-    A_scaled_j: jax.Array,
-    prot_idx_j: jax.Array,
-    W_data_j: jax.Array,
-    W_prot_j: jax.Array,
-    t_obs_j: jax.Array,
-    k_act_init_obs_j: jax.Array,
-    s_prod_init_obs_j: jax.Array,
-    t_max: float,
-    has_mrna: bool,
-    rna_j: Optional[jax.Array],
-    mrna_idx_j: Optional[jax.Array],
-    rna_prot_idx_j: Optional[jax.Array],
-    W_rna_j: Optional[jax.Array],
-    w_phospho: float,
-    w_abundance: float,
-    w_mrna: float,
-    prior_weight_k_act: float,
-    prior_weight_s_prod: float,
-    rtol: float,
-    atol: float,
-    dt0: float,
-    max_steps: int,
-    rna_relax: float,
-    abundance_max: float,
-    k_act_init_fn,
-    s_prod_init_fn,
-    static,
+        *,
+        K: int,
+        M: int,
+        N: int,
+        mechanism: str,
+        theta_j: jax.Array,
+        y0_j: jax.Array,
+        t0_val: float,
+        t1_val: float,
+        t_eval_j: jax.Array,
+        prot_idx_solver_j: jax.Array,
+        prev_site_idx_j: jax.Array,
+        Cg_j: jax.Array,
+        Cl_j: jax.Array,
+        K_sk_j: jax.Array,
+        R_j: jax.Array,
+        La_j: jax.Array,
+        spi_j: jax.Array,
+        k2p_j: jax.Array,
+        rmp_j: jax.Array,
+        rmk_j: jax.Array,
+        P_data_j: jax.Array,
+        A_scaled_j: jax.Array,
+        prot_idx_j: jax.Array,
+        W_data_j: jax.Array,
+        W_prot_j: jax.Array,
+        t_obs_j: jax.Array,
+        k_act_init_obs_j: jax.Array,
+        s_prod_init_obs_j: jax.Array,
+        t_max: float,
+        has_mrna: bool,
+        rna_j: Optional[jax.Array],
+        mrna_idx_j: Optional[jax.Array],
+        rna_prot_idx_j: Optional[jax.Array],
+        W_rna_j: Optional[jax.Array],
+        w_phospho: float,
+        w_abundance: float,
+        w_mrna: float,
+        prior_weight_k_act: float,
+        prior_weight_s_prod: float,
+        rtol: float,
+        atol: float,
+        dt0: float,
+        max_steps: int,
+        rna_relax: float,
+        abundance_max: float,
+        k_act_init_fn,
+        s_prod_init_fn,
+        static,
 ):
     """Build the frozen-theta neural loss function."""
     n_p = max(1, int(P_data_j.size))
@@ -842,12 +842,12 @@ def _make_neural_loss_fn(
 
         xs = sol.ys
         solve_ok = jnp.all(jnp.isfinite(xs)) & (
-            sol.result == diffrax.RESULTS.successful
+                sol.result == diffrax.RESULTS.successful
         )
 
         xs_prot = xs[prot_idx_solver_j, :]
-        P_sim = jnp.clip(xs_prot[:, 3 * K + M :], 0.0, None).T
-        A_sim = jnp.clip(xs_prot[:, 2 * K : 3 * K], 0.0, abundance_max).T
+        P_sim = jnp.clip(xs_prot[:, 3 * K + M:], 0.0, None).T
+        A_sim = jnp.clip(xs_prot[:, 2 * K: 3 * K], 0.0, abundance_max).T
 
         diff_p = P_sim - P_data_j
         f_phospho = jnp.sum(W_data_j * diff_p * diff_p) / jnp.asarray(
@@ -891,11 +891,11 @@ def _make_neural_loss_fn(
         f_s_prior = jnp.sum(diff_s * diff_s) / n_rates
 
         total = (
-            jnp.asarray(w_phospho, dtype=jnp.float64) * f_phospho
-            + jnp.asarray(w_abundance, dtype=jnp.float64) * f_abund
-            + jnp.asarray(w_mrna, dtype=jnp.float64) * f_mrna
-            + jnp.asarray(prior_weight_k_act, dtype=jnp.float64) * f_k_prior
-            + jnp.asarray(prior_weight_s_prod, dtype=jnp.float64) * f_s_prior
+                jnp.asarray(w_phospho, dtype=jnp.float64) * f_phospho
+                + jnp.asarray(w_abundance, dtype=jnp.float64) * f_abund
+                + jnp.asarray(w_mrna, dtype=jnp.float64) * f_mrna
+                + jnp.asarray(prior_weight_k_act, dtype=jnp.float64) * f_k_prior
+                + jnp.asarray(prior_weight_s_prod, dtype=jnp.float64) * f_s_prior
         )
 
         total = jnp.where(jnp.isfinite(total), total, penalty_j)
@@ -938,34 +938,34 @@ def _make_neural_loss_fn(
 
 
 def _solve_mechanistic_reference(
-    *,
-    K: int,
-    M: int,
-    N: int,
-    mechanism: str,
-    theta_j: jax.Array,
-    y0_j: jax.Array,
-    t0_val: float,
-    t1_val: float,
-    t_eval_j: jax.Array,
-    prev_site_idx_j: jax.Array,
-    Cg_j: jax.Array,
-    Cl_j: jax.Array,
-    K_sk_j: jax.Array,
-    R_j: jax.Array,
-    La_j: jax.Array,
-    spi_j: jax.Array,
-    k2p_j: jax.Array,
-    rmp_j: jax.Array,
-    rmk_j: jax.Array,
-    k_act_fn,
-    s_prod_fn,
-    rtol: float,
-    atol: float,
-    dt0: float,
-    max_steps: int,
-    rna_relax: float,
-    abundance_max: float,
+        *,
+        K: int,
+        M: int,
+        N: int,
+        mechanism: str,
+        theta_j: jax.Array,
+        y0_j: jax.Array,
+        t0_val: float,
+        t1_val: float,
+        t_eval_j: jax.Array,
+        prev_site_idx_j: jax.Array,
+        Cg_j: jax.Array,
+        Cl_j: jax.Array,
+        K_sk_j: jax.Array,
+        R_j: jax.Array,
+        La_j: jax.Array,
+        spi_j: jax.Array,
+        k2p_j: jax.Array,
+        rmp_j: jax.Array,
+        rmk_j: jax.Array,
+        k_act_fn,
+        s_prod_fn,
+        rtol: float,
+        atol: float,
+        dt0: float,
+        max_steps: int,
+        rna_relax: float,
+        abundance_max: float,
 ) -> jax.Array:
     """Solve the original mechanistic ODE once for trajectory regularisation."""
     rhs_mech = make_rhs(
@@ -1013,60 +1013,60 @@ def _solve_mechanistic_reference(
 
 
 def _make_joint_loss_fn(
-    *,
-    K: int,
-    M: int,
-    N: int,
-    mechanism: str,
-    theta_init_j: jax.Array,
-    theta_lower_j: Optional[jax.Array],
-    theta_upper_j: Optional[jax.Array],
-    xs_mech_ref_j: jax.Array,
-    y0_j: jax.Array,
-    t0_val: float,
-    t1_val: float,
-    t_eval_j: jax.Array,
-    prot_idx_solver_j: jax.Array,
-    prev_site_idx_j: jax.Array,
-    Cg_j: jax.Array,
-    Cl_j: jax.Array,
-    K_sk_j: jax.Array,
-    R_j: jax.Array,
-    La_j: jax.Array,
-    spi_j: jax.Array,
-    k2p_j: jax.Array,
-    rmp_j: jax.Array,
-    rmk_j: jax.Array,
-    P_data_j: jax.Array,
-    A_scaled_j: jax.Array,
-    prot_idx_j: jax.Array,
-    W_data_j: jax.Array,
-    W_prot_j: jax.Array,
-    t_obs_j: jax.Array,
-    k_act_init_obs_j: jax.Array,
-    s_prod_init_obs_j: jax.Array,
-    t_max: float,
-    has_mrna: bool,
-    rna_j: Optional[jax.Array],
-    mrna_idx_j: Optional[jax.Array],
-    rna_prot_idx_j: Optional[jax.Array],
-    W_rna_j: Optional[jax.Array],
-    w_phospho: float,
-    w_abundance: float,
-    w_mrna: float,
-    prior_weight_k_act: float,
-    prior_weight_s_prod: float,
-    prior_weight_theta: float,
-    prior_weight_traj: float,
-    rtol: float,
-    atol: float,
-    dt0: float,
-    max_steps: int,
-    rna_relax: float,
-    abundance_max: float,
-    k_act_init_fn,
-    s_prod_init_fn,
-    static,
+        *,
+        K: int,
+        M: int,
+        N: int,
+        mechanism: str,
+        theta_init_j: jax.Array,
+        theta_lower_j: Optional[jax.Array],
+        theta_upper_j: Optional[jax.Array],
+        xs_mech_ref_j: jax.Array,
+        y0_j: jax.Array,
+        t0_val: float,
+        t1_val: float,
+        t_eval_j: jax.Array,
+        prot_idx_solver_j: jax.Array,
+        prev_site_idx_j: jax.Array,
+        Cg_j: jax.Array,
+        Cl_j: jax.Array,
+        K_sk_j: jax.Array,
+        R_j: jax.Array,
+        La_j: jax.Array,
+        spi_j: jax.Array,
+        k2p_j: jax.Array,
+        rmp_j: jax.Array,
+        rmk_j: jax.Array,
+        P_data_j: jax.Array,
+        A_scaled_j: jax.Array,
+        prot_idx_j: jax.Array,
+        W_data_j: jax.Array,
+        W_prot_j: jax.Array,
+        t_obs_j: jax.Array,
+        k_act_init_obs_j: jax.Array,
+        s_prod_init_obs_j: jax.Array,
+        t_max: float,
+        has_mrna: bool,
+        rna_j: Optional[jax.Array],
+        mrna_idx_j: Optional[jax.Array],
+        rna_prot_idx_j: Optional[jax.Array],
+        W_rna_j: Optional[jax.Array],
+        w_phospho: float,
+        w_abundance: float,
+        w_mrna: float,
+        prior_weight_k_act: float,
+        prior_weight_s_prod: float,
+        prior_weight_theta: float,
+        prior_weight_traj: float,
+        rtol: float,
+        atol: float,
+        dt0: float,
+        max_steps: int,
+        rna_relax: float,
+        abundance_max: float,
+        k_act_init_fn,
+        s_prod_init_fn,
+        static,
 ):
     """Build the joint neural + theta loss function."""
     n_p = max(1, int(P_data_j.size))
@@ -1155,12 +1155,12 @@ def _make_joint_loss_fn(
 
         xs = sol.ys
         solve_ok = jnp.all(jnp.isfinite(xs)) & (
-            sol.result == diffrax.RESULTS.successful
+                sol.result == diffrax.RESULTS.successful
         )
 
         xs_prot = xs[prot_idx_solver_j, :]
-        P_sim = jnp.clip(xs_prot[:, 3 * K + M :], 0.0, None).T
-        A_sim = jnp.clip(xs_prot[:, 2 * K : 3 * K], 0.0, abundance_max).T
+        P_sim = jnp.clip(xs_prot[:, 3 * K + M:], 0.0, None).T
+        A_sim = jnp.clip(xs_prot[:, 2 * K: 3 * K], 0.0, abundance_max).T
 
         diff_p = P_sim - P_data_j
         f_phospho = jnp.sum(W_data_j * diff_p * diff_p) / jnp.asarray(
@@ -1214,13 +1214,13 @@ def _make_joint_loss_fn(
         )
 
         total = (
-            jnp.asarray(w_phospho, dtype=jnp.float64) * f_phospho
-            + jnp.asarray(w_abundance, dtype=jnp.float64) * f_abund
-            + jnp.asarray(w_mrna, dtype=jnp.float64) * f_mrna
-            + jnp.asarray(prior_weight_k_act, dtype=jnp.float64) * f_k_prior
-            + jnp.asarray(prior_weight_s_prod, dtype=jnp.float64) * f_s_prior
-            + jnp.asarray(prior_weight_theta, dtype=jnp.float64) * f_theta_prior
-            + jnp.asarray(prior_weight_traj, dtype=jnp.float64) * f_traj_prior
+                jnp.asarray(w_phospho, dtype=jnp.float64) * f_phospho
+                + jnp.asarray(w_abundance, dtype=jnp.float64) * f_abund
+                + jnp.asarray(w_mrna, dtype=jnp.float64) * f_mrna
+                + jnp.asarray(prior_weight_k_act, dtype=jnp.float64) * f_k_prior
+                + jnp.asarray(prior_weight_s_prod, dtype=jnp.float64) * f_s_prior
+                + jnp.asarray(prior_weight_theta, dtype=jnp.float64) * f_theta_prior
+                + jnp.asarray(prior_weight_traj, dtype=jnp.float64) * f_traj_prior
         )
 
         total = jnp.where(jnp.isfinite(total), total, penalty_j)
@@ -1256,35 +1256,35 @@ def _make_joint_loss_fn(
 
 
 def _neural_simulate_dense(
-    *,
-    model,
-    K: int,
-    M: int,
-    N: int,
-    mechanism: str,
-    theta_j: jax.Array,
-    y0_j: jax.Array,
-    t0_val: float,
-    t_dense: np.ndarray,
-    prev_site_idx_j: jax.Array,
-    Cg_j: jax.Array,
-    Cl_j: jax.Array,
-    K_sk_j: jax.Array,
-    R_j: jax.Array,
-    La_j: jax.Array,
-    spi_j: jax.Array,
-    k2p_j: jax.Array,
-    rmp_j: jax.Array,
-    rmk_j: jax.Array,
-    t_max: float,
-    k_act_init_fn,
-    s_prod_init_fn,
-    rtol: float,
-    atol: float,
-    dt0: float,
-    max_steps: int,
-    rna_relax: float,
-    abundance_max: float,
+        *,
+        model,
+        K: int,
+        M: int,
+        N: int,
+        mechanism: str,
+        theta_j: jax.Array,
+        y0_j: jax.Array,
+        t0_val: float,
+        t_dense: np.ndarray,
+        prev_site_idx_j: jax.Array,
+        Cg_j: jax.Array,
+        Cl_j: jax.Array,
+        K_sk_j: jax.Array,
+        R_j: jax.Array,
+        La_j: jax.Array,
+        spi_j: jax.Array,
+        k2p_j: jax.Array,
+        rmp_j: jax.Array,
+        rmk_j: jax.Array,
+        t_max: float,
+        k_act_init_fn,
+        s_prod_init_fn,
+        rtol: float,
+        atol: float,
+        dt0: float,
+        max_steps: int,
+        rna_relax: float,
+        abundance_max: float,
 ) -> dict:
     """Run the neural ODE over a time grid and return solution arrays."""
     t_max_j = jnp.asarray(t_max, dtype=jnp.float64)
@@ -1353,8 +1353,8 @@ def _neural_simulate_dense(
 
     xs = np.asarray(sol.ys)
     R_sim = np.clip(xs[:, :K].T, 0.0, None)
-    P_sim = np.clip(xs[:, 3 * K + M :].T, 0.0, None)
-    A_sim = np.clip(xs[:, 2 * K : 3 * K].T, 0.0, abundance_max)
+    P_sim = np.clip(xs[:, 3 * K + M:].T, 0.0, None)
+    A_sim = np.clip(xs[:, 2 * K: 3 * K].T, 0.0, abundance_max)
     return {"P_sim": P_sim, "A_sim": A_sim, "R_sim": R_sim, "xs": xs}
 
 
@@ -1364,23 +1364,23 @@ def _neural_simulate_dense(
 
 
 def _save_neural_per_protein_plots(
-    outdir,
-    ts,
-    ys,
-    proteins,
-    sites,
-    P_scaled,
-    A_scaled,
-    prot_idx_for_A,
-    t_protein,
-    t_rna,
-    rna_obs_matched,
-    rna_model_prot_idx,
-    k_act_init_vals,
-    s_prod_init_vals,
-    k_hats_obs,
-    s_hats_obs,
-    _plt,
+        outdir,
+        ts,
+        ys,
+        proteins,
+        sites,
+        P_scaled,
+        A_scaled,
+        prot_idx_for_A,
+        t_protein,
+        t_rna,
+        rna_obs_matched,
+        rna_model_prot_idx,
+        k_act_init_vals,
+        s_prod_init_vals,
+        k_hats_obs,
+        s_hats_obs,
+        _plt,
 ):
     """Generate per-protein horizontal layout PNG files for the neural ODE outputs.
 
@@ -1427,8 +1427,8 @@ def _save_neural_per_protein_plots(
 
     # Determine whether k_act / s_prod bottom strip is available.
     has_rate_strip = (
-        (k_act_init_vals is not None and k_hats_obs is not None)
-        or (s_prod_init_vals is not None and s_hats_obs is not None)
+            (k_act_init_vals is not None and k_hats_obs is not None)
+            or (s_prod_init_vals is not None and s_hats_obs is not None)
     )
     # Determine time axis for rate strip: use t_rna for k_act, t_prot for s_prod.
     t_kact_strip = t_rna_arr if t_rna_arr is not None else t_prot
@@ -1456,10 +1456,10 @@ def _save_neural_per_protein_plots(
             prot_to_rna_k[int(p_idx)] = k
 
     has_rna_global = (
-        rna_obs_matched is not None
-        and t_rna is not None
-        and len(t_rna) > 0
-        and len(prot_to_rna_k) > 0
+            rna_obs_matched is not None
+            and t_rna is not None
+            and len(t_rna) > 0
+            and len(prot_to_rna_k) > 0
     )
 
     cmap10 = _plt.cm.tab10
@@ -1603,26 +1603,26 @@ def _save_neural_per_protein_plots(
 
 
 def save_neural_ode_plots(
-    outdir: str,
-    ts: np.ndarray,
-    ys: dict,
-    model,
-    loss_history: list,
-    time_history: list,
-    *,
-    proteins: list | None = None,
-    sites: list | None = None,
-    P_scaled: np.ndarray | None = None,
-    A_scaled: np.ndarray | None = None,
-    prot_idx_for_A: np.ndarray | None = None,
-    t_protein: np.ndarray | None = None,
-    t_rna: np.ndarray | None = None,
-    rna_obs_matched: np.ndarray | None = None,
-    rna_model_prot_idx: np.ndarray | None = None,
-    k_act_init_vals: np.ndarray | None = None,
-    s_prod_init_vals: np.ndarray | None = None,
-    k_hats_obs: np.ndarray | None = None,
-    s_hats_obs: np.ndarray | None = None,
+        outdir: str,
+        ts: np.ndarray,
+        ys: dict,
+        model,
+        loss_history: list,
+        time_history: list,
+        *,
+        proteins: list | None = None,
+        sites: list | None = None,
+        P_scaled: np.ndarray | None = None,
+        A_scaled: np.ndarray | None = None,
+        prot_idx_for_A: np.ndarray | None = None,
+        t_protein: np.ndarray | None = None,
+        t_rna: np.ndarray | None = None,
+        rna_obs_matched: np.ndarray | None = None,
+        rna_model_prot_idx: np.ndarray | None = None,
+        k_act_init_vals: np.ndarray | None = None,
+        s_prod_init_vals: np.ndarray | None = None,
+        k_hats_obs: np.ndarray | None = None,
+        s_hats_obs: np.ndarray | None = None,
 ) -> None:
     """Save diagnostic visualisation plots from a neural ODE training run.
 
@@ -1757,10 +1757,10 @@ def save_neural_ode_plots(
     # ------------------------------------------------------------------ #
     try:
         if (
-            hasattr(model, "latent_activations")
-            and k_act_init_vals is not None
-            and s_prod_init_vals is not None
-            and t_protein is not None
+                hasattr(model, "latent_activations")
+                and k_act_init_vals is not None
+                and s_prod_init_vals is not None
+                and t_protein is not None
         ):
             t_arr = np.asarray(t_protein)
             T_obs = t_arr.shape[0]
@@ -1844,13 +1844,13 @@ _NEURAL_ODE_BUNDLE_SUBDIR = "neural_ode_bundle"
 
 
 def save_neural_ode_bundle(
-    neural_outdir: str,
-    *,
-    neural_model,
-    theta_refined: np.ndarray | None,
-    neural_cfg=None,
-    K: int,
-    learn_theta: bool = False,
+        neural_outdir: str,
+        *,
+        neural_model,
+        theta_refined: np.ndarray | None,
+        neural_cfg=None,
+        K: int,
+        learn_theta: bool = False,
 ) -> str:
     """Save the trained neuralODE model as a self-contained, reproducible bundle.
 
@@ -1897,7 +1897,7 @@ def save_neural_ode_bundle(
         )
 
     _width = int(getattr(neural_cfg, "width", 32)) if neural_cfg is not None else 32
-    _depth = int(getattr(neural_cfg, "depth", 2))   if neural_cfg is not None else 2
+    _depth = int(getattr(neural_cfg, "depth", 2)) if neural_cfg is not None else 2
     _in_size = 1 + 2 * K  # fixed by NeuralRateGenerator architecture
 
     bundle_dir = os.path.join(neural_outdir, _NEURAL_ODE_BUNDLE_SUBDIR)
@@ -1950,7 +1950,7 @@ def save_neural_ode_bundle(
 
 
 def load_neural_ode_bundle(
-    bundle_dir: str,
+        bundle_dir: str,
 ) -> tuple:
     """Load a neuralODE model bundle saved by :func:`save_neural_ode_bundle`.
 
@@ -1986,7 +1986,7 @@ def load_neural_ode_bundle(
     with open(meta_path) as fh:
         meta = json.load(fh)
 
-    _K     = int(meta["K"])
+    _K = int(meta["K"])
     _width = int(meta.get("width", 32))
     _depth = int(meta.get("depth", 2))
 
@@ -2028,32 +2028,32 @@ def load_neural_ode_bundle(
 
 
 def run_neural_latent_rate_refinement(
-    *,
-    dims: ModelDims | None = None,
-    problem,
-    theta_best: np.ndarray,
-    k_act_fn,
-    s_prod_fn,
-    t: np.ndarray,
-    P_scaled: np.ndarray,
-    A_scaled: np.ndarray,
-    prot_idx_for_A: np.ndarray,
-    W_data: np.ndarray,
-    W_data_prot: np.ndarray,
-    proteins: list,
-    sites: list,
-    kinases: list,
-    t_rna: Optional[np.ndarray],
-    rna_obs_matched: Optional[np.ndarray],
-    rna_model_prot_idx: Optional[np.ndarray],
-    W_data_mrna_matched: Optional[np.ndarray],
-    outdir: str,
-    neural_cfg,
-    mechanism: str = "dist",
-    rna_relax: float = 0.1,
-    abundance_max: float = 5.0,
-    R_data0: Optional[np.ndarray] = None,
-    jaxpr_out_dir=None,
+        *,
+        dims: ModelDims | None = None,
+        problem,
+        theta_best: np.ndarray,
+        k_act_fn,
+        s_prod_fn,
+        t: np.ndarray,
+        P_scaled: np.ndarray,
+        A_scaled: np.ndarray,
+        prot_idx_for_A: np.ndarray,
+        W_data: np.ndarray,
+        W_data_prot: np.ndarray,
+        proteins: list,
+        sites: list,
+        kinases: list,
+        t_rna: Optional[np.ndarray],
+        rna_obs_matched: Optional[np.ndarray],
+        rna_model_prot_idx: Optional[np.ndarray],
+        W_data_mrna_matched: Optional[np.ndarray],
+        outdir: str,
+        neural_cfg,
+        mechanism: str = "dist",
+        rna_relax: float = 0.1,
+        abundance_max: float = 5.0,
+        R_data0: Optional[np.ndarray] = None,
+        jaxpr_out_dir=None,
 ) -> tuple:
     """Run post-fit neural latent-rate refinement.
 
@@ -2131,10 +2131,10 @@ def run_neural_latent_rate_refinement(
         x0[:K] = 1.0
 
     a0 = np.nan_to_num(A0_full[:, 0], nan=1.0, posinf=5.0, neginf=0.0)
-    x0[2 * K : 3 * K] = np.clip(a0, 0.0, abundance_max)
+    x0[2 * K: 3 * K] = np.clip(a0, 0.0, abundance_max)
 
     p0 = np.nan_to_num(P_scaled[:, 0], nan=0.0, posinf=10.0, neginf=0.0)
-    x0[3 * K + M :] = np.clip(p0, 0.0, None)
+    x0[3 * K + M:] = np.clip(p0, 0.0, None)
 
     # ------------------------------------------------------------------
     # 3. Build JAX arrays
@@ -2193,12 +2193,12 @@ def run_neural_latent_rate_refinement(
     s_prod_init_obs_j = jnp.asarray(s_prod_init_vals, dtype=jnp.float64)
 
     has_mrna = (
-        t_rna is not None
-        and rna_obs_matched is not None
-        and len(t_rna) > 0
-        and mrna_time_idx is not None
-        and rna_model_prot_idx is not None
-        and len(rna_model_prot_idx) > 0
+            t_rna is not None
+            and rna_obs_matched is not None
+            and len(t_rna) > 0
+            and mrna_time_idx is not None
+            and rna_model_prot_idx is not None
+            and len(rna_model_prot_idx) > 0
     )
 
     if has_mrna:
@@ -2600,7 +2600,7 @@ def run_neural_latent_rate_refinement(
     else:
         t_kact = t_obs
         k_act_mech_rna = k_act_init_vals  # (K, T_obs)
-        k_hats_rna = k_hats_obs          # (T_obs, K)
+        k_hats_rna = k_hats_obs  # (T_obs, K)
 
     rate_rows = []
     for ti_idx, t_val in enumerate(t_kact):
@@ -2650,6 +2650,10 @@ def run_neural_latent_rate_refinement(
         k_act_neural=k_hats_rna.T,
         s_prod_neural=s_hats_obs.T,
     )
+
+    # RNA-grid simulation cache for return values / plotting.
+    # P_sim and A_sim live on t_obs; R_sim must live on t_rna.
+    R_sim_rna_for_return = None
 
     # ------------------------------------------------------------------
     # 11. Neural fit timeseries at observed time points
@@ -2720,6 +2724,7 @@ def run_neural_latent_rate_refinement(
             )
 
     # mRNA rows: simulate at t_rna and include observed mRNA values.
+    # mRNA rows: simulate at t_rna and include observed mRNA values.
     if has_mrna and t_rna is not None and len(t_rna) > 0:
         t_rna_arr = np.asarray(t_rna, dtype=np.float64)
         try:
@@ -2753,12 +2758,20 @@ def run_neural_latent_rate_refinement(
                 rna_relax=float(rna_relax),
                 abundance_max=float(abundance_max),
             )
+
             R_sim_rna = sim_rna["R_sim"]  # (K, T_rna)
+            R_sim_rna_for_return = np.asarray(R_sim_rna, dtype=np.float64)
+
             rna_obs_arr = np.asarray(rna_obs_matched, dtype=np.float64)  # (n_matched, T_rna)
+
             for gene_idx, p_idx in enumerate(rna_model_prot_idx):
                 prot_name = proteins[int(p_idx)]
                 for ti_idx, t_val in enumerate(t_rna_arr):
-                    obs_rna = float(rna_obs_arr[gene_idx, ti_idx]) if ti_idx < rna_obs_arr.shape[1] else float("nan")
+                    obs_rna = (
+                        float(rna_obs_arr[gene_idx, ti_idx])
+                        if ti_idx < rna_obs_arr.shape[1]
+                        else float("nan")
+                    )
                     ts_rows.append(
                         {
                             "time": float(t_val),
@@ -2768,9 +2781,12 @@ def run_neural_latent_rate_refinement(
                             "value_observed": obs_rna,
                         }
                     )
-        except Exception as exc:
-            logger.warning("[neural_ode] mRNA rows in neural_fit_timeseries.tsv skipped: %s", exc)
 
+        except Exception as exc:
+            logger.warning(
+                "[neural_ode] mRNA rows in neural_fit_timeseries.tsv skipped: %s",
+                exc,
+            )
     df_ts = pd.DataFrame(ts_rows)
     ts_path = os.path.join(neural_outdir, "neural_fit_timeseries.tsv")
     df_ts.to_csv(ts_path, sep="\t", index=False)
@@ -2972,12 +2988,37 @@ def run_neural_latent_rate_refinement(
         neural_outdir,
     )
 
-    # Build return values: ts (time axis), ys (dense sim at observed times),
-    # trained model, loss history, and per-step time history.
+    # ------------------------------------------------------------------
+    # Build return values for plotting
+    # ------------------------------------------------------------------
+    # P_sim and A_sim are evaluated on t_obs / protein-phosphosite grid.
+    # R_sim must be evaluated on t_rna / RNA grid when RNA data exists.
+    # Do not return sim_obs["R_sim"] when t_rna is present, because sim_obs was
+    # generated on t_obs and will cause x/y shape mismatch in RNA plots.
     _ts = t_obs
-    _ys = sim_obs  # dict with P_sim, A_sim evaluated at t_obs
+    _ys = dict(sim_obs)
+
+    if has_mrna and t_rna is not None and len(t_rna) > 0:
+        if R_sim_rna_for_return is not None:
+            _ys["R_sim"] = R_sim_rna_for_return
+            _ys["R_time"] = np.asarray(t_rna, dtype=np.float64)
+
+            logger.info(
+                "[neural_ode] Returning R_sim on RNA grid: R_sim=%s, t_rna=%s",
+                _ys["R_sim"].shape,
+                _ys["R_time"].shape,
+            )
+        else:
+            # RNA exists, but RNA-grid simulation failed. Remove protein-grid R_sim
+            # so downstream plots do not accidentally use the wrong time axis.
+            _ys.pop("R_sim", None)
+            _ys.pop("R_time", None)
+    else:
+        # No RNA observations: no RNA plot should be generated.
+        _ys.pop("R_sim", None)
+        _ys.pop("R_time", None)
+
     _loss_history = [float(row["neural_loss_total"]) for row in _neural_loss_history]
-    # _optax_time_history is always assigned in every branch of the training block
     _time_history = _optax_time_history  # noqa: F821
 
     return _ts, _ys, model_opt, _loss_history, _time_history

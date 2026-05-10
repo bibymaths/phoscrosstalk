@@ -125,12 +125,12 @@
 data              = "data_timeseries/input1.csv"
 ptm_intra         = "data_curated/processed/ptm_intra.db"
 ptm_inter         = "data_curated/processed/ptm_inter.db"
-output_dir        = "test_rand"
+output_dir        = "results_rand__EGFR_MET_ERBB2"
 
 crosstalk_tsv     = ""
 rna_data          = "data_timeseries/input3.csv"
-tf_net            = "data_interactions/tf_mrna.csv"
-kinase_tsv        = "data_interactions/kinase_sites.tsv"
+tf_net            = "data_subset/subnetwork_EGFR_MET_ERBB2/tf_mrna_subset.csv"
+kinase_tsv        = "data_subset/subnetwork_EGFR_MET_ERBB2/kinase_sites_subset.tsv"
 kea_ks_table      = ""
 unified_graph_pkl = "data_curated/processed/unified_kinase_graph.gpickle"
 
@@ -171,12 +171,12 @@ unified_graph_pkl = "data_curated/processed/unified_kinase_graph.gpickle"
 [model]
 mechanism               = "rand"      # options: "dist" | "seq" | "rand"
 scale_mode              = "none"      # options: "none" | "minmax" | "log-minmax"
-length_scale            = 25.0
+length_scale            = 50.0
 weight_scheme           = "uniform"   # options: uniform, early_emphasis, early_emphasis_moderate, late_emphasis, flat_no_noise
 
-receptors               = ["ABL2", "CLK3", "EGFR", "EPHA2", "ERBB2", "GRK2", "GRK5", "GSK3A", "LYN", "MAP2K2", "MAPK1", "MAPK3", "MET", "ROCK1"]
-receptor_kinases        = ["ABL2", "CDK1", "CDK2", "CDK4", "CDK5", "CLK3", "DAPK3", "EGFR", "EPHA2", "ERBB2", "FYN", "GRK2", "GRK5", "GSK3A", "GSK3B", "LYN", "MAP2K1", "MAP2K2", "MAP2K3", "MAP2K4", "MAPK1", "MAPK3", "MAPK8", "MET", "PAK2", "ROCK1", "TTK"]
-include_tfs_as_proteins = false
+receptors               = ["EGFR", "MET"]
+receptor_kinases        = ["EGFR", "ERBB2", "MET"]
+include_tfs_as_proteins = true
 
 
 # =============================================================================
@@ -661,8 +661,17 @@ interpolation    = "piecewise_constant"   # options: "piecewise_constant" | "lin
 # explicit solvers struggle.
 # =============================================================================
 [derived_rates]
-s_prod_fn = "softplus"   # options: "softplus" | "linear"
-rna_relax = 0.1
+k_act_fn = "bounded"
+k_act_basal = 1.0
+k_act_scale = 2.0
+
+s_prod_fn = "bounded"
+s_prod_basal = 0.1
+s_prod_scale = 2.0
+
+preprocess = "none"  # options: "none" | "exponential_smoothing"
+k_act_tau = 60.0
+s_prod_tau = 15.0
 
 
 # =============================================================================
@@ -885,23 +894,23 @@ event_atol  = 1e-8   # null → use [steadystate] atol
 #
 # dense_output:
 #   true  – run an additional dense-grid forward simulation after fitting.
-#   false – skip dense output (saves time; fit_timeseries_dense.tsv not written).
+#   false – skip dense output (saves time; protein_fit_timeseries_dense.tsv not written).
 #
 # dense_n_points:
 #   Number of uniformly-spaced time points in [0, t_max_observed].
 #   Increase for smoother plots; 200 is a good default.
 #
 # dense_interpolation:
-#   Label written to the interpolation_method column in fit_timeseries_dense.tsv.
+#   Label written to the interpolation_method column in protein_fit_timeseries_dense.tsv.
 #   Used for provenance / filtering in downstream analysis.
 #
 # save_dense:
-#   true  – write fit_timeseries_dense.tsv to the output directory.
+#   true  – write protein_fit_timeseries_dense.tsv to the output directory.
 #   false – skip the file write even if dense simulation ran successfully.
 # =============================================================================
 [simulation]
 dense_output        = true
-dense_n_points      = 500
+dense_n_points      = 200
 dense_interpolation = "diffrax_dense"
 save_dense          = true
 
@@ -911,7 +920,7 @@ save_dense          = true
 # =============================================================================
 #
 # This section controls interpolated observed-data curves written to
-# fit_timeseries_dense.tsv with series_type = "observed_interpolated_dense".
+# protein_fit_timeseries_dense.tsv with series_type = "observed_interpolated_dense".
 # It is NOT used in the loss function and does NOT expand training targets.
 # The original sparse observed arrays in the loss are never modified.
 #
@@ -1001,6 +1010,7 @@ width                   = 64
 depth                   = 2
 steps                   = 200
 learning_rate           = 1e-3
+learn_theta             = true
 
 prior_weight_k_act      = 1.0
 prior_weight_s_prod     = 1.0
@@ -1008,7 +1018,7 @@ data_weight_phospho     = 1.0
 data_weight_abundance   = 1.0
 data_weight_mrna        = 1.0
 
-seed                    = 0
+seed                    = 42
 
 rtol                    = 1e-4
 atol                    = 1e-6
@@ -1102,8 +1112,8 @@ use_max_machine_threads = true
 
 
 [debug]
-save_jaxpr_reports = false
-
+save_jaxpr_reports = true
+run_bundle_analysis = true
 
 # =============================================================================
 # [posterior] – MCMC posterior inference using BlackJax NUTS (optional)
@@ -1137,7 +1147,7 @@ save_jaxpr_reports = false
 #   Observation noise standard deviation for the Gaussian likelihood.
 # =============================================================================
 [posterior]
-enabled                 = false
+enabled                 = true
 num_warmup              = 500
 num_samples             = 1000
 step_size               = 1e-3

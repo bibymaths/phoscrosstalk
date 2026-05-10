@@ -1,5 +1,4 @@
 """
-knockouts.py
 Systematic in-silico knockout screens (Kinase, Protein, and Phosphosite KO).
 """
 
@@ -19,17 +18,17 @@ logger = get_logger()
 
 
 def run_live_knockout(
-    t_eval,
-    theta_opt,
-    ko_type,
-    ko_target,
-    proteins,
-    kinases,
-    sites,
-    snap,
-    a_proteins=None,
-    k_act_fn=None,
-    s_prod_fn=None,
+        t_eval,
+        theta_opt,
+        ko_type,
+        ko_target,
+        proteins,
+        kinases,
+        sites,
+        snap,
+        a_proteins=None,
+        k_act_fn=None,
+        s_prod_fn=None,
 ):
     """
     Run a pair of ODE simulations (WT vs. single knockout) and return results.

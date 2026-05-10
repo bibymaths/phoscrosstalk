@@ -1,17 +1,20 @@
 import tomllib
 from pathlib import Path
 from phoscrosstalk.logger import get_logger
+
 logger = get_logger()
 
 MARKER_START = "# >>> auto-generated from config.toml [paths] >>>"
-MARKER_END   = "# <<< end auto-generated <<<"
+MARKER_END = "# <<< end auto-generated <<<"
+
 
 def sync_gitignore(config_path: str = "config.toml", gitignore_path: str = ".gitignore"):
     config_path = Path(config_path)
     gitignore_path = Path(gitignore_path)
 
+    # silently skip if no config found
     if not config_path.exists():
-        return  # silently skip if no config found
+        return
 
     with open(config_path, "rb") as f:
         config = tomllib.load(f)

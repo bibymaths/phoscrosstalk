@@ -99,7 +99,7 @@ model dimensions changed between a previous run and the current one, a stale
 
 ---
 
-## Missing `data_t*`/`sim_t*` columns in `fit_timeseries.tsv`
+## Missing `data_t*`/`sim_t*` columns in `protein_fit_timeseries.tsv`
 
 **Symptom:** `plot_goodness_of_fit` raises `ValueError: No sim_t*/data_t* columns found`.
 

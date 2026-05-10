@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 
+
 @jax.jit
 def frechet_distance(true_coords, pred_coords):
     """

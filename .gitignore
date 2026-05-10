@@ -340,13 +340,16 @@ __marimo__/Write results folder path here.
 
 
 
+
+
+
 # >>> auto-generated from config.toml [paths] >>>
 data_timeseries/input1.csv
 data_curated/processed/ptm_intra.db
 data_curated/processed/ptm_inter.db
-test_rand
+results_rand__EGFR_MET_ERBB2
 data_timeseries/input3.csv
-data_interactions/tf_mrna.csv
-data_interactions/kinase_sites.tsv
+data_subset/subnetwork_EGFR_MET_ERBB2/tf_mrna_subset.csv
+data_subset/subnetwork_EGFR_MET_ERBB2/kinase_sites_subset.tsv
 data_curated/processed/unified_kinase_graph.gpickle
 # <<< end auto-generated <<<

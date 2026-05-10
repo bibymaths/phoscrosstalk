@@ -1,7 +1,19 @@
 from types import SimpleNamespace
 
+
 def namespace_to_dict(x):
-    """Convert config namespace/table objects to a plain dict."""
+    """
+    Convert config namespace/table objects to a plain dict.
+
+    Args:
+        x: The object to convert to a dictionary.
+
+    Returns:
+        dict: A dictionary representation of the input object.
+
+    Raises:
+        TypeError: If the input object is not a table/dict-like object.
+    """
     if x is None:
         return {}
     if isinstance(x, dict):

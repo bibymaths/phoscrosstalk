@@ -1,5 +1,4 @@
 """
-sensitivity.py
 Global Sensitivity Analysis (GSA) using SALib with labeled parameters
 and full perturbation data export.
 """
@@ -161,7 +160,7 @@ def _evaluate_single_sample(i, theta, problem, K, M, N, sites, proteins, kinases
         mse = 1e6  # penalty
     else:
         diff = problem.P_data - P_sim
-        mse = np.mean(diff**2)
+        mse = np.mean(diff ** 2)
 
     # C. Format Data for Table
     # NOTE: In Tidy format, we do NOT repeat parameters here.
@@ -195,7 +194,7 @@ def _evaluate_single_sample(i, theta, problem, K, M, N, sites, proteins, kinases
 
 
 def run_global_sensitivity(
-    outdir, dims: ModelDims, problem, param_bounds, proteins, kinases, sites, samples=64
+        outdir, dims: ModelDims, problem, param_bounds, proteins, kinases, sites, samples=64
 ):
     """
     Performs Sobol GSA using SALib, plots labeled sensitivities, and exports

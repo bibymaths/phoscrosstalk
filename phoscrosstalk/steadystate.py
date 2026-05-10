@@ -1,15 +1,10 @@
 """
-steadystate.py
 Long-horizon relaxation analysis for the phospho-network model.
 
 Simulates the network far beyond the observed time window under terminal/derived
 input to study convergence of the relative phosphosite signal and other bounded
 states (S, A, Kdyn).  This is NOT a strict biological steady state unless derived
 rate closures extrapolate/hold inputs beyond observed data.
-
-Public interface:
-    build_long_horizon_time_grid(...)  -- construct a piecewise time grid
-    run_steadystate_analysis(...)      -- main entry point called from main.py
 """
 
 import json
@@ -35,11 +30,11 @@ _EPS = 1e-12
 
 
 def build_long_horizon_time_grid(
-    t_end: float,
-    early_end: float,
-    n_early: int,
-    n_late: int,
-    late_grid: str = "geomspace",
+        t_end: float,
+        early_end: float,
+        n_early: int,
+        n_late: int,
+        late_grid: str = "geomspace",
 ) -> np.ndarray:
     """Build a piecewise time grid for long-horizon relaxation analysis.
 
@@ -168,7 +163,7 @@ def _save_convergence_tsv(ss_dir: str, matrices: dict) -> None:
 
 
 def _save_output_tsvs(
-    ss_dir, P_ss, A_ss, S_ss, Kdyn_ss, t_long, sites, proteins, kinases
+        ss_dir, P_ss, A_ss, S_ss, Kdyn_ss, t_long, sites, proteins, kinases
 ):
     """Save the four primary output TSVs (backward-compatible filenames).
 
@@ -197,27 +192,27 @@ def _save_failure_diagnostics(ss_dir: str, message: str) -> None:
 
 
 def _save_metadata_json(
-    ss_dir,
-    t_end,
-    early_end,
-    n_early,
-    n_late,
-    late_grid,
-    rtol,
-    atol,
-    dt0,
-    max_steps,
-    mechanism,
-    has_k_act_fn,
-    has_s_prod_fn,
-    has_R_data0,
-    use_event=False,
-    event_rtol=None,
-    event_atol=None,
-    solve_status="unknown",
-    t_final=None,
-    final_deriv_norm=None,
-    final_state_norm=None,
+        ss_dir,
+        t_end,
+        early_end,
+        n_early,
+        n_late,
+        late_grid,
+        rtol,
+        atol,
+        dt0,
+        max_steps,
+        mechanism,
+        has_k_act_fn,
+        has_s_prod_fn,
+        has_R_data0,
+        use_event=False,
+        event_rtol=None,
+        event_atol=None,
+        solve_status="unknown",
+        t_final=None,
+        final_deriv_norm=None,
+        final_state_norm=None,
 ):
     meta = {
         "horizon": {
@@ -262,32 +257,32 @@ def _save_metadata_json(
 
 
 def _run_steadystate_solve(
-    t_long: np.ndarray,
-    P_data: np.ndarray,
-    A0_initial: np.ndarray,
-    theta_opt: np.ndarray,
-    Cg,
-    Cl,
-    site_prot_idx,
-    K_site_kin,
-    R,
-    L_alpha,
-    kin_to_prot_idx,
-    receptor_mask_prot,
-    receptor_mask_kin,
-    mechanism: str,
-    rtol: float,
-    atol: float,
-    dt0: float,
-    max_steps: int,
-    k_act_fn=None,
-    s_prod_fn=None,
-    R_data0=None,
-    rna_relax: float = 0.1,
-    use_event: bool = True,
-    event_rtol: float | None = None,
-    event_atol: float | None = None,
-    dims: ModelDims | None = None,
+        t_long: np.ndarray,
+        P_data: np.ndarray,
+        A0_initial: np.ndarray,
+        theta_opt: np.ndarray,
+        Cg,
+        Cl,
+        site_prot_idx,
+        K_site_kin,
+        R,
+        L_alpha,
+        kin_to_prot_idx,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        mechanism: str,
+        rtol: float,
+        atol: float,
+        dt0: float,
+        max_steps: int,
+        k_act_fn=None,
+        s_prod_fn=None,
+        R_data0=None,
+        rna_relax: float = 0.1,
+        use_event: bool = True,
+        event_rtol: float | None = None,
+        event_atol: float | None = None,
+        dims: ModelDims | None = None,
 ):
     """Run the steady-state ODE solve with optional Diffrax steady_state_event.
 
@@ -328,11 +323,11 @@ def _run_steadystate_solve(
 
     a0 = np.nan_to_num(A0_initial[:, 0].astype(np.float64), nan=1.0, posinf=5.0, neginf=0.0)
     a0 = np.clip(a0, 0.0, 5.0)
-    x0[2 * K : 3 * K] = a0
+    x0[2 * K: 3 * K] = a0
 
     p0 = np.nan_to_num(P_data[:, 0].astype(np.float64), nan=0.0, posinf=10.0, neginf=0.0)
     p0 = np.clip(p0, 0.0, None)
-    x0[3 * K + M :] = p0
+    x0[3 * K + M:] = p0
 
     _nan_P = np.full((N_sites, T), np.nan)
     _nan_A = np.full((K, T), np.nan)
@@ -462,28 +457,28 @@ def _run_steadystate_solve(
 
 
 def run_steadystate_analysis(
-    outdir: str,
-    problem,
-    theta_opt: np.ndarray,
-    sites: list,
-    proteins: list,
-    kinases: list,
-    t_end: float = 2000.0,
-    early_end: float = 100.0,
-    n_early: int = 100,
-    n_late: int = 80,
-    late_grid: str = "geomspace",
-    rtol: float = 1e-6,
-    atol: float = 1e-8,
-    dt0: float | None = 0.1,
-    max_steps: int = 131072,
-    top_n: int = 10,
-    skip_plots_on_nonfinite: bool = True,
-    strict: bool = False,
-    use_event: bool = True,
-    event_rtol: float | None = None,
-    event_atol: float | None = None,
-    dims: ModelDims | None = None,
+        outdir: str,
+        problem,
+        theta_opt: np.ndarray,
+        sites: list,
+        proteins: list,
+        kinases: list,
+        t_end: float = 2000.0,
+        early_end: float = 100.0,
+        n_early: int = 100,
+        n_late: int = 80,
+        late_grid: str = "geomspace",
+        rtol: float = 1e-6,
+        atol: float = 1e-8,
+        dt0: float | None = 0.1,
+        max_steps: int = 131072,
+        top_n: int = 10,
+        skip_plots_on_nonfinite: bool = True,
+        strict: bool = False,
+        use_event: bool = True,
+        event_rtol: float | None = None,
+        event_atol: float | None = None,
+        dims: ModelDims | None = None,
 ) -> None:
     """Simulate the network over a long time horizon (terminal-input relaxation).
 
@@ -710,14 +705,14 @@ def run_steadystate_analysis(
         last_col = P_ss[:, -1]
         finite_last = last_col[np.isfinite(last_col)]
         if finite_last.size > 0:
-            final_state_norm = float(np.sqrt(np.mean(finite_last**2)))
+            final_state_norm = float(np.sqrt(np.mean(finite_last ** 2)))
         # Use second-to-last finite column for derivative norm proxy
         if P_ss.shape[1] >= 2:
             prev_col = P_ss[:, -2]
             finite_prev = prev_col[np.isfinite(prev_col)]
             if finite_last.size > 0 and finite_prev.size > 0 and finite_last.shape == finite_prev.shape:
                 deriv_proxy = np.abs(finite_last - finite_prev)
-                final_deriv_norm = float(np.sqrt(np.mean(deriv_proxy**2)))
+                final_deriv_norm = float(np.sqrt(np.mean(deriv_proxy ** 2)))
 
     logger.info("   -> Final solve diagnostics:")
     logger.info("      t_final = %.2f", t_final_actual)
@@ -873,11 +868,11 @@ def run_steadystate_analysis(
 
 
 def _plot_convergence_heatmap(
-    outdir: str,
-    data: np.ndarray,
-    t: np.ndarray,
-    label: str,
-    skip_on_nonfinite: bool = True,
+        outdir: str,
+        data: np.ndarray,
+        t: np.ndarray,
+        label: str,
+        skip_on_nonfinite: bool = True,
 ) -> None:
     """Heatmap of trajectories sorted by their final long-horizon value.
 
@@ -930,14 +925,14 @@ def _plot_convergence_heatmap(
 
 
 def _plot_trajectories(
-    outdir: str,
-    data: np.ndarray,
-    t: np.ndarray,
-    names: list,
-    filename_suffix: str,
-    ylabel: str = "State value",
-    top_n: int = 10,
-    skip_on_nonfinite: bool = True,
+        outdir: str,
+        data: np.ndarray,
+        t: np.ndarray,
+        names: list,
+        filename_suffix: str,
+        ylabel: str = "State value",
+        top_n: int = 10,
+        skip_on_nonfinite: bool = True,
 ) -> None:
     """Line plots for the top-N entities with the largest dynamic range.
 

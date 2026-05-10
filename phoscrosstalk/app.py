@@ -1,22 +1,14 @@
 """
-app.py
 PhosCrosstalk Streamlit/Plotly interactive dashboard.
 
 Loads one completed run from a user-provided results directory and provides
 interactive analysis from existing saved run artefacts. All plots use Plotly;
 no pre-rendered PNG files are displayed.
-
-Usage:
-    streamlit run phoscrosstalk/app.py
 """
 
 from __future__ import annotations
-
-import html as _html_lib
 import json
 import os
-import shutil
-import subprocess
 import sys
 import time
 from datetime import datetime
@@ -197,11 +189,11 @@ def _run_simulation(results_dir: str, t_max: float, num_points: int, mechanism: 
 # ──────────────────────────────────────────────────────────────────────────
 
 def _render_gravis_network(
-    df_net: pd.DataFrame,
-    src_col: str,
-    tgt_col: str,
-    height: int = 650,
-    ko_node: str | None = None,
+        df_net: pd.DataFrame,
+        src_col: str,
+        tgt_col: str,
+        height: int = 650,
+        ko_node: str | None = None,
 ) -> None:
     """Render a directed network using Gravis (interactive, HTML-based).
 
@@ -274,7 +266,7 @@ def _render_gravis_network(
 
 
 def _pseudo_log_time_axis(
-    t: np.ndarray, use_log_time: bool = True
+        t: np.ndarray, use_log_time: bool = True
 ) -> tuple[np.ndarray, list[float], list[str]]:
     """
     Plotly-safe pseudo-log time axis.
@@ -312,17 +304,17 @@ def _pseudo_log_time_axis(
 
 
 def _plot_ss_results(
-    t: np.ndarray,
-    P_sim: np.ndarray,
-    A_sim: np.ndarray,
-    S_sim: np.ndarray,
-    Kdyn_sim: np.ndarray,
-    proteins: list[str],
-    sites: list[str],
-    kinases: list[str],
-    snap: dict,
-    selected_protein: str | None,
-    use_logx: bool,
+        t: np.ndarray,
+        P_sim: np.ndarray,
+        A_sim: np.ndarray,
+        S_sim: np.ndarray,
+        Kdyn_sim: np.ndarray,
+        proteins: list[str],
+        sites: list[str],
+        kinases: list[str],
+        snap: dict,
+        selected_protein: str | None,
+        use_logx: bool,
 ) -> None:
     """Plot long-horizon steady-state simulation results with finite-safe Plotly traces.
 
@@ -493,6 +485,8 @@ def _plot_ss_results(
             )
         else:
             st.caption("Final-step convergence metric is NaN/Inf.")
+
+
 # Configure & Run panel
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -1013,8 +1007,8 @@ def _render_live_results(output_dir: Path) -> None:
 
     checks = {
         "fitted_params.npz": "Parameter estimates",
-        "fit_timeseries.tsv": "Fit timeseries",
-        "fit_timeseries_dense.tsv": "Dense timeseries",
+        "protein_fit_timeseries.tsv": "Fit timeseries",
+        "protein_fit_timeseries_dense.tsv": "Dense timeseries",
         "pareto_points.tsv": "Pareto solutions",
         "network_cytoscape_edges.csv": "Network edges",
         "run_config.json": "Run config",
@@ -1044,14 +1038,14 @@ def _render_live_results(output_dir: Path) -> None:
         except Exception:
             pass
 
-    ts_path = output_dir / "fit_timeseries.tsv"
+    ts_path = output_dir / "protein_fit_timeseries.tsv"
     if ts_path.exists():
         try:
             df_ts = pd.read_csv(ts_path, sep="\t", nrows=5)
             with st.expander("Fit timeseries preview (first 5 rows)"):
                 st.dataframe(df_ts, use_container_width=True)
         except Exception as exc:
-            st.info(f"fit_timeseries.tsv is being written: {exc}")
+            st.info(f"protein_fit_timeseries.tsv is being written: {exc}")
 
     pareto_path = output_dir / "pareto_points.tsv"
     if pareto_path.exists():
@@ -1061,8 +1055,6 @@ def _render_live_results(output_dir: Path) -> None:
                 st.dataframe(df_par.head(20), use_container_width=True)
         except Exception as exc:
             st.info(f"pareto_points.tsv is being written: {exc}")
-
-
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -1333,8 +1325,8 @@ with tab_overview:
 with tab_fit:
     st.header("Fit Explorer")
     st.caption(
-        "Sparse source: `fit_timeseries.tsv`, `mrna_fit_timeseries.tsv`  \n"
-        "Dense source: `fit_timeseries_dense.tsv`, `mrna_fit_timeseries_dense.tsv`"
+        "Sparse source: `protein_fit_timeseries.tsv`, `mrna_fit_timeseries.tsv`  \n"
+        "Dense source: `protein_fit_timeseries_dense.tsv`, `mrna_fit_timeseries_dense.tsv`"
     )
 
     # ------------------------------------------------------------------
@@ -1361,6 +1353,7 @@ with tab_fit:
         )
         return legend
 
+
     def _short_series_name(series_type: str) -> str:
         s = str(series_type).lower()
         if s in {"sim", "simulated", "simulated_dense"}:
@@ -1372,6 +1365,7 @@ with tab_fit:
         if "sim" in s:
             return "sim"
         return str(series_type)
+
 
     def _style_fit_plot(fig, height: int, title: str, x_title: str, y_title: str):
         fig.update_layout(
@@ -1385,6 +1379,7 @@ with tab_fit:
             margin=dict(l=40, r=20, t=60, b=105),
         )
         return fig
+
 
     df_ft = _load_fit_ts(results_dir)
     df_dense = _load_dense_ts(results_dir)
@@ -1405,7 +1400,7 @@ with tab_fit:
     )
 
     if df_ft is None:
-        st.warning("fit_timeseries.tsv not found.")
+        st.warning("protein_fit_timeseries.tsv not found.")
     elif not selected_protein:
         st.warning("No protein selected.")
     else:
@@ -1431,12 +1426,12 @@ with tab_fit:
         df_prot_row = df_ft[
             (df_ft["Type"] == "ProteinAbundance")
             & (df_ft["Protein"] == selected_protein)
-        ]
+            ]
 
         df_site_rows = df_ft[
             (df_ft["Type"] == "Phosphosite")
             & (df_ft["Protein"] == selected_protein)
-        ]
+            ]
 
         # Sparse mRNA
         mrna_path = os.path.join(results_dir, "mrna_fit_timeseries.tsv")
@@ -1644,11 +1639,11 @@ with tab_fit:
                 if "gene" in df_mrna_dense.columns:
                     md_sub = df_mrna_dense[
                         df_mrna_dense["gene"] == selected_protein
-                    ].copy()
+                        ].copy()
                 elif "entity" in df_mrna_dense.columns:
                     md_sub = df_mrna_dense[
                         df_mrna_dense["entity"] == selected_protein
-                    ].copy()
+                        ].copy()
                 else:
                     md_sub = pd.DataFrame()
 
@@ -1657,7 +1652,7 @@ with tab_fit:
                     md_sub = md_sub[
                         (md_sub["time"] >= time_range[0])
                         & (md_sub["time"] <= time_range[1])
-                    ]
+                        ]
 
                     val_col = (
                         "value"
@@ -1724,13 +1719,13 @@ with tab_fit:
                 _df_A_dense = df_dense[
                     (df_dense["entity_type"] == "ProteinAbundance")
                     & (df_dense["entity"] == selected_protein)
-                ].copy()
+                    ].copy()
 
                 if not _df_A_dense.empty:
                     _df_A_dense = _df_A_dense[
                         (_df_A_dense["time"] >= time_range[0])
                         & (_df_A_dense["time"] <= time_range[1])
-                    ]
+                        ]
 
                     if "series_type" in _df_A_dense.columns:
                         for series_type, grp in _df_A_dense.groupby("series_type"):
@@ -1779,7 +1774,7 @@ with tab_fit:
                 else:
                     st.info("Dense protein abundance not available for this selected protein.")
             else:
-                st.info("`fit_timeseries_dense.tsv` not found or empty.")
+                st.info("`protein_fit_timeseries_dense.tsv` not found or empty.")
 
         # ------------------------------------------------------------------
         # Dense phosphosite panel, centered/wide below
@@ -1800,7 +1795,7 @@ with tab_fit:
                     _df_site_dense = df_dense[
                         (df_dense["entity_type"] == "Phosphosite")
                         & (df_dense["entity"] == label)
-                    ].copy()
+                        ].copy()
 
                     if _df_site_dense.empty:
                         continue
@@ -1808,7 +1803,7 @@ with tab_fit:
                     _df_site_dense = _df_site_dense[
                         (_df_site_dense["time"] >= time_range[0])
                         & (_df_site_dense["time"] <= time_range[1])
-                    ]
+                        ]
 
                     if _df_site_dense.empty:
                         continue
@@ -1865,7 +1860,7 @@ with tab_fit:
                 else:
                     st.info("Dense phosphosite data not available for this selected protein.")
             else:
-                st.info("`fit_timeseries_dense.tsv` not found or no phosphosite rows available.")
+                st.info("`protein_fit_timeseries_dense.tsv` not found or no phosphosite rows available.")
 
         # ------------------------------------------------------------------
         # Dense interpretation note
@@ -2251,7 +2246,7 @@ with tab_sim:
                         # Derived rates overlay for selected protein
                         dr_sim = _load_dr(results_dir)
                         if dr_sim is not None and (
-                            "k_act" in dr_sim or "s_prod" in dr_sim
+                                "k_act" in dr_sim or "s_prod" in dr_sim
                         ):
                             st.subheader("Derived rate drives")
                             dr_prots = list(dr_sim.get("proteins", []))
@@ -2613,8 +2608,8 @@ with tab_ko:
                             )
                             # Remove rows involving the knocked-out target
                             mask_keep = ~(
-                                (df_net_ko[src_col_ko].astype(str) == str(ko_target))
-                                | (df_net_ko[tgt_col_ko].astype(str) == str(ko_target))
+                                    (df_net_ko[src_col_ko].astype(str) == str(ko_target))
+                                    | (df_net_ko[tgt_col_ko].astype(str) == str(ko_target))
                             )
                             df_net_ko_filtered = df_net_ko[mask_keep].copy()
                             n_removed = int((~mask_keep).sum())
@@ -2754,7 +2749,7 @@ with tab_sens:
             subset = (
                 df_pert[
                     (df_pert["Type"] == sel_type) & (df_pert["Entity"] == sel_entity)
-                ]
+                    ]
                 if sel_type and sel_entity
                 else pd.DataFrame()
             )
@@ -3224,8 +3219,6 @@ with tab_net:
                 df_net_sub = df_net.head(800)
             _render_gravis_network(df_net_sub, source_col, target_col, height=650)
 
-
-
 # ══════════════════════════════════════════════════════════════════════════
 # J · NEURAL REFINED (post-fit latent-rate refinement)
 # ══════════════════════════════════════════════════════════════════════════
@@ -3300,7 +3293,7 @@ with tab_neural:
             _df_sub = _df_rates[
                 (_df_rates["rate_type"] == _rate_type_sel)
                 & (_df_rates["entity"] == _entity_sel)
-            ].sort_values("time")
+                ].sort_values("time")
 
             if not _df_sub.empty:
                 _fig_rates = go.Figure()
@@ -3357,12 +3350,14 @@ with tab_neural:
                 _df_nts = pd.read_csv(_ts_source, sep="\t")
 
                 # Select entity type and entity
-                _et_options = sorted(_df_nts["entity_type"].unique().tolist()) if "entity_type" in _df_nts.columns else []
+                _et_options = sorted(
+                    _df_nts["entity_type"].unique().tolist()) if "entity_type" in _df_nts.columns else []
                 if _et_options:
                     _et_sel = st.selectbox("Entity type", _et_options, key="neural_et_sel")
                     _entity_col = "entity"
                     _df_nts_et = _df_nts[_df_nts["entity_type"] == _et_sel]
-                    _entities = sorted(_df_nts_et[_entity_col].unique().tolist()) if _entity_col in _df_nts_et.columns else []
+                    _entities = sorted(
+                        _df_nts_et[_entity_col].unique().tolist()) if _entity_col in _df_nts_et.columns else []
                     if _entities:
                         _ent_sel = st.selectbox("Entity", _entities, key="neural_ent_sel2")
                         _df_nts_sub = _df_nts_et[_df_nts_et[_entity_col] == _ent_sel].sort_values("time")
@@ -3388,7 +3383,7 @@ with tab_neural:
                                     _obs_sub = _df_obs_check[
                                         (_df_obs_check.get("entity_type", pd.Series()) == _et_sel)
                                         & (_df_obs_check.get("entity", pd.Series()) == _ent_sel)
-                                    ]
+                                        ]
                                     if not _obs_sub.empty and "value_observed" in _obs_sub.columns:
                                         _obs_sub = _obs_sub.dropna(subset=["value_observed"]).sort_values("time")
                                         if not _obs_sub.empty:
@@ -3502,5 +3497,3 @@ def _render_plotly_network(df_net: pd.DataFrame, src_col: str, tgt_col: str) -> 
         title="Network topology (spring layout)",
     )
     st.plotly_chart(fig_net, use_container_width=True)
-
-

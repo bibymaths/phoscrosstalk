@@ -109,6 +109,12 @@ def __getattr__(name: str) -> Any:
     This prevents JAX-dependent modules from being imported when the package is
     first imported, which is required so the CLI can configure JAX/XLA runtime
     settings before JAX is loaded.
+
+    Args:
+        name: The name of the attribute to retrieve.
+
+    Returns:
+        The attribute value if found, otherwise raises AttributeError.
     """
     if name not in _LAZY_ATTRS:
         raise AttributeError(f"module {_PACKAGE_NAME!r} has no attribute {name!r}")
@@ -122,5 +128,10 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    """Return a stable list of public package attributes for autocomplete."""
+    """
+    Return a stable list of public package attributes for autocomplete.
+
+    Returns:
+        List of public package attributes.
+    """
     return sorted(set(globals()) | set(__all__))

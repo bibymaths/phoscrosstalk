@@ -1,13 +1,6 @@
 """
-data_curator.py
 A unified pipeline module to download, process, and curate all necessary data artifacts
 for PhosCrosstalk (SQLite DBs, Kinase Graphs, KS Mappings).
-
-Consolidates logic from:
-- harmonizomedownloader.py
-- build_db_from_ptmcode2.py
-- build_kinase_networks.py
-- build_site_level_ks_map.py
 """
 
 import argparse
@@ -113,9 +106,9 @@ class DataCurator:
                     if response.status_code == 200:
                         logger.info(f"  - Downloading {downloadable}...")
                         if (
-                            decompress
-                            and downloadable.endswith(".gz")
-                            and "zip" not in downloadable
+                                decompress
+                                and downloadable.endswith(".gz")
+                                and "zip" not in downloadable
                         ):
                             self._download_and_decompress_file(response, local_path)
                         else:
@@ -215,7 +208,8 @@ class DataCurator:
                        """)
         conn_i.execute("CREATE INDEX idx_intra_protein ON intra_pairs(protein)")
         conn_i.executemany(
-            "INSERT INTO intra_pairs (protein, residue1, score1, residue2, score2) VALUES (?, ?, ?, ?, ?)",  # noqa: E501
+            "INSERT INTO intra_pairs (protein, residue1, score1, residue2, score2) VALUES (?, ?, ?, ?, ?)",
+            # noqa: E501
             [(p, r1, s1, r2, s2) for (p, r1, s1, _, r2, s2) in W],
         )
         conn_i.commit()
@@ -242,7 +236,8 @@ class DataCurator:
             "CREATE INDEX idx_inter_proteins ON inter_pairs(protein1, protein2)"
         )
         conn_e.executemany(
-            "INSERT INTO inter_pairs (protein1, residue1, score1, protein2, residue2, score2) VALUES (?, ?, ?, ?, ?, ?)",  # noqa: E501
+            "INSERT INTO inter_pairs (protein1, residue1, score1, protein2, residue2, score2) VALUES (?, ?, ?, ?, ?, ?)",
+            # noqa: E501
             B,
         )
         conn_e.commit()
@@ -415,7 +410,7 @@ class DataCurator:
     # =========================================================================
 
     def convert_custom_kinase_csv(
-        self, csv_path: str, out_name: str = "kinase_sites.tsv"
+            self, csv_path: str, out_name: str = "kinase_sites.tsv"
     ):
         """
         Converts a user-supplied CSV with columns [GeneID, Psite, Kinase={K1,K2}]

@@ -1,5 +1,4 @@
 """
-hyperparam.py
 Hyperparameter tuning scan using Optimistix (replaces the pymoo UNSGA3 backend).
 
 Performs a grid search over (length_scale, lambda_net, reg_lambda) using a
@@ -40,28 +39,28 @@ BOUNDS_CONFIG = {
 
 
 def run_hyperparameter_scan(
-    dims: ModelDims,
-    outdir,
-    t,
-    P_scaled,
-    sites,
-    site_prot_idx,
-    positions,
-    proteins,
-    ptm_intra_path,
-    ptm_inter_path,
-    Cg,
-    K_site_kin,
-    R,
-    L_alpha,
-    kin_to_prot_idx,
-    A_scaled,
-    prot_idx_for_A,
-    W_data,
-    W_data_prot,
-    receptor_mask_prot,
-    receptor_mask_kin,
-    mechanism,
+        dims: ModelDims,
+        outdir,
+        t,
+        P_scaled,
+        sites,
+        site_prot_idx,
+        positions,
+        proteins,
+        ptm_intra_path,
+        ptm_inter_path,
+        Cg,
+        K_site_kin,
+        R,
+        L_alpha,
+        kin_to_prot_idx,
+        A_scaled,
+        prot_idx_for_A,
+        W_data,
+        W_data_prot,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        mechanism,
 ):
     """
     Grid search over (length_scale, lambda_net, reg_lambda) using short Optimistix runs.

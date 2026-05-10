@@ -1,12 +1,11 @@
 """
-simulation.py
 Diffrax-based ODE solver wrapper for the phospho-network model.
 
 Public interface:
     simulate(...)        – primary function
     build_full_A0(...)       – helper to build the full protein abundance matrix
 
-State layout (new):
+State layout:
     y = [R_rna, S, A, Kdyn, p]    (dim = 3*K + M + N)
 
     R_rna : mRNA levels for model proteins        shape (K,)
@@ -14,11 +13,6 @@ State layout (new):
     A     : protein abundance state               shape (K,)
     Kdyn  : kinase activity state                 shape (M,)
     p     : relative phosphosite signal            shape (N,)
-
-The SciPy / Numba backend has been replaced by a Diffrax + JAX pipeline:
-    - RHS is provided by jax_mechanisms.make_rhs
-    - Integration uses diffrax.Tsit5 with PIDController adaptive stepping
-    - Results are converted back to NumPy arrays at the module boundary
 """
 
 import diffrax
@@ -35,37 +29,37 @@ from phoscrosstalk.solver_config import (
 
 
 def simulate(
-    t_arr,
-    P_data0,
-    A_data0,
-    theta,
-    Cg,
-    Cl,
-    site_prot_idx,
-    K_site_kin,
-    R,
-    L_alpha,
-    kin_to_prot_idx,
-    receptor_mask_prot,
-    receptor_mask_kin,
-    mechanism,
-    full_output=False,
-    return_full=False,
-    rtol=1e-6,
-    atol=1e-9,
-    max_steps=16384,
-    dt0=0.01,
-    ode_solver_kind="tsit5",
-    root_find_max_steps=10,
-    k_act_fn=None,
-    s_prod_fn=None,
-    t_extra=None,
-    t_rna=None,
-    R_data0=None,
-    rna_relax=0.1,
-    ode_adjoint_kind="recursive",
-    dims: ModelDims | None = None,
-    return_jax: bool = False,
+        t_arr,
+        P_data0,
+        A_data0,
+        theta,
+        Cg,
+        Cl,
+        site_prot_idx,
+        K_site_kin,
+        R,
+        L_alpha,
+        kin_to_prot_idx,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        mechanism,
+        full_output=False,
+        return_full=False,
+        rtol=1e-6,
+        atol=1e-9,
+        max_steps=16384,
+        dt0=0.01,
+        ode_solver_kind="tsit5",
+        root_find_max_steps=10,
+        k_act_fn=None,
+        s_prod_fn=None,
+        t_extra=None,
+        t_rna=None,
+        R_data0=None,
+        rna_relax=0.1,
+        ode_adjoint_kind="recursive",
+        dims: ModelDims | None = None,
+        return_jax: bool = False,
 ):
     """
     Simulate the phosphoproteomic network dynamics using Diffrax (JAX backend).
@@ -179,14 +173,14 @@ def simulate(
         A_data0[:, 0].astype(np.float64), nan=1.0, posinf=5.0, neginf=0.0
     )
     a0 = np.clip(a0, 0.0, 5.0)
-    x0[2 * K : 3 * K] = a0
+    x0[2 * K: 3 * K] = a0
 
     # p initial condition (relative phosphosite signal, clipped to [0, +inf))
     p0 = np.nan_to_num(
         P_data0[:, 0].astype(np.float64), nan=0.0, posinf=10.0, neginf=0.0
     )
     p0 = np.clip(p0, 0.0, None)
-    x0[3 * K + M :] = p0
+    x0[3 * K + M:] = p0
 
     nan_result = _nan_result(N_sites, K, M, T, full_output, return_full, t_rna_arr)
     if not np.all(np.isfinite(x0)):
@@ -253,10 +247,10 @@ def simulate(
         # NaN/convergence checks are skipped because they cannot be evaluated
         # at trace time.  Only the simple (P_sim, A_sim) output is returned.
         prot_idx_jax = jnp.asarray(prot_time_idx, dtype=jnp.int32)
-        xs_jax = sol.ys[prot_idx_jax, :]          # (T, 3K+M+N)
-        P_sim_jax = jnp.clip(xs_jax[:, 3 * K + M :], 0.0, None).T  # (N, T)
+        xs_jax = sol.ys[prot_idx_jax, :]  # (T, 3K+M+N)
+        P_sim_jax = jnp.clip(xs_jax[:, 3 * K + M:], 0.0, None).T  # (N, T)
         # 5.0 matches the biology-based upper bound applied in the numpy path below.
-        A_sim_jax = jnp.clip(xs_jax[:, 2 * K : 3 * K], 0.0, 5.0).T  # (K, T)
+        A_sim_jax = jnp.clip(xs_jax[:, 2 * K: 3 * K], 0.0, 5.0).T  # (K, T)
         return P_sim_jax, A_sim_jax
 
     xs_all = np.asarray(sol.ys, dtype=np.float64)
@@ -269,10 +263,10 @@ def simulate(
 
     # Slice and clip bounded states (new layout: [R_rna, S, A, Kdyn, p])
     R_rna_sim = xs[:, :K]
-    S_sim = xs[:, K : 2 * K]
-    A_sim = xs[:, 2 * K : 3 * K]
-    Kdyn_sim = xs[:, 3 * K : 3 * K + M]
-    P_sim = xs[:, 3 * K + M : 3 * K + M + N]
+    S_sim = xs[:, K: 2 * K]
+    A_sim = xs[:, 2 * K: 3 * K]
+    Kdyn_sim = xs[:, 3 * K: 3 * K + M]
+    P_sim = xs[:, 3 * K + M: 3 * K + M + N]
 
     np.clip(R_rna_sim, 0.0, None, out=R_rna_sim)
     np.clip(S_sim, 0.0, 1.0, out=S_sim)
@@ -387,6 +381,7 @@ def _nan_result(N_sites, K, M, T, full_output, return_full=False, t_rna_arr=None
         )
     return np.full((N_sites, T), np.nan), np.full((K, T), np.nan)
 
+
 def build_full_A0(K, T, A_scaled, prot_idx_for_A):
     """
     Constructs the full-dimension protein abundance matrix from partial observations.
@@ -411,33 +406,33 @@ def build_full_A0(K, T, A_scaled, prot_idx_for_A):
 
 
 def simulate_dense(
-    t_dense,
-    P_data0,
-    A_data0,
-    theta,
-    Cg,
-    Cl,
-    site_prot_idx,
-    K_site_kin,
-    R,
-    L_alpha,
-    kin_to_prot_idx,
-    receptor_mask_prot,
-    receptor_mask_kin,
-    mechanism,
-    rtol=1e-6,
-    atol=1e-9,
-    max_steps=16384,
-    dt0=0.01,
-    ode_solver_kind="tsit5",
-    root_find_max_steps=10,
-    k_act_fn=None,
-    s_prod_fn=None,
-    t_rna=None,
-    R_data0=None,
-    rna_relax=0.1,
-    ode_adjoint_kind="recursive",
-    dims: ModelDims | None = None,
+        t_dense,
+        P_data0,
+        A_data0,
+        theta,
+        Cg,
+        Cl,
+        site_prot_idx,
+        K_site_kin,
+        R,
+        L_alpha,
+        kin_to_prot_idx,
+        receptor_mask_prot,
+        receptor_mask_kin,
+        mechanism,
+        rtol=1e-6,
+        atol=1e-9,
+        max_steps=16384,
+        dt0=0.01,
+        ode_solver_kind="tsit5",
+        root_find_max_steps=10,
+        k_act_fn=None,
+        s_prod_fn=None,
+        t_rna=None,
+        R_data0=None,
+        rna_relax=0.1,
+        ode_adjoint_kind="recursive",
+        dims: ModelDims | None = None,
 ):
     """Run the ODE over a dense time grid for smooth post-fit visualisation.
 

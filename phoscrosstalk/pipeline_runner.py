@@ -1,5 +1,4 @@
 """
-pipeline_runner.py
 Utilities for launching, monitoring, and stopping the PhosCrosstalk pipeline
 from inside the Streamlit dashboard.
 
@@ -89,9 +88,9 @@ def build_command(config_path: Path) -> list[str]:
 
 
 def start_pipeline(
-    cmd: list[str],
-    run_dir: Path,
-    log_filename: str = "phoscrosstalk.log",
+        cmd: list[str],
+        run_dir: Path,
+        log_filename: str = "phoscrosstalk.log",
 ) -> subprocess.Popen:
     """
     Start the pipeline as a subprocess.
@@ -143,9 +142,9 @@ def start_pipeline(
 
 
 def stop_pipeline(
-    process: subprocess.Popen | None,
-    run_dir: Path | None = None,
-    timeout: float = 10.0,
+        process: subprocess.Popen | None,
+        run_dir: Path | None = None,
+        timeout: float = 10.0,
 ) -> None:
     """
     Gracefully stop a running pipeline process.

@@ -1,5 +1,4 @@
 """
-logger.py
 A unified, rich-text logger for the PhosCrosstalk pipeline.
 Handles colorful console output and structured file logging.
 """
@@ -236,6 +235,7 @@ def get_logger(log_file=None, timestamp=False):
         RichLogger._instance = RichLogger(log_file=None)
 
     return RichLogger._instance
+
 
 def get_std_logger():
     return get_logger().logger

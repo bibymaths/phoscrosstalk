@@ -1,5 +1,4 @@
 """
-runtime_env.py
 Configure XLA/JAX CPU threading environment variables.
 
 This module MUST be imported (and ``setup_cpu_env`` called) before any JAX,
@@ -25,6 +24,7 @@ CPU affinity mask allocated by SLURM.
 import os
 import sys
 from types import SimpleNamespace
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -218,13 +218,13 @@ def detect_cpu_topology() -> SimpleNamespace:
 
 
 def plan_cpu_runtime(
-    cpu_threads="auto",
-    n_starts=1,
-    parallel_starts="auto",
-    threads_per_start="auto",
-    reserve_cores=0,
-    use_physical_cores=True,
-    default_threads_per_run=4,
+        cpu_threads="auto",
+        n_starts=1,
+        parallel_starts="auto",
+        threads_per_start="auto",
+        reserve_cores=0,
+        use_physical_cores=True,
+        default_threads_per_run=4,
 ) -> SimpleNamespace:
     """
     Calculate a safe CPU parallelism plan for multi-start optimisation.
@@ -281,9 +281,9 @@ def plan_cpu_runtime(
     # Usable cores for parallelism decisions
     # When SLURM is active its CPU count is already a hard limit; use it as-is.
     if (
-        use_physical_cores
-        and topo.physical_cores is not None
-        and topo.slurm_cpus is None
+            use_physical_cores
+            and topo.physical_cores is not None
+            and topo.slurm_cpus is None
     ):
         usable = min(budget, topo.physical_cores)
     else:

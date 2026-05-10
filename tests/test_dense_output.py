@@ -4,9 +4,9 @@ Focused tests for the dense/continuous-output and data-interpolation features.
 Covers:
 * build_data_interpolations(): observed arrays unchanged, shapes correct
 * simulate_dense(): returns expected keys and shapes
-* _save_dense_simulation(): produces fit_timeseries_dense.tsv with expected columns
+* _save_dense_simulation(): produces protein_fit_timeseries_dense.tsv with expected columns
 * Dense simulation does not affect best-solution selection (optimization is unaffected)
-* fit_timeseries_dense.tsv includes expected series_type labels
+* protein_fit_timeseries_dense.tsv includes expected series_type labels
 * app.py load_dense_timeseries path does not crash on missing / present file
 * Steady-state event: still terminates on simple stable ODE (regression guard)
 * use_event=False calls legacy simulate() path (regression guard)
@@ -333,13 +333,13 @@ class TestSaveDenseSimulation:
 
     def test_file_created(self, tmp_path):
         self._call_save(tmp_path)
-        assert os.path.exists(tmp_path / "fit_timeseries_dense.tsv")
+        assert os.path.exists(tmp_path / "protein_fit_timeseries_dense.tsv")
 
     def test_expected_columns(self, tmp_path):
         import pandas as pd
 
         self._call_save(tmp_path)
-        df = pd.read_csv(tmp_path / "fit_timeseries_dense.tsv", sep="\t")
+        df = pd.read_csv(tmp_path / "protein_fit_timeseries_dense.tsv", sep="\t")
         expected_cols = {
             "entity_type", "entity", "site", "protein",
             "time", "value", "series_type", "source", "interpolation_method",
@@ -353,7 +353,7 @@ class TestSaveDenseSimulation:
         import pandas as pd
 
         self._call_save(tmp_path)
-        df = pd.read_csv(tmp_path / "fit_timeseries_dense.tsv", sep="\t")
+        df = pd.read_csv(tmp_path / "protein_fit_timeseries_dense.tsv", sep="\t")
         types_present = set(df["series_type"].unique())
         assert "simulated_dense" in types_present, (
             f"Expected 'simulated_dense' in series_type, got: {types_present}"
@@ -369,7 +369,7 @@ class TestSaveDenseSimulation:
 
         n = 17
         self._call_save(tmp_path, n_dense=n)
-        df = pd.read_csv(tmp_path / "fit_timeseries_dense.tsv", sep="\t")
+        df = pd.read_csv(tmp_path / "protein_fit_timeseries_dense.tsv", sep="\t")
         n_times = df["time"].nunique()
         assert n_times == n, f"Expected {n} time points, got {n_times}"
 
@@ -386,7 +386,7 @@ class TestSaveDenseSimulation:
             return np.full((self.N, len(t_query)), 0.3)
 
         self._call_save(tmp_path, n_dense=10, data_interp_P=_simple_interp)
-        df = pd.read_csv(tmp_path / "fit_timeseries_dense.tsv", sep="\t")
+        df = pd.read_csv(tmp_path / "protein_fit_timeseries_dense.tsv", sep="\t")
         assert "observed_interpolated_dense" in set(df["series_type"].unique()), (
             "Expected 'observed_interpolated_dense' when data_interp_P is provided"
         )
@@ -396,7 +396,7 @@ class TestSaveDenseSimulation:
         import pandas as pd
 
         self._call_save(tmp_path, n_dense=10)
-        df = pd.read_csv(tmp_path / "fit_timeseries_dense.tsv", sep="\t")
+        df = pd.read_csv(tmp_path / "protein_fit_timeseries_dense.tsv", sep="\t")
         assert "observed_interpolated_dense" not in set(df["series_type"].unique())
 
     def test_sparse_observed_arrays_unchanged_after_dense_save(self, tmp_path):
@@ -461,7 +461,7 @@ class TestAppLoadDenseTimeseries:
             "source": ["model"],
             "interpolation_method": ["diffrax_dense"],
         })
-        df.to_csv(tmp_path / "fit_timeseries_dense.tsv", sep="\t", index=False)
+        df.to_csv(tmp_path / "protein_fit_timeseries_dense.tsv", sep="\t", index=False)
 
         result = load_dense_timeseries(str(tmp_path))
         assert result is not None
@@ -471,7 +471,7 @@ class TestAppLoadDenseTimeseries:
     def test_handles_corrupt_file_gracefully(self, tmp_path):
         from phoscrosstalk.dashboard import load_dense_timeseries
 
-        (tmp_path / "fit_timeseries_dense.tsv").write_text("corrupt\x00data")
+        (tmp_path / "protein_fit_timeseries_dense.tsv").write_text("corrupt\x00data")
         result = load_dense_timeseries(str(tmp_path))
         # Should return None or a DataFrame (not raise)
         assert result is None or hasattr(result, "columns")

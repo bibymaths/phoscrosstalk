@@ -85,12 +85,20 @@ from phoscrosstalk.data_loader import (
     _prefilter_phospho_csv,
     _prefilter_rna_csv,
 )
+from phoscrosstalk.bundle_analysis import (
+    plot_pinn_bundle_analysis,
+    plot_neuralode_bundle_analysis,
+)
 
+from phoscrosstalk.pinn.outputs import (
+    save_pinn_outputs,
+    save_pinn_model_bundle,
+)
+
+from phoscrosstalk.pinn.plotting import save_pinn_plots
 
 from phoscrosstalk.sensitivity import _generate_param_labels, run_global_sensitivity
 from phoscrosstalk.weighting import build_weight_matrices
-
-# logger = get_logger("logs/pipeline.log", timestamp=True)
 
 def main():
     """
@@ -211,7 +219,9 @@ def main():
     # Load config AFTER receptor update because the script may modify config.toml.
     cfg = load_config(config_path)
     validate_config(cfg, config_path)
-
+    _run_bundle_analysis = bool(
+        getattr(getattr(cfg, "debug", None), "run_bundle_analysis", True)
+    )
     # ------------------------------------------------------------------
     # EXTRACT ALL SETTINGS FROM CONFIG
     # ------------------------------------------------------------------
@@ -546,7 +556,6 @@ def main():
         logger.success(f"[*] Alpha Laplacian built successfully")
         logger.info(f"[*] Alpha Laplacian shape: {L_alpha.shape}")
 
-
     # 7. Mappings & Masks
     prot_map_all = {p: i for i, p in enumerate(proteins)}
     kin_to_prot_idx = np.array([prot_map_all.get(k, -1) for k in kinases], dtype=int)
@@ -717,7 +726,6 @@ def main():
     )
     Cl = data_loader.row_normalize(Cl)
     logger.success(f"[*] Final C matrices built successfully with tuned Length Scale.")
-
 
     # 9. Global Setup & Bounds
     logger.header("[*] Model dimension summary")
@@ -1018,7 +1026,6 @@ def main():
         f4_best = float(lc.get("f4", np.nan))
         total_best = float(lc.get("total_loss", np.nan))
 
-        # Single-run equivalents of multistart outputs.
         X = theta_best[None, :]
         F = np.asarray([[f1_best, f2_best, f3_best, f4_best]], dtype=float)
 
@@ -1031,14 +1038,93 @@ def main():
         best_idx = 0
 
         # ------------------------------------------------------------
-        # Make the existing NetworkProblem object use the fitted PINN
-        # simulation path for all downstream functions that call:
-        #
-        #   problem.simulate(theta)
-        #   problem.simulate_full(theta)
-        #
-        # This is intentionally local to PINN mode. Mechanistic mode is
-        # untouched.
+        # Save PINN outputs and plots explicitly from main.py.
+        # These calls are idempotent: if run_pinn_pipeline already wrote
+        # them, this overwrites/refreshes them from pinn_result.
+        # ------------------------------------------------------------
+        _pinn_ts = pinn_result.get("ts", pinn_result.get("t", t))
+        _pinn_ys = pinn_result.get("ys", pinn_result.get("Y_sim", None))
+        _pinn_model = pinn_result.get("pinn_model", pinn_result.get("model", None))
+        _pinn_residuals = pinn_result.get(
+            "pinn_residuals",
+            pinn_result.get("residuals", None),
+        )
+        _pinn_loss_history = pinn_result.get(
+            "loss_history",
+            pinn_result.get("training_history", []),
+        )
+
+        try:
+            save_pinn_outputs(
+                outdir=outdir,
+                theta_opt=theta_best,
+                pinn_model=_pinn_model,
+                loss_components=lc,
+                ts=np.asarray(_pinn_ts, dtype=float),
+                ys=_pinn_ys,
+                K=dims.K,
+                M=dims.M,
+                N=dims.N,
+                sites=sites,
+                proteins=proteins,
+                kinases=kinases,
+                P_data=P_scaled,
+                A_scaled=A_scaled,
+                prot_idx_for_A=prot_idx_for_A,
+                t=t,
+                run_mode="pinn",
+                pinn_cfg=_pinn_cfg,
+                dims=dims,
+            )
+            logger.success("[pinn] PINN output files saved.")
+        except Exception as exc:
+            logger.warning("[pinn] save_pinn_outputs failed: %s", exc)
+
+        try:
+            save_pinn_model_bundle(
+                outdir=outdir,
+                pinn_model=_pinn_model,
+                theta_opt=theta_best,
+                pinn_cfg=_pinn_cfg,
+                dims=dims,
+            )
+            logger.success("[pinn] PINN model bundle saved.")
+        except Exception as exc:
+            logger.warning("[pinn] save_pinn_model_bundle failed: %s", exc)
+
+        try:
+            save_pinn_plots(
+                outdir=os.path.join(outdir, "pinn_plots"),
+                pinn_residuals=_pinn_residuals,
+                ts=np.asarray(_pinn_ts, dtype=float) if _pinn_ts is not None else None,
+                ys=_pinn_ys,
+                t_obs=t,
+                P_data=P_scaled,
+                loss_history=_pinn_loss_history,
+                K=dims.K,
+                M=dims.M,
+                N=dims.N,
+                proteins=proteins,
+                kinases=kinases,
+                sites=sites,
+            )
+            logger.success("[pinn] PINN plots saved.")
+        except Exception as exc:
+            logger.warning("[pinn] save_pinn_plots failed: %s", exc)
+
+        try:
+            _pinn_bundle_dir = pathlib.Path(outdir) / "pinn_bundle"
+            if _run_bundle_analysis and _pinn_bundle_dir.is_dir():
+                plot_pinn_bundle_analysis(
+                    model_dir=_pinn_bundle_dir,
+                    output_dir=pathlib.Path(outdir) / "bundle_analysis" / "pinn",
+                )
+                logger.success("[bundle_analysis] PINN bundle analysis saved.")
+        except Exception as exc:
+            logger.warning("[bundle_analysis] PINN bundle analysis failed: %s", exc)
+
+        # ------------------------------------------------------------
+        # Route downstream standard analysis through PINN simulation.
         # ------------------------------------------------------------
         if not hasattr(problem, "_simulate_pinn"):
             raise RuntimeError(
@@ -1047,9 +1133,7 @@ def main():
                 "PINN-aware problem from run_pinn_pipeline()."
             )
 
-        # Attach useful objects for problem._simulate_pinn(), if that method
-        # expects them on self.
-        problem.pinn_model = pinn_result.get("pinn_model", None)
+        problem.pinn_model = _pinn_model
         problem.pinn_result = pinn_result
         problem.pinn_enabled = True
 
@@ -1075,8 +1159,6 @@ def main():
                 "solver_times": t,
             }
 
-        # Monkey-patch only this problem instance. This avoids refactoring all
-        # downstream analysis functions.
         problem.simulate = _pinn_simulate
         problem.simulate_full = _pinn_simulate_full
 
@@ -1200,18 +1282,24 @@ def main():
                 rna_data_obs=rna_obs_matched,
                 rna_simulated=R_sim_matched,
             )
-    # Standard fitted simulation plots require fit_timeseries.tsv.
+    # Standard fitted simulation plots require protein_fit_timeseries.tsv.
     # PINN mode may already have its own outputs. Only call the standard plotter
     # if the expected file exists.
-    fit_timeseries_path = os.path.join(outdir, "fit_timeseries.tsv")
-    if os.path.exists(fit_timeseries_path):
-        analysis.plot_fitted_simulation(outdir)
-        analysis.plot_goodness_of_fit(fit_timeseries_path, outdir)
+    protein_fit_timeseries_path = os.path.join(outdir, "protein_fit_timeseries.tsv")
+    mrna_fit_timeseries_path = os.path.join(outdir, "mrna_fit_timeseries.tsv")
+
+    if os.path.exists(protein_fit_timeseries_path):
+        analysis.plot_fitted_simulation(outdir=outdir)
+        analysis.plot_goodness_of_fit(
+            protein_fit_timeseries_path=protein_fit_timeseries_path,
+            outdir=outdir,
+            mrna_fit_timeseries_path=mrna_fit_timeseries_path,
+        )
     else:
         logger.warning(
             "[pinn] %s not found; skipping standard fitted simulation and "
             "goodness-of-fit plots.",
-            fit_timeseries_path,
+            protein_fit_timeseries_path,
         )
 
     analysis.print_parameter_summary(
@@ -1344,22 +1432,28 @@ def main():
     )
 
     # ------------------------------------------------------------------
-    # 13. Optional post-fit neural latent-rate refinement
+    # 13. Post-fit neural latent-rate refinement
     # ------------------------------------------------------------------
     _neural_cfg = getattr(cfg, "neural_ode", None)
     if (
-        not _pinn_enabled
-        and _neural_cfg is not None
-        and getattr(_neural_cfg, "enabled", False)
+            not _pinn_enabled
+            and _neural_cfg is not None
+            and getattr(_neural_cfg, "enabled", False)
     ):
         from phoscrosstalk.neuralODE import (  # noqa: PLC0415
             run_neural_latent_rate_refinement,
             save_neural_ode_plots,
         )
+        from phoscrosstalk.analysis import ( # noqa: PLC0415
+            plot_neural_ode_overlay,
+            save_neural_ode_residuals,
+            plot_neural_residuals,
+        )
 
         logger.header("[*] Running post-fit neural latent-rate refinement")
+
         jaxpr_out_dir = None
-        if getattr(cfg.debug, "save_jaxpr_reports", False):
+        if getattr(getattr(cfg, "debug", None), "save_jaxpr_reports", False):
             jaxpr_out_dir = str(pathlib.Path(outdir) / "jaxpr_reports")
 
         (
@@ -1401,8 +1495,17 @@ def main():
             R_data0=R_data0,
             jaxpr_out_dir=jaxpr_out_dir,
         )
+
+        neural_outdir = os.path.join(outdir, "neural_ode")
+        os.makedirs(neural_outdir, exist_ok=True)
+
+        # ------------------------------------------------------------
+        # Core neuralODE plots.
+        # save_neural_ode_plots already handles loss curves, neural fits,
+        # latent-rate plots, and per-protein plots when the needed arrays exist.
+        # ------------------------------------------------------------
         save_neural_ode_plots(
-            outdir=os.path.join(outdir, "neural_ode"),
+            outdir=neural_outdir,
             ts=_neural_ts,
             ys=_neural_ys,
             model=_neural_model,
@@ -1418,7 +1521,133 @@ def main():
             rna_obs_matched=rna_obs_matched,
             rna_model_prot_idx=rna_model_prot_idx,
         )
-        logger.info("[*] Neural ODE visualisations saved to %s/neural_ode", outdir)
+
+        # ------------------------------------------------------------
+        # Mechanistic reference simulation for neural-vs-mech residuals.
+        # ------------------------------------------------------------
+        try:
+            _mech_full = problem.simulate_full(theta_best)
+        except Exception as exc:
+            logger.warning("[neural_ode] Mechanistic reference simulation failed: %s", exc)
+            _mech_full = {}
+
+        _mech_P_sim = _mech_full.get("P_sim", None)
+        _mech_A_sim = _mech_full.get("A_sim", None)
+        _mech_R_sim = _mech_full.get("R_sim_rna", _mech_full.get("R_sim", None))
+        _mech_t = _mech_full.get("t", t)
+
+        # ------------------------------------------------------------
+        # Evaluate original mechanistic k_act/s_prod priors on the neural grid.
+        # ------------------------------------------------------------
+        try:
+            _ts_arr = np.asarray(_neural_ts, dtype=float)
+
+            _k_act_init_vals = np.stack(
+                [np.asarray(k_act_fn(float(_tt)), dtype=float) for _tt in _ts_arr],
+                axis=1,
+            )
+
+            _s_prod_init_vals = np.stack(
+                [np.asarray(s_prod_fn(float(_tt)), dtype=float) for _tt in _ts_arr],
+                axis=1,
+            )
+
+        except Exception as exc:
+            logger.warning(
+                "[neural_ode] Could not evaluate mechanistic derived rates: %s",
+                exc,
+            )
+            _k_act_init_vals = None
+            _s_prod_init_vals = None
+
+        def _first_existing_key(dct, keys):
+            for key in keys:
+                if isinstance(dct, dict) and key in dct and dct[key] is not None:
+                    return dct[key]
+            return None
+
+        _k_hats_obs = _first_existing_key(
+            _neural_ys,
+            ["k_hats_obs", "k_hat", "k_act_hat", "k_act"],
+        )
+
+        _s_hats_obs = _first_existing_key(
+            _neural_ys,
+            ["s_hats_obs", "s_hat", "s_prod_hat", "s_prod"],
+        )
+
+        if _k_hats_obs is not None:
+            _k_hats_obs = np.asarray(_k_hats_obs, dtype=float)
+            if _k_hats_obs.ndim == 2 and _k_hats_obs.shape[0] == len(proteins):
+                _k_hats_obs = _k_hats_obs.T
+
+        if _s_hats_obs is not None:
+            _s_hats_obs = np.asarray(_s_hats_obs, dtype=float)
+            if _s_hats_obs.ndim == 2 and _s_hats_obs.shape[0] == len(proteins):
+                _s_hats_obs = _s_hats_obs.T
+
+        # ------------------------------------------------------------
+        # Extra neuralODE overlay plots and residual diagnostics.
+        # ------------------------------------------------------------
+        plot_neural_ode_overlay(
+            outdir=neural_outdir,
+            ts=_neural_ts,
+            ys=_neural_ys,
+            proteins=proteins,
+            sites=sites,
+            P_scaled=P_scaled,
+            A_scaled=A_scaled,
+            prot_idx_for_A=prot_idx_for_A,
+            t_protein=t,
+            t_rna=t_rna if rna_matrix is not None else None,
+            rna_obs_matched=rna_obs_matched,
+            rna_model_prot_idx=rna_model_prot_idx,
+            k_act_init_vals=_k_act_init_vals,
+            s_prod_init_vals=_s_prod_init_vals,
+            k_hats_obs=_k_hats_obs,
+            s_hats_obs=_s_hats_obs,
+        )
+
+        save_neural_ode_residuals(
+            outdir=neural_outdir,
+            ts=_neural_ts,
+            ys=_neural_ys,
+            proteins=proteins,
+            sites=sites,
+            P_scaled=P_scaled,
+            A_scaled=A_scaled,
+            prot_idx_for_A=prot_idx_for_A,
+            t_protein=t,
+            t_rna=t_rna if rna_matrix is not None else None,
+            rna_obs_matched=rna_obs_matched,
+            rna_model_prot_idx=rna_model_prot_idx,
+            mech_P_sim=_mech_P_sim,
+            mech_A_sim=_mech_A_sim,
+            mech_R_sim=_mech_R_sim,
+            mech_t=_mech_t,
+        )
+
+        plot_neural_residuals(
+            outdir=neural_outdir,
+            residuals_tsv=os.path.join(neural_outdir, "neural_residuals.tsv"),
+        )
+
+        # ------------------------------------------------------------
+        # Bundle analysis for neuralODE.
+        # run_neural_latent_rate_refinement writes neural_ode_bundle.
+        # ------------------------------------------------------------
+        try:
+            _neural_bundle_dir = pathlib.Path(neural_outdir) / "neural_ode_bundle"
+            if _run_bundle_analysis and _neural_bundle_dir.is_dir():
+                plot_neuralode_bundle_analysis(
+                    model_dir=_neural_bundle_dir,
+                    output_dir=pathlib.Path(neural_outdir) / "bundle_analysis",
+                )
+                logger.success("[bundle_analysis] neuralODE bundle analysis saved.")
+        except Exception as exc:
+            logger.warning("[bundle_analysis] neuralODE bundle analysis failed: %s", exc)
+
+        logger.info("[*] Neural ODE visualisations saved to %s", neural_outdir)
 
     elif _pinn_enabled and _neural_cfg is not None and getattr(_neural_cfg, "enabled", False):
         logger.info(

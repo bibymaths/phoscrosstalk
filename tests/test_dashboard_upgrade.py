@@ -43,7 +43,7 @@ def _theta_zero(K=2, M=2, N=3):
 
 
 def _write_dense_tsv(path: str, n_rows: int = 5):
-    """Write a minimal fit_timeseries_dense.tsv to *path*."""
+    """Write a minimal protein_fit_timeseries_dense.tsv to *path*."""
     rows = [
         {
             "entity_type": "Phosphosite",
@@ -85,7 +85,7 @@ def _write_mrna_dense_tsv(path: str, genes=("EGFR", "ERBB2"), n_times=5):
 
 class TestLoadDenseTimeseries:
     def test_returns_dataframe_when_file_exists(self, tmp_path):
-        fpath = tmp_path / "fit_timeseries_dense.tsv"
+        fpath = tmp_path / "protein_fit_timeseries_dense.tsv"
         _write_dense_tsv(str(fpath))
         from phoscrosstalk.dashboard import load_dense_timeseries
 
@@ -102,7 +102,7 @@ class TestLoadDenseTimeseries:
         assert df is None
 
     def test_does_not_crash_on_empty_file(self, tmp_path):
-        fpath = tmp_path / "fit_timeseries_dense.tsv"
+        fpath = tmp_path / "protein_fit_timeseries_dense.tsv"
         fpath.write_text("")
         from phoscrosstalk.dashboard import load_dense_timeseries
 
@@ -210,7 +210,7 @@ class TestSaveDenseSimulationMrnaOutput:
 
     def test_fit_timeseries_dense_written(self, tmp_path):
         outdir = self._run_save(tmp_path)
-        assert os.path.exists(os.path.join(outdir, "fit_timeseries_dense.tsv"))
+        assert os.path.exists(os.path.join(outdir, "protein_fit_timeseries_dense.tsv"))
 
     def test_mrna_dense_written_when_r_sim_finite(self, tmp_path):
         """Dense mRNA output should be produced when R_sim is finite."""

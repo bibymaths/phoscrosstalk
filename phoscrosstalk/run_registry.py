@@ -1,5 +1,4 @@
 """
-run_registry.py
 Lightweight run-management helpers for the PhosCrosstalk Streamlit dashboard.
 
 Each run is tracked via a small JSON file:
@@ -25,11 +24,9 @@ Schema
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -62,11 +59,11 @@ def _metadata_path(run_dir: Path) -> Path:
 
 
 def create_run(
-    runs_base_dir: str | Path,
-    config_path: Path,
-    output_dir: Path,
-    command: list[str],
-    log_filename: str = "phoscrosstalk.log",
+        runs_base_dir: str | Path,
+        config_path: Path,
+        output_dir: Path,
+        command: list[str],
+        log_filename: str = "phoscrosstalk.log",
 ) -> tuple[str, Path]:
     """
     Create a new run directory and write initial metadata.
@@ -105,8 +102,8 @@ def create_run(
 
 
 def update_run(
-    run_dir: Path,
-    **fields: Any,
+        run_dir: Path,
+        **fields: Any,
 ) -> dict[str, Any]:
     """
     Update one or more fields in the run metadata JSON.

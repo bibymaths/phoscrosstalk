@@ -264,7 +264,7 @@ def test_neural_refinement_writes_outputs_and_preserves_mechanistic(tmp_path):
     ModelDims.set_dims(K, M, N)
 
     # Write a sentinel mechanistic file that must not be touched
-    mech_file = tmp_path / "fit_timeseries.tsv"
+    mech_file = tmp_path / "protein_fit_timeseries.tsv"
     mech_file.write_text("entity\ttime\tvalue\nmock\t0\t1.0\n")
     mtime_before = mech_file.stat().st_mtime
 

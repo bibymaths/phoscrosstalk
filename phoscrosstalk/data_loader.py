@@ -1,5 +1,4 @@
 """
-data_loader.py
 Handles data ingestion, scaling, database connectivity, and matrix construction.
 """
 
@@ -207,13 +206,13 @@ def row_normalize(C):
 
 
 def build_C_matrices_from_db(
-    ptm_intra_path,
-    ptm_inter_path,
-    sites,
-    site_prot_idx,
-    positions,
-    proteins,
-    length_scale=50.0,
+        ptm_intra_path,
+        ptm_inter_path,
+        sites,
+        site_prot_idx,
+        positions,
+        proteins,
+        length_scale=50.0,
 ):
     """
     Constructs global (Cg) and local (Cl) crosstalk connectivity matrices using SQLite databases.
@@ -251,7 +250,7 @@ def build_C_matrices_from_db(
     conn_i = sqlite3.connect(ptm_intra_path)
     cur_i = conn_i.cursor()
     for protein, res1, r1, res2, r2 in cur_i.execute(
-        "SELECT protein, residue1, score1, residue2, score2 FROM intra_pairs"
+            "SELECT protein, residue1, score1, residue2, score2 FROM intra_pairs"
     ):
         s1 = f"{protein}_{res1}"
         s2 = f"{protein}_{res2}"
@@ -266,7 +265,7 @@ def build_C_matrices_from_db(
     conn_e = sqlite3.connect(ptm_inter_path)
     cur_e = conn_e.cursor()
     for p1, res1, r1, p2, res2, r2 in cur_e.execute(
-        "SELECT protein1, residue1, score1, protein2, residue2, score2 FROM inter_pairs"
+            "SELECT protein1, residue1, score1, protein2, residue2, score2 FROM inter_pairs"
     ):
         s1 = f"{p1}_{res1}"
         s2 = f"{p2}_{res2}"
@@ -705,7 +704,7 @@ def build_tf_prot_weights(tf_net_df, gene_ids, proteins):
 
 
 def build_alpha_laplacian_from_unified_graph(
-    pkl_path, kinases, weight_attr="weight_mean"
+        pkl_path, kinases, weight_attr="weight_mean"
 ):
     """
     Constructs a Laplacian matrix representing the kinase-kinase interaction network from a NetworkX graph.
@@ -835,14 +834,14 @@ def build_full_R0(K, gene_ids, rna_matrix, proteins, default=1.0):
 
 
 def build_protein_entity_masks(
-    proteins,
-    sites,
-    site_prot_idx,
-    K_site_kin,
-    tf_net_df,
-    tf_prot_weights,
-    gene_ids,
-    include_tfs_as_proteins,
+        proteins,
+        sites,
+        site_prot_idx,
+        K_site_kin,
+        tf_net_df,
+        tf_prot_weights,
+        gene_ids,
+        include_tfs_as_proteins,
 ):
     """
     Build boolean metadata masks describing each modeled protein's prior support.
@@ -944,9 +943,9 @@ def build_protein_entity_masks(
     if include_tfs_as_proteins:
         for p_idx in range(K):
             if (
-                not protein_has_kinase_prior[p_idx]
-                and not protein_has_tf_input[p_idx]
-                and (protein_is_tf_source[p_idx] or protein_is_tf_target[p_idx])
+                    not protein_has_kinase_prior[p_idx]
+                    and not protein_has_tf_input[p_idx]
+                    and (protein_is_tf_source[p_idx] or protein_is_tf_target[p_idx])
             ):
                 included_by_extended_mode[p_idx] = True
 
@@ -1042,13 +1041,13 @@ def _normalise_psite_label(raw_psite: str) -> str:
 
 
 def _prefilter_phospho_csv(
-    data_path,
-    allowed_sites,
-    allowed_kinases,
-    tf_sources,
-    tf_targets,
-    include_tfs_as_proteins,
-    logger_,
+        data_path,
+        allowed_sites,
+        allowed_kinases,
+        tf_sources,
+        tf_targets,
+        include_tfs_as_proteins,
+        logger_,
 ):
     """
     Pre-filter applied to the full phospho/protein CSV before passing its

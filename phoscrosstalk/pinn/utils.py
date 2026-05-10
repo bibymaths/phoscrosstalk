@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: MIT
 """
-pinn/utils.py
 Small utility helpers for the PINN subpackage.
 
 Contains:
@@ -19,12 +18,12 @@ import equinox as eqx
 
 
 def state_labels(
-    K: int,
-    M: int,
-    N: int,
-    proteins: list[str] | None = None,
-    kinases: list[str] | None = None,
-    sites: list[str] | None = None,
+        K: int,
+        M: int,
+        N: int,
+        proteins: list[str] | None = None,
+        kinases: list[str] | None = None,
+        sites: list[str] | None = None,
 ) -> list[str]:
     """
     Return human-readable state labels for the full ODE state vector.
@@ -43,8 +42,8 @@ def state_labels(
     list[str]  length = 3*K + M + N
     """
     _prot = proteins if proteins and len(proteins) == K else [str(k) for k in range(K)]
-    _kin  = kinases  if kinases  and len(kinases)  == M else [str(m) for m in range(M)]
-    _site = sites    if sites    and len(sites)    == N else [str(n) for n in range(N)]
+    _kin = kinases if kinases and len(kinases) == M else [str(m) for m in range(M)]
+    _site = sites if sites and len(sites) == N else [str(n) for n in range(N)]
 
     labels: list[str] = []
     for p in _prot:

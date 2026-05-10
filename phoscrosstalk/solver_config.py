@@ -1,7 +1,5 @@
 # SPDX-License-Identifier: MIT
 """
-solver_config.py
-
 Centralised Diffrax / Optimistix solver factories.
 
 Purpose
@@ -45,10 +43,10 @@ _VALID_OPTX_ADJOINTS = {"implicit", "checkpoint"}
 
 
 def make_diffrax_solver(
-    kind: str,
-    *,
-    root_find_max_steps: int = 10,
-    scan_kind: str | None = None,
+        kind: str,
+        *,
+        root_find_max_steps: int = 10,
+        scan_kind: str | None = None,
 ):
     """
     Build a Diffrax ODE solver.

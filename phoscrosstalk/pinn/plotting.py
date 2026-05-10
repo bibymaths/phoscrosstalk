@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: MIT
 """
-pinn/plotting.py
 PINN-specific plots.
 
 Provides:
@@ -12,11 +11,11 @@ Provides:
 
 from __future__ import annotations
 
-
 import os
 
 import numpy as np
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -27,16 +26,16 @@ _logger = get_logger().logger
 
 
 def plot_pinn_residual_heatmap(
-    outdir: str,
-    pinn_residuals: np.ndarray,
-    ts: np.ndarray,
-    K: int,
-    M: int,
-    N: int,
-    proteins: list[str],
-    kinases: list[str],
-    sites: list[str],
-    filename: str = "pinn_residuals.png",
+        outdir: str,
+        pinn_residuals: np.ndarray,
+        ts: np.ndarray,
+        K: int,
+        M: int,
+        N: int,
+        proteins: list[str],
+        kinases: list[str],
+        sites: list[str],
+        filename: str = "pinn_residuals.png",
 ) -> None:
     """
     Save a heatmap of |f_pinn(x, t)| with rows = state labels, columns = time.
@@ -52,7 +51,7 @@ def plot_pinn_residual_heatmap(
     abs_res = np.abs(pinn_residuals)  # (T, state_dim)
 
     state_dim = abs_res.shape[1]
-    n_labels  = min(state_dim, len(labels))
+    n_labels = min(state_dim, len(labels))
 
     try:
         fig, ax = plt.subplots(
@@ -77,7 +76,7 @@ def plot_pinn_residual_heatmap(
 
         # Mark time axis with approximate time values
         n_xticks = min(10, len(ts))
-        xtick_pos   = np.linspace(0, len(ts) - 1, n_xticks, dtype=int)
+        xtick_pos = np.linspace(0, len(ts) - 1, n_xticks, dtype=int)
         xtick_labels = [f"{float(ts[i]):.1f}" for i in xtick_pos]
         ax.set_xticks(xtick_pos)
         ax.set_xticklabels(xtick_labels, rotation=45, ha="right")
@@ -93,9 +92,9 @@ def plot_pinn_residual_heatmap(
 
 
 def plot_pinn_loss_trajectory(
-    outdir: str,
-    loss_history: list[dict],
-    filename: str = "pinn_loss_trajectory.png",
+        outdir: str,
+        loss_history: list[dict],
+        filename: str = "pinn_loss_trajectory.png",
 ) -> None:
     """
     Plot the PINN training loss components over steps.
@@ -103,21 +102,21 @@ def plot_pinn_loss_trajectory(
     if not loss_history:
         return
     try:
-        steps     = [d.get("step", i) for i, d in enumerate(loss_history)]
-        total     = [d.get("total_loss",   0.0) for d in loss_history]
-        f1_hist   = [d.get("f1",           0.0) for d in loss_history]
-        f2_hist   = [d.get("f2",           0.0) for d in loss_history]
-        f3_hist   = [d.get("f3",           0.0) for d in loss_history]
-        f4_hist   = [d.get("f4",           0.0) for d in loss_history]
-        fp_hist   = [d.get("f_pinn_reg",   0.0) for d in loss_history]
+        steps = [d.get("step", i) for i, d in enumerate(loss_history)]
+        total = [d.get("total_loss", 0.0) for d in loss_history]
+        f1_hist = [d.get("f1", 0.0) for d in loss_history]
+        f2_hist = [d.get("f2", 0.0) for d in loss_history]
+        f3_hist = [d.get("f3", 0.0) for d in loss_history]
+        f4_hist = [d.get("f4", 0.0) for d in loss_history]
+        fp_hist = [d.get("f_pinn_reg", 0.0) for d in loss_history]
 
         fig, ax = plt.subplots(figsize=(10, 5))
-        ax.semilogy(steps, total,   label="total",       color="black", lw=2)
-        ax.semilogy(steps, f1_hist, label="f1 phospho",  linestyle="--")
-        ax.semilogy(steps, f2_hist, label="f2 abundance",linestyle="--")
-        ax.semilogy(steps, f3_hist, label="f3 reg",      linestyle="--")
-        ax.semilogy(steps, f4_hist, label="f4 mRNA",     linestyle="--")
-        ax.semilogy(steps, fp_hist, label="f_pinn_reg",  linestyle="-.")
+        ax.semilogy(steps, total, label="total", color="black", lw=2)
+        ax.semilogy(steps, f1_hist, label="f1 phospho", linestyle="--")
+        ax.semilogy(steps, f2_hist, label="f2 abundance", linestyle="--")
+        ax.semilogy(steps, f3_hist, label="f3 reg", linestyle="--")
+        ax.semilogy(steps, f4_hist, label="f4 mRNA", linestyle="--")
+        ax.semilogy(steps, fp_hist, label="f_pinn_reg", linestyle="-.")
         ax.set_xlabel("Training step")
         ax.set_ylabel("Loss (log scale)")
         ax.set_title("PINN training loss trajectory")
@@ -133,17 +132,17 @@ def plot_pinn_loss_trajectory(
 
 
 def plot_pinn_fit_comparison(
-    outdir: str,
-    ts: np.ndarray,
-    ys: np.ndarray,
-    t_obs: np.ndarray,
-    P_data: np.ndarray,
-    sites: list[str],
-    K: int,
-    M: int,
-    N: int,
-    filename: str = "pinn_fit_comparison.png",
-    max_panels: int = 20,
+        outdir: str,
+        ts: np.ndarray,
+        ys: np.ndarray,
+        t_obs: np.ndarray,
+        P_data: np.ndarray,
+        sites: list[str],
+        K: int,
+        M: int,
+        N: int,
+        filename: str = "pinn_fit_comparison.png",
+        max_panels: int = 20,
 ) -> None:
     """
     Plot fitted vs observed phosphosite trajectories (first max_panels sites).
@@ -151,11 +150,11 @@ def plot_pinn_fit_comparison(
     if ys is None or P_data is None:
         return
     try:
-        ts_np  = np.asarray(ts)
-        ys_np  = np.asarray(ys)
+        ts_np = np.asarray(ts)
+        ys_np = np.asarray(ys)
         n_plot = min(max_panels, N)
-        ncols  = min(4, n_plot)
-        nrows  = (n_plot + ncols - 1) // ncols
+        ncols = min(4, n_plot)
+        nrows = (n_plot + ncols - 1) // ncols
 
         obs_idx = np.searchsorted(ts_np, t_obs, side="left")
         obs_idx = np.clip(obs_idx, 0, len(ts_np) - 1)
@@ -190,20 +189,20 @@ def plot_pinn_fit_comparison(
 
 
 def save_pinn_plots(
-    outdir: str,
-    *,
-    pinn_residuals: np.ndarray | None,
-    ts: np.ndarray | None,
-    ys: np.ndarray | None,
-    t_obs: np.ndarray | None,
-    P_data: np.ndarray | None,
-    loss_history: list[dict],
-    K: int,
-    M: int,
-    N: int,
-    proteins: list[str],
-    kinases: list[str],
-    sites: list[str],
+        outdir: str,
+        *,
+        pinn_residuals: np.ndarray | None,
+        ts: np.ndarray | None,
+        ys: np.ndarray | None,
+        t_obs: np.ndarray | None,
+        P_data: np.ndarray | None,
+        loss_history: list[dict],
+        K: int,
+        M: int,
+        N: int,
+        proteins: list[str],
+        kinases: list[str],
+        sites: list[str],
 ) -> None:
     """Convenience wrapper that saves all PINN plots."""
     os.makedirs(outdir, exist_ok=True)

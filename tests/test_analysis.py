@@ -276,7 +276,7 @@ class TestSaveDenseSimulation:
         args = _dense_common_args(tmp_path)
         with patch("phoscrosstalk.analysis.simulate_dense", return_value=_dense_result()):
             _save_dense_simulation(**args)
-        assert (tmp_path / "fit_timeseries_dense.tsv").exists()
+        assert (tmp_path / "protein_fit_timeseries_dense.tsv").exists()
 
     def test_creates_mrna_dense_tsv(self, tmp_path):
         from phoscrosstalk.analysis import _save_dense_simulation
@@ -294,7 +294,7 @@ class TestSaveDenseSimulation:
 
         with patch("phoscrosstalk.analysis.simulate_dense", return_value=_dense_result()):
             _save_dense_simulation(**args, data_interp_P=_interp_P)
-        df = pd.read_csv(tmp_path / "fit_timeseries_dense.tsv", sep="\t")
+        df = pd.read_csv(tmp_path / "protein_fit_timeseries_dense.tsv", sep="\t")
         assert "observed_interpolated_dense" in df["series_type"].values
 
     def test_with_data_interp_A_adds_rows(self, tmp_path):
@@ -310,7 +310,7 @@ class TestSaveDenseSimulation:
                 data_interp_A=_interp_A,
                 prot_idx_for_A_full=np.array([0, 1]),
             )
-        df = pd.read_csv(tmp_path / "fit_timeseries_dense.tsv", sep="\t")
+        df = pd.read_csv(tmp_path / "protein_fit_timeseries_dense.tsv", sep="\t")
         assert "observed_interpolated_dense" in df["series_type"].values
 
     def test_with_data_interp_R_adds_mrna_rows(self, tmp_path):
@@ -322,7 +322,7 @@ class TestSaveDenseSimulation:
 
         with patch("phoscrosstalk.analysis.simulate_dense", return_value=_dense_result()):
             _save_dense_simulation(**args, data_interp_R=_interp_R)
-        df = pd.read_csv(tmp_path / "fit_timeseries_dense.tsv", sep="\t")
+        df = pd.read_csv(tmp_path / "protein_fit_timeseries_dense.tsv", sep="\t")
         mrna_rows = df[df["entity_type"] == "mRNA"]
         assert len(mrna_rows) > 0
 
@@ -337,7 +337,7 @@ class TestSaveDenseSimulation:
 
         with patch("phoscrosstalk.analysis.simulate_dense", return_value=_dense_result()):
             _save_dense_simulation(**args, data_interp_P=_interp_P_flat)
-        assert (tmp_path / "fit_timeseries_dense.tsv").exists()
+        assert (tmp_path / "protein_fit_timeseries_dense.tsv").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +403,7 @@ class TestSaveFittedSimulation:
         with patch("phoscrosstalk.analysis.simulate", return_value=_sim_result()), \
              patch("phoscrosstalk.analysis.simulate_dense", return_value=_dense_result()):
             save_fitted_simulation(**args)
-        assert (tmp_path / "fit_timeseries.tsv").exists()
+        assert (tmp_path / "protein_fit_timeseries.tsv").exists()
         assert (tmp_path / "fitted_params.npz").exists()
 
     def test_creates_internal_states_tsv(self, tmp_path):
@@ -420,7 +420,7 @@ class TestSaveFittedSimulation:
         with patch("phoscrosstalk.analysis.simulate", return_value=_sim_result()), \
              patch("phoscrosstalk.analysis.simulate_dense", return_value=_dense_result()):
             save_fitted_simulation(**args)
-        assert (tmp_path / "fit_timeseries_dense.tsv").exists()
+        assert (tmp_path / "protein_fit_timeseries_dense.tsv").exists()
 
     def test_simulation_cfg_save_dense_false_skips_dense(self, tmp_path):
         from phoscrosstalk.analysis import save_fitted_simulation
@@ -429,7 +429,7 @@ class TestSaveFittedSimulation:
                                   dense_interpolation="diffrax_dense")
         with patch("phoscrosstalk.analysis.simulate", return_value=_sim_result()):
             save_fitted_simulation(**args, simulation_cfg=sim_cfg)
-        assert not (tmp_path / "fit_timeseries_dense.tsv").exists()
+        assert not (tmp_path / "protein_fit_timeseries_dense.tsv").exists()
 
     def test_data_interpolation_cfg_enabled(self, tmp_path):
         """data_interpolation_cfg.enabled=True triggers build_data_interpolations."""
@@ -444,7 +444,7 @@ class TestSaveFittedSimulation:
         with patch("phoscrosstalk.analysis.simulate", return_value=_sim_result()), \
              patch("phoscrosstalk.analysis.simulate_dense", return_value=_dense_result()):
             save_fitted_simulation(**args, data_interpolation_cfg=di_cfg)
-        assert (tmp_path / "fit_timeseries_dense.tsv").exists()
+        assert (tmp_path / "protein_fit_timeseries_dense.tsv").exists()
 
     def test_data_interpolation_with_rna_data(self, tmp_path):
         """data_interp_R branch: R_data0 and t_rna provided."""
@@ -469,7 +469,7 @@ class TestSaveFittedSimulation:
                 t_rna=t_rna,
                 data_interpolation_cfg=di_cfg,
             )
-        assert (tmp_path / "fit_timeseries.tsv").exists()
+        assert (tmp_path / "protein_fit_timeseries.tsv").exists()
 
     def test_kinases_parameter_used_for_labels(self, tmp_path):
         from phoscrosstalk.analysis import save_fitted_simulation
@@ -514,7 +514,7 @@ class TestPlotFittedSimulation:
         from phoscrosstalk.analysis import plot_fitted_simulation
         proteins = ["ProtA", "ProtB"]
         sites = ["ProtA_T1", "ProtA_S2", "ProtB_Y3"]
-        _write_timeseries_tsv(tmp_path / "fit_timeseries.tsv", proteins, sites)
+        _write_timeseries_tsv(tmp_path / "protein_fit_timeseries.tsv", proteins, sites)
         plot_fitted_simulation(str(tmp_path))
         pngs = list(tmp_path.glob("*.png"))
         assert len(pngs) >= 1
@@ -523,7 +523,7 @@ class TestPlotFittedSimulation:
         from phoscrosstalk.analysis import plot_fitted_simulation
         proteins = ["ProtA"]
         sites = ["ProtA_T1"]
-        _write_timeseries_tsv(tmp_path / "fit_timeseries.tsv", proteins, sites)
+        _write_timeseries_tsv(tmp_path / "protein_fit_timeseries.tsv", proteins, sites)
         mrna_records = [
             {"gene": "ProtA", "time": 0.0, "fitted": 1.0, "observed": 1.0},
             {"gene": "ProtA", "time": 10.0, "fitted": 1.2, "observed": 1.1},
@@ -540,7 +540,7 @@ class TestPlotFittedSimulation:
         from phoscrosstalk.analysis import plot_fitted_simulation
         proteins = ["ProtA"]
         sites = ["ProtA_T1"]
-        _write_timeseries_tsv(tmp_path / "fit_timeseries.tsv", proteins, sites)
+        _write_timeseries_tsv(tmp_path / "protein_fit_timeseries.tsv", proteins, sites)
         mrna_records = [
             {"gene": "ProtA", "time": 0.0, "simulated": 1.0, "observed": 1.0},
             {"gene": "ProtA", "time": 10.0, "simulated": 1.2, "observed": 1.1},
@@ -556,7 +556,7 @@ class TestPlotFittedSimulation:
         from phoscrosstalk.analysis import plot_fitted_simulation
         proteins = ["ProtA"]
         sites = ["ProtA_T1"]
-        _write_timeseries_tsv(tmp_path / "fit_timeseries.tsv", proteins, sites)
+        _write_timeseries_tsv(tmp_path / "protein_fit_timeseries.tsv", proteins, sites)
         # Write empty mrna file (just the header)
         pd.DataFrame(columns=["gene", "time", "fitted", "observed"]).to_csv(
             tmp_path / "mrna_fit_timeseries.tsv", sep="\t", index=False
