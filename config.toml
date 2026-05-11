@@ -251,14 +251,14 @@ include_tfs_as_proteins = false
 # =============================================================================
 [optimisation]
 n_starts      = 5
-max_steps     = 10000
+max_steps     = 200
 
 ls_solver     = "lm"         # options: "lm" | "gauss_newton" | "dogleg" | "indirect_lm"
 
 optx_adjoint  = "checkpoint"   # options: "implicit" | "checkpoint"
 jac_mode      = "bwd"        # options: "fwd" | "bwd"
 
-verbose       = true
+verbose       = false
 log_every     = 1
 loss_type     = "mse"
 
