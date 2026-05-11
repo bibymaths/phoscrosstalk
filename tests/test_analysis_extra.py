@@ -564,6 +564,9 @@ class TestSaveFittedSimulationInterpExceptions:
             fill_forward_nans_at_end=False, replace_nans_at_start=None
         )
         kwargs["data_interpolation_cfg"] = di_cfg
+        kwargs["simulation_cfg"] = SimpleNamespace(
+            save_dense=True, dense_n_points=20, dense_interpolation="diffrax_dense"
+        )
 
         with patch("phoscrosstalk.analysis.simulate", return_value=self._sim_result()):
             with patch("phoscrosstalk.analysis.simulate_dense", return_value=_dense_result()):
@@ -593,6 +596,9 @@ class TestSaveFittedSimulationInterpExceptions:
             fill_forward_nans_at_end=False, replace_nans_at_start=None
         )
         kwargs["data_interpolation_cfg"] = di_cfg
+        kwargs["simulation_cfg"] = SimpleNamespace(
+            save_dense=True, dense_n_points=20, dense_interpolation="diffrax_dense"
+        )
 
         with patch("phoscrosstalk.analysis.simulate", return_value=self._sim_result()):
             with patch("phoscrosstalk.analysis.simulate_dense", return_value=_dense_result()):

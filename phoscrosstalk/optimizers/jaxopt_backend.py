@@ -204,21 +204,24 @@ def _bounds_to_box_osqp_ineq(
         xu: jnp.ndarray,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """
-    Return a ``(C, l, u)`` triple for BoxOSQP ``params_ineq``.
+    Return ``(A, l, u)`` for BoxOSQP with ``l <= A @ x <= u``.
 
-    BoxOSQP solves ``l <= C @ x <= u``.  For pure box constraints on theta
-    itself, ``C = I``, ``l = xl``, ``u = xu``.
+    BoxOSQP expects:
+      - ``params_eq``   = A
+      - ``params_ineq`` = (l, u)
+    with constraints ``l <= A @ x <= u``.
+    For pure box constraints on theta itself, ``A = I``, ``l = xl``, ``u = xu``.
 
     Args:
         xl: Lower bound vector, shape (n,).
         xu: Upper bound vector, shape (n,).
 
     Returns:
-        ``(C, xl, xu)`` where ``C`` is the (n, n) identity matrix.
+        ``(A, xl, xu)`` where ``A`` is the (n, n) identity matrix.
     """
     n = xl.shape[0]
-    C = jnp.eye(n, dtype=xl.dtype)
-    return C, xl, xu
+    A = jnp.eye(n, dtype=xl.dtype)
+    return A, xl, xu
 
 
 def _run_osqp_qp(
@@ -315,14 +318,28 @@ def _run_box_osqp_qp(
         ) from exc
 
     if params_ineq is None:
-        ineq = _bounds_to_box_osqp_ineq(xl, xu)
+        A_eq, l_ineq, u_ineq = _bounds_to_box_osqp_ineq(xl, xu)
     else:
-        ineq = params_ineq
+        if not isinstance(params_ineq, (tuple, list)):
+            raise ValueError(
+                "params_ineq for box_osqp must be a tuple/list of length 2 or 3."
+            )
+        if len(params_ineq) == 3:
+            A_eq, l_ineq, u_ineq = params_ineq
+        elif len(params_ineq) == 2:
+            # Backward-compatible path: user provides only (l, u); use identity A.
+            A_eq = jnp.eye(xl.shape[0], dtype=xl.dtype)
+            l_ineq, u_ineq = params_ineq
+        else:
+            raise ValueError(
+                "params_ineq for box_osqp must be (l, u) or (A, l, u)."
+            )
 
     solver = BoxOSQP(**solver_kwargs)
     sol = solver.run(
         params_obj=(Q, c),
-        params_ineq=ineq,
+        params_eq=A_eq,
+        params_ineq=(l_ineq, u_ineq),
     )
     return sol.params.primal[0]
 

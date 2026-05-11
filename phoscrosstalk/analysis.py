@@ -364,79 +364,92 @@ def _save_dense_simulation(
     # Observed interpolated dense rows (diagnostic only, not training data).
     # Only included when data interpolation callables are provided.
     if data_interp_P is not None:
-        for i, site in enumerate(sites):
-            parts = site.split("_", 1)
-            prot = parts[0]
-            s = parts[1] if len(parts) > 1 else ""
-            # data_interp_P(t_dense) returns (N_sites, T_dense) when t_dense is
-            # an array, so we index as interp_vals[i, :].
+        try:
             interp_vals = np.asarray(data_interp_P(t_dense), dtype=float)
-            if interp_vals.ndim == 2:
-                site_vals = interp_vals[i, :]
-            else:
-                # Fallback for callables returning flat arrays (single-site edge case)
-                site_vals = interp_vals
-            for j, ti in enumerate(t_dense):
-                rows.append(
-                    {
-                        "entity_type": "Phosphosite",
-                        "entity": site,
-                        "site": s,
-                        "protein": prot,
-                        "time": float(ti),
-                        "value": float(site_vals[j]),
-                        "series_type": "observed_interpolated_dense",
-                        "source": "data_interpolation",
-                        "interpolation_method": "data_interp",
-                    }
-                )
+            for i, site in enumerate(sites):
+                parts = site.split("_", 1)
+                prot = parts[0]
+                s = parts[1] if len(parts) > 1 else ""
+                if interp_vals.ndim == 2:
+                    site_vals = interp_vals[i, :]
+                else:
+                    # Fallback for callables returning flat arrays (single-site edge case)
+                    site_vals = interp_vals
+                for j, ti in enumerate(t_dense):
+                    rows.append(
+                        {
+                            "entity_type": "Phosphosite",
+                            "entity": site,
+                            "site": s,
+                            "protein": prot,
+                            "time": float(ti),
+                            "value": float(site_vals[j]),
+                            "series_type": "observed_interpolated_dense",
+                            "source": "data_interpolation",
+                            "interpolation_method": "data_interp",
+                        }
+                    )
+        except Exception as exc:
+            logger.warning(
+                "[data_interp] Skipping phosphosite interpolated dense rows: %s", exc
+            )
 
     if data_interp_A is not None and prot_idx_for_A_full is not None:
-        # data_interp_A(t_dense) returns (K_obs, T_dense) when t_dense is an array
-        interp_A_vals = np.asarray(data_interp_A(t_dense), dtype=float)
-        for k_obs, p_idx in enumerate(prot_idx_for_A_full):
-            prot = proteins[p_idx]
-            if interp_A_vals.ndim == 2:
-                row_vals = interp_A_vals[k_obs, :]
-            else:
-                row_vals = interp_A_vals
-            for j, ti in enumerate(t_dense):
-                rows.append(
-                    {
-                        "entity_type": "ProteinAbundance",
-                        "entity": prot,
-                        "site": "",
-                        "protein": prot,
-                        "time": float(ti),
-                        "value": float(row_vals[j]),
-                        "series_type": "observed_interpolated_dense",
-                        "source": "data_interpolation",
-                        "interpolation_method": "data_interp",
-                    }
-                )
+        try:
+            # data_interp_A(t_dense) returns (K_obs, T_dense) when t_dense is an array
+            interp_A_vals = np.asarray(data_interp_A(t_dense), dtype=float)
+            for k_obs, p_idx in enumerate(prot_idx_for_A_full):
+                prot = proteins[p_idx]
+                if interp_A_vals.ndim == 2:
+                    row_vals = interp_A_vals[k_obs, :]
+                else:
+                    row_vals = interp_A_vals
+                for j, ti in enumerate(t_dense):
+                    rows.append(
+                        {
+                            "entity_type": "ProteinAbundance",
+                            "entity": prot,
+                            "site": "",
+                            "protein": prot,
+                            "time": float(ti),
+                            "value": float(row_vals[j]),
+                            "series_type": "observed_interpolated_dense",
+                            "source": "data_interpolation",
+                            "interpolation_method": "data_interp",
+                        }
+                    )
+        except Exception as exc:
+            logger.warning(
+                "[data_interp] Skipping protein interpolated dense rows: %s", exc
+            )
 
     # Interpolated mRNA (observed) — diagnostic only. NOT training data.
     # series_type is clearly labelled to avoid confusion with simulated_dense rows.
     if data_interp_R is not None:
-        interp_R_vals = np.asarray(data_interp_R(t_dense), dtype=float)
-        # data_interp_R(t_dense) returns shape (K, n_dense) for array input
-        for p_idx in range(K):
-            prot = proteins[p_idx]
-            row_vals = interp_R_vals[p_idx, :] if interp_R_vals.ndim == 2 else interp_R_vals
-            for j, ti in enumerate(t_dense):
-                rows.append(
-                    {
-                        "entity_type": "mRNA",
-                        "entity": prot,
-                        "site": "",
-                        "protein": prot,
-                        "time": float(ti),
-                        "value": float(row_vals[j]),
-                        "series_type": "observed_interpolated_dense",
-                        "source": "data_interpolation",
-                        "interpolation_method": "data_interp",
-                    }
-                )
+        try:
+            interp_R_vals = np.asarray(data_interp_R(t_dense), dtype=float)
+            # data_interp_R(t_dense) returns shape (K, n_dense) for array input
+            for p_idx in range(K):
+                prot = proteins[p_idx]
+                row_vals = interp_R_vals[p_idx, :] if interp_R_vals.ndim == 2 else interp_R_vals
+                for j, ti in enumerate(t_dense):
+                    rows.append(
+                        {
+                            "entity_type": "mRNA",
+                            "entity": prot,
+                            "site": "",
+                            "protein": prot,
+                            "time": float(ti),
+                            "value": float(row_vals[j]),
+                            "series_type": "observed_interpolated_dense",
+                            "source": "data_interpolation",
+                            "interpolation_method": "data_interp",
+                        }
+                    )
+        except Exception as exc:
+            logger.warning(
+                "[data_interp/rna] Skipping mRNA interpolated dense rows: %s", exc
+            )
 
     df_dense = pd.DataFrame(rows)
     df_dense.to_csv(
@@ -711,18 +724,24 @@ def save_fitted_simulation(
             _di_method = getattr(_di_cfg, "method", "linear")
             _di_fwd = getattr(_di_cfg, "fill_forward_nans_at_end", False)
             _di_start = getattr(_di_cfg, "replace_nans_at_start", None)
-            _interp_result = build_data_interpolations(
-                t_obs=t,
-                P_data=P_scaled,
-                A_data=A_scaled if (A_scaled is not None and np.asarray(A_scaled).size > 0) else None,
-                method=_di_method,
-                fill_forward_nans_at_end=_di_fwd,
-                replace_nans_at_start=_di_start,
-            )
-            _data_interp_P = _interp_result.get("P_interp")
-            _data_interp_A = _interp_result.get("A_interp")
-            for msg in _interp_result.get("nan_fill_log", []):
-                logger.info(f"[data_interp]{msg}")
+            try:
+                _interp_result = build_data_interpolations(
+                    t_obs=t,
+                    P_data=P_scaled,
+                    A_data=A_scaled if (A_scaled is not None and np.asarray(A_scaled).size > 0) else None,
+                    method=_di_method,
+                    fill_forward_nans_at_end=_di_fwd,
+                    replace_nans_at_start=_di_start,
+                )
+                _data_interp_P = _interp_result.get("P_interp")
+                _data_interp_A = _interp_result.get("A_interp")
+                for msg in _interp_result.get("nan_fill_log", []):
+                    logger.info(f"[data_interp]{msg}")
+            except Exception as exc:
+                logger.warning(
+                    "[data_interp] Failed to build phospho/protein interpolations; continuing without them: %s",
+                    exc,
+                )
 
         # Separately build RNA interpolation using the RNA-specific time axis.
         # This must NOT reuse t (phospho/protein time axis) — t_rna may differ.
@@ -773,20 +792,26 @@ def save_fitted_simulation(
                         "Expected rna_data.shape[1] == len(t_rna)."
                     )
 
-                _rna_interp_result = _bdi(
-                    t_obs=_t_rna_arr,
-                    rna_data=_rna_arr,
-                    method=_di_method,
-                    fill_forward_nans_at_end=_di_fwd,
-                    replace_nans_at_start=_di_start,
-                )
+                try:
+                    _rna_interp_result = _bdi(
+                        t_obs=_t_rna_arr,
+                        rna_data=_rna_arr,
+                        method=_di_method,
+                        fill_forward_nans_at_end=_di_fwd,
+                        replace_nans_at_start=_di_start,
+                    )
 
-                _data_interp_R = _rna_interp_result.get("rna_interp")
+                    _data_interp_R = _rna_interp_result.get("rna_interp")
 
-                for msg in _rna_interp_result.get("nan_fill_log", []):
-                    logger.info("[data_interp/rna] %s", msg)
+                    for msg in _rna_interp_result.get("nan_fill_log", []):
+                        logger.info("[data_interp/rna] %s", msg)
+                except Exception as exc:
+                    logger.warning(
+                        "[data_interp/rna] Failed to build RNA interpolation; continuing without it: %s",
+                        exc,
+                    )
 
-        if _do_dense and sim_full_override is not None:
+        if _do_dense and sim_full_override is None:
             _save_dense_simulation(
                 outdir=outdir,
                 dims=dims,

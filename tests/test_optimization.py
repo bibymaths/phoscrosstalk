@@ -419,19 +419,19 @@ def test_residuals_block_sizes_with_rna():
 
 
 def test_config_optimisation_defaults():
-    """config.py must have solver/verbose/rtol/atol in [optimisation] defaults."""
+    """config.py defaults expose current optimisation keys."""
     from phoscrosstalk.config import load_config
 
     cfg = load_config(None)  # use defaults
     o = cfg.optimisation
 
-    assert hasattr(o, "solver"), "optimisation.solver missing from config defaults"
+    assert hasattr(o, "ls_solver"), "optimisation.ls_solver missing from config defaults"
     assert hasattr(o, "verbose"), "optimisation.verbose missing from config defaults"
     assert hasattr(o, "rtol"), "optimisation.rtol missing from config defaults"
     assert hasattr(o, "atol"), "optimisation.atol missing from config defaults"
 
-    assert o.solver == "levenberg_marquardt", (
-        f"Default solver should be 'levenberg_marquardt', got {o.solver!r}"
+    assert o.ls_solver == "lm", (
+        f"Default ls_solver should be 'lm', got {o.ls_solver!r}"
     )
     assert o.verbose is False, f"Default verbose should be False, got {o.verbose}"
     assert o.rtol > 0, f"Default rtol should be positive, got {o.rtol}"

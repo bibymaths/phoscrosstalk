@@ -166,6 +166,7 @@ def test_create_bounds_from_config():
         rate_min=1e-4,
         rate_max=5.0,
         protein_degradation_max=0.3,
+        k_deact_max=2.0,
         kinase_rate_max=2.0,
         phosphatase_rate_max=4.0,
         gamma_abs_max=2.0,
@@ -179,9 +180,9 @@ def test_create_bounds_from_config():
     # Gammas are the last 4 elements
     assert xu_cfg[-1] == pytest.approx(bounds_cfg.gamma_abs_max)
     assert xl_cfg[-1] == pytest.approx(-bounds_cfg.gamma_abs_max)
-    # log(rate_max) upper bound for k_deact should differ
-    assert xu_cfg[0] == pytest.approx(np.log(bounds_cfg.rate_max))
-    assert xu_default[0] == pytest.approx(np.log(10.0))
+    # k_deact uses k_deact_max (not rate_max)
+    assert xu_cfg[0] == pytest.approx(np.log(bounds_cfg.k_deact_max))
+    assert xu_default[0] == pytest.approx(np.log(2.0))
 
 
 # ---------------------------------------------------------------------------

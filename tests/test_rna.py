@@ -16,6 +16,7 @@ Tests for RNA-as-ODE-state features:
  12. test_backward_simulate_alias
 """
 
+import json
 import os
 import sys
 
@@ -294,17 +295,17 @@ def test_rna_loss_nonzero_when_sim_differs(tmp_path):
 
 
 def test_save_mrna_outputs_requires_simulated(tmp_path):
-    """save_mrna_outputs must raise ValueError if rna_simulated is None."""
+    """save_mrna_outputs should skip writing files when rna_simulated is None."""
     from phoscrosstalk.analysis import save_mrna_outputs
 
-    with pytest.raises(ValueError, match="rna_simulated must not be None"):
-        save_mrna_outputs(
-            outdir=str(tmp_path),
-            gene_ids=["EGFR"],
-            t_rna=np.array([4.0, 8.0]),
-            rna_data_obs=np.ones((1, 2)),
-            rna_simulated=None,
-        )
+    save_mrna_outputs(
+        outdir=str(tmp_path),
+        gene_ids=["EGFR"],
+        t_rna=np.array([4.0, 8.0]),
+        rna_data_obs=np.ones((1, 2)),
+        rna_simulated=None,
+    )
+    assert not (tmp_path / "mrna_fit_timeseries.tsv").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -490,6 +491,8 @@ def test_plot_three_panel_fit(tmp_path):
     pd.DataFrame(rna_rows).to_csv(
         os.path.join(outdir, "mrna_fit_timeseries.tsv"), sep="\t", index=False
     )
+    with open(os.path.join(outdir, "time_axes.json"), "w", encoding="utf-8") as fh:
+        json.dump({"phosphosite_time_points": [0.0, 30.0, 60.0]}, fh)
 
     plot_fitted_simulation(outdir)
 
@@ -575,6 +578,8 @@ def test_mrna_tsv_simulated_column_alias(tmp_path):
     pd.DataFrame(rna_rows).to_csv(
         os.path.join(outdir, "mrna_fit_timeseries.tsv"), sep="\t", index=False
     )
+    with open(os.path.join(outdir, "time_axes.json"), "w", encoding="utf-8") as fh:
+        json.dump({"phosphosite_time_points": [0.0, 30.0, 60.0]}, fh)
 
     # Should not raise even with "simulated" instead of "fitted"
     plot_fitted_simulation(outdir)
