@@ -1,50 +1,89 @@
 # SPDX-License-Identifier: MIT
 """
-Optax projected gradient / L-BFGS backend for the phospho-network.
+Optax projected-gradient / L-BFGS backend for the phospho-network.
 
-Two solver kinds are provided, both enforcing hard box constraints via
-optax.projections.projection_box:
+Supported optimiser kinds
+-------------------------
+"adam"
+    Adam with hard box projection after every update.
 
-"adam" / "sgd"
-    First-order gradient descent with Optax optimiser.  After each gradient
-    step, parameters are projected back into [xl, xu] using
-    optax.projections.projection_box.
-
-    Optax update loop::
-
-        updates, state = optimizer.update(grads, state)
-        theta = projection_box(apply_updates(theta, updates), xl, xu)
+"sgd"
+    Momentum SGD with hard box projection after every update.
 
 "lbfgs"
-    optax.lbfgs() (quasi-Newton).  L-BFGS requires the value and grad
-    at the current point to compute the update, supplied via
-    optax.value_and_grad_from_state.  Bounds are applied via
-    projection_box after each step exactly as for Adam/SGD.
+    Optax L-BFGS with optional zoom line search and hard box projection after
+    every update.
 
-    L-BFGS update loop (verified API, Optax >= 0.2)::
+Important note on bounds
+------------------------
+For all Optax modes, bounds are enforced by post-update projection:
 
-        value_and_grad = optax.value_and_grad_from_state(scalar_loss)
-        value, grad = value_and_grad(theta, state=opt_state)
-        updates, opt_state = optimizer.update(
-            grad, opt_state, theta,
-            value=value, grad=grad, value_fn=scalar_loss,
-        )
-        theta = projection_box(apply_updates(theta, updates), xl, xu)
+    theta = projection_box(theta + update, xl, xu)
+
+This guarantees feasibility, but for L-BFGS it is not mathematically identical
+to native L-BFGS-B. Projection can distort the quasi-Newton curvature history
+when many parameters hit bounds. For strict bounded quasi-Newton optimisation,
+jaxopt_lbfgsb remains the cleaner backend.
+
+This backend is still useful because it is fully JAX/Optax based and supports
+modern adaptive optimisers and Optax L-BFGS line-search machinery.
 """
 
 from __future__ import annotations
 
-import numpy as np
+from typing import Callable
+
 import jax
 import jax.numpy as jnp
+import numpy as np
 import optax
 from optax.projections import projection_box
-from typing import Callable
 
 from phoscrosstalk.logger import get_logger
 
 logger = get_logger()
 
+
+# ---------------------------------------------------------------------------
+# Small helpers
+# ---------------------------------------------------------------------------
+
+
+def _as_optional_float(value):
+    """
+    Convert config values to float or None.
+
+    This keeps compatibility with TOML/config loaders that may pass "none",
+    "null", "", or None.
+    """
+    if value is None:
+        return None
+
+    if isinstance(value, str):
+        if value.strip().lower() in {"", "none", "null"}:
+            return None
+
+    return float(value)
+
+
+def _make_lbfgs_linesearch(kind: str | None, max_linesearch_steps: int):
+    if kind is None:
+        return None
+
+    kind_norm = str(kind).strip().lower()
+
+    if kind_norm in {"none", "null", "false", "off", ""}:
+        return None
+
+    if kind_norm in {"zoom", "default", "auto"}:
+        return optax.scale_by_zoom_linesearch(
+            max_linesearch_steps=int(max_linesearch_steps)
+        )
+
+    raise ValueError(
+        f"Unknown lbfgs_linesearch={kind!r}. "
+        "Use 'zoom' or 'none'."
+    )
 
 # ---------------------------------------------------------------------------
 # Public entry point
@@ -58,150 +97,267 @@ def run_single_optimisation_optax(
         xu: np.ndarray,
         *,
         max_steps: int = 1000,
-        learning_rate: float = 1e-3,
+        learning_rate: float | None = 1e-3,
         optimizer_kind: str = "adam",
         verbose: bool = False,
         log_every: int = 100,
         convergence_tol: float = 1e-7,
+        lbfgs_memory_size: int = 20,
+        lbfgs_scale_init_precond: bool = True,
+        lbfgs_linesearch: str | None = "zoom",
+        lbfgs_max_linesearch_steps: int = 20,
 ) -> tuple[np.ndarray, float, float, float, float, float]:
     """
-    Run projected gradient optimisation via Optax with hard box constraints.
+    Run projected Optax optimisation with hard box constraints.
 
     Args:
-        loss_fn: ``(theta, args) -> (scalar_loss, (f1, f2, f3, f4))``.
-        theta0: Initial parameter vector.
-        xl: Lower bounds.  Sourced from problem.xl / problem.xu
-            (output of create_bounds()).
-        xu: Upper bounds.
-        max_steps: Maximum gradient steps.
-        learning_rate: Step size for "adam" / "sgd"; ignored for "lbfgs"
-            (L-BFGS uses a line-search-controlled step).
-        optimizer_kind: Optax optimiser to use; one of "adam", "sgd", "lbfgs".
-        verbose: If True, emit per-step diagnostics via the logger.
-        log_every: Log diagnostics every log_every steps (only when verbose=True).
-        convergence_tol: Stop early if the absolute change in loss falls below
-            this threshold.
+        loss_fn:
+            Callable with signature ``loss_fn(theta, args) ->
+            (scalar_loss, (f1, f2, f3, f4))``.
+
+        theta0:
+            Initial parameter vector.
+
+        xl:
+            Lower bounds, same shape as theta0.
+
+        xu:
+            Upper bounds, same shape as theta0.
+
+        max_steps:
+            Maximum optimisation steps.
+
+        learning_rate:
+            Step size for Adam/SGD. For L-BFGS, this is an optional global
+            scaling factor. When using line search, 1.0 is usually appropriate.
+            None is allowed for L-BFGS but not for Adam/SGD.
+
+        optimizer_kind:
+            One of "adam", "sgd", or "lbfgs".
+
+        verbose:
+            Emit progress logs.
+
+        log_every:
+            Log every N steps when verbose=True.
+
+        convergence_tol:
+            Stop when absolute loss improvement between consecutive accepted
+            iterates is below this value.
+
+        lbfgs_memory_size:
+            Number of past parameter/gradient differences retained by L-BFGS.
+
+        lbfgs_scale_init_precond:
+            Whether to scale the initial L-BFGS inverse-Hessian preconditioner.
+
+        lbfgs_linesearch:
+            "zoom" to use Optax zoom line search, or "none" to disable line
+            search.
+
+        lbfgs_max_linesearch_steps:
+            Maximum number of line search steps to take before giving up.
 
     Returns:
-        Tuple of (theta_opt, total_loss, f1, f2, f3, f4):
-
-        - theta_opt: float64 numpy array.
-        - total_loss: float.
-        - f1, f2, f3, f4: float loss components.
+        Tuple:
+            theta_opt, total_loss, f1, f2, f3, f4
 
     Raises:
-        ValueError: If optimizer_kind is not recognised.
+        ValueError:
+            On invalid optimizer_kind or incompatible options.
     """
-    xl_j = jnp.asarray(xl, dtype=jnp.float64)
-    xu_j = jnp.asarray(xu, dtype=jnp.float64)
-    theta = jnp.asarray(theta0, dtype=jnp.float64)
-    # Guarantee feasible start.
-    theta = projection_box(theta, xl_j, xu_j)
+    optimizer_kind = str(optimizer_kind).strip().lower()
 
-    # ----------------------------------------------------------------------- #
-    # Build the Optax optimiser.
-    #
-    # optax.lbfgs() API (>= 0.2):
-    #   optimizer.update(grad, state, params, value=..., grad=..., value_fn=...)
-    #   Requires value and grad at the current point; use
-    #   optax.value_and_grad_from_state to avoid recomputing the function.
-    # ----------------------------------------------------------------------- #
-    if optimizer_kind == "adam":
-        optimizer = optax.adam(learning_rate)
-    elif optimizer_kind == "sgd":
-        optimizer = optax.sgd(learning_rate, momentum=0.9)
-    elif optimizer_kind == "lbfgs":
-        optimizer = optax.lbfgs()
-    else:
+    if optimizer_kind not in {"adam", "sgd", "lbfgs"}:
         raise ValueError(
             f"Unknown optimizer_kind {optimizer_kind!r}. "
             "Choose 'adam', 'sgd', or 'lbfgs'."
         )
 
-    opt_state = optimizer.init(theta)
+    if max_steps <= 0:
+        raise ValueError(f"max_steps must be > 0. Got {max_steps}.")
 
-    # Scalar loss (no aux) — used for L-BFGS value_fn.
-    def scalar_loss(t):
-        val, _ = loss_fn(t, None)
+    if log_every <= 0:
+        raise ValueError(f"log_every must be > 0. Got {log_every}.")
+
+    if convergence_tol < 0:
+        raise ValueError(
+            f"convergence_tol must be >= 0. Got {convergence_tol}."
+        )
+
+    xl_j = jnp.asarray(xl, dtype=jnp.float64)
+    xu_j = jnp.asarray(xu, dtype=jnp.float64)
+    theta = jnp.asarray(theta0, dtype=jnp.float64)
+
+    if xl_j.shape != theta.shape or xu_j.shape != theta.shape:
+        raise ValueError(
+            "theta0, xl, and xu must have identical shapes. "
+            f"Got theta0={theta.shape}, xl={xl_j.shape}, xu={xu_j.shape}."
+        )
+
+    if bool(jnp.any(xu_j <= xl_j)):
+        raise ValueError("All upper bounds must be greater than lower bounds.")
+
+    # Guarantee feasible start.
+    theta = projection_box(theta, xl_j, xu_j)
+
+    lr = _as_optional_float(learning_rate)
+
+    # ------------------------------------------------------------------ #
+    # Scalar loss wrappers                                                #
+    # ------------------------------------------------------------------ #
+    def scalar_loss(params):
+        val, _aux = loss_fn(params, None)
         return val
 
-    # Scalar loss with aux — used for Adam/SGD to get diagnostics cheaply.
-    def scalar_loss_with_aux(t):
-        return loss_fn(t, None)  # returns (scalar, (f1,f2,f3,f4))
+    def scalar_loss_with_aux(params):
+        return loss_fn(params, None)
 
-    # For L-BFGS we use optax.value_and_grad_from_state to read the cached
-    # value from the optimiser state rather than recomputing it each step.
+    # ------------------------------------------------------------------ #
+    # Build optimiser                                                     #
+    # ------------------------------------------------------------------ #
+    if optimizer_kind == "adam":
+        if lr is None:
+            raise ValueError("learning_rate must be provided for optax.adam.")
+        optimizer = optax.adam(lr)
+
+    elif optimizer_kind == "sgd":
+        if lr is None:
+            raise ValueError("learning_rate must be provided for optax.sgd.")
+        optimizer = optax.sgd(lr, momentum=0.9)
+
+    else:  # optimizer_kind == "lbfgs"
+        if lbfgs_memory_size <= 0:
+            raise ValueError(
+                f"lbfgs_memory_size must be > 0. Got {lbfgs_memory_size}."
+            )
+
+        linesearch = _make_lbfgs_linesearch(
+            lbfgs_linesearch,
+            lbfgs_max_linesearch_steps,
+        )
+
+        optimizer = optax.lbfgs(
+            learning_rate=lr,
+            memory_size=int(lbfgs_memory_size),
+            scale_init_precond=bool(lbfgs_scale_init_precond),
+            linesearch=linesearch,
+        )
+
+    opt_state = optimizer.init(theta)
+
+    # ------------------------------------------------------------------ #
+    # JIT derivative/value functions                                      #
+    # ------------------------------------------------------------------ #
+    # Adam/SGD use value_and_grad with aux.
+    value_and_grad_with_aux_fn = jax.jit(
+        jax.value_and_grad(scalar_loss_with_aux, has_aux=True)
+    )
+
+    # L-BFGS uses Optax's state-aware value/grad helper. Do not wrap this
+    # helper blindly with jax.jit because it reads optimiser-state caches.
     if optimizer_kind == "lbfgs":
-        value_and_grad_fn = optax.value_and_grad_from_state(scalar_loss)
+        lbfgs_value_and_grad_fn = optax.value_and_grad_from_state(scalar_loss)
 
+    # Aux diagnostics after the projected update.
+    scalar_loss_with_aux_jit = jax.jit(scalar_loss_with_aux)
+
+    # ------------------------------------------------------------------ #
+    # Optimisation loop                                                   #
+    # ------------------------------------------------------------------ #
     prev_loss = jnp.asarray(jnp.inf, dtype=jnp.float64)
     best_theta = theta
     best_loss = jnp.asarray(jnp.inf, dtype=jnp.float64)
 
-    for step in range(max_steps):
+    for step in range(int(max_steps)):
         if optimizer_kind == "lbfgs":
-            # --------------------------------------------------------------- #
-            # L-BFGS update loop (verified Optax >= 0.2 API):
-            #
-            #   value_and_grad_from_state(scalar_loss)(params, state=opt_state)
-            #     -> (value, grad)   [reads cached value from state if available]
-            #
-            #   optimizer.update(grad, state, params,
-            #                    value=value, grad=grad, value_fn=scalar_loss)
-            #     -> (updates, new_state)
-            # --------------------------------------------------------------- #
-            value, grad = value_and_grad_fn(theta, state=opt_state)
+            value, grad = lbfgs_value_and_grad_fn(theta, state=opt_state)
+
             updates, opt_state = optimizer.update(
-                grad, opt_state, theta,
-                value=value, grad=grad, value_fn=scalar_loss,
+                grad,
+                opt_state,
+                theta,
+                value=value,
+                grad=grad,
+                value_fn=scalar_loss,
             )
-            loss_val = value
-            # Diagnostics from a cheap aux call at current theta.
-            _, (f1, f2, f3, f4) = scalar_loss_with_aux(theta)
+
         else:
-            # --------------------------------------------------------------- #
-            # Adam / SGD update loop:
-            #
-            #   jax.value_and_grad(scalar_loss_with_aux, has_aux=True)(theta)
-            #     -> ((scalar, aux), grad)
-            #
-            #   optimizer.update(grad, state)
-            #     -> (updates, new_state)
-            # --------------------------------------------------------------- #
-            (loss_val, (f1, f2, f3, f4)), grad = jax.value_and_grad(
-                scalar_loss_with_aux, has_aux=True
-            )(theta)
+            (value, _aux), grad = value_and_grad_with_aux_fn(theta)
             updates, opt_state = optimizer.update(grad, opt_state)
 
-        # Apply gradient update then project onto the box.
-        theta = projection_box(optax.apply_updates(theta, updates), xl_j, xu_j)
+        # Hard projection after every update.
+        theta_new = projection_box(
+            optax.apply_updates(theta, updates),
+            xl_j,
+            xu_j,
+        )
 
-        total = float(loss_val)
+        # Evaluate accepted/projected iterate. This is important for L-BFGS
+        # because the line search sees the unprojected candidate, while the
+        # actual iterate is projected.
+        loss_new, (f1, f2, f3, f4) = scalar_loss_with_aux_jit(theta_new)
+
+        if not bool(jnp.isfinite(loss_new)):
+            logger.warning(
+                "[optax/%s] step=%d produced non-finite loss after projection; "
+                "stopping and returning best feasible theta.",
+                optimizer_kind,
+                step,
+            )
+            break
+
+        theta = theta_new
+        total = float(loss_new)
+
         if total < float(best_loss):
-            best_loss = loss_val
+            best_loss = loss_new
             best_theta = theta
 
-        if verbose and step % log_every == 0:
+        if verbose and step % int(log_every) == 0:
             logger.info(
                 "[optax/%s] step=%d  loss=%.4e  f1=%.3e f2=%.3e f3=%.3e f4=%.3e",
-                optimizer_kind, step, total,
-                float(f1), float(f2), float(f3), float(f4),
+                optimizer_kind,
+                step,
+                total,
+                float(f1),
+                float(f2),
+                float(f3),
+                float(f4),
             )
 
-        if abs(float(prev_loss) - total) < convergence_tol:
-            logger.info("[optax/%s] converged at step %d", optimizer_kind, step)
+        if abs(float(prev_loss) - total) < float(convergence_tol):
+            logger.info(
+                "[optax/%s] converged at step %d; |Δloss|=%.3e < %.3e",
+                optimizer_kind,
+                step,
+                abs(float(prev_loss) - total),
+                float(convergence_tol),
+            )
             break
-        prev_loss = loss_val
 
+        prev_loss = loss_new
+
+    # ------------------------------------------------------------------ #
+    # Final diagnostics at best point                                     #
+    # ------------------------------------------------------------------ #
     theta_opt = np.asarray(best_theta, dtype=np.float64)
 
-    # Final diagnostics at the best point found.
     _, (f1, f2, f3, f4) = loss_fn(best_theta, None)
-    f1, f2, f3, f4 = float(f1), float(f2), float(f3), float(f4)
+    f1 = float(f1)
+    f2 = float(f2)
+    f3 = float(f3)
+    f4 = float(f4)
     total_loss = f1 + f2 + f3 + f4
 
     logger.info(
         "[optax/%s] final loss=%.4e  f1=%.3e f2=%.3e f3=%.3e f4=%.3e",
-        optimizer_kind, total_loss, f1, f2, f3, f4,
+        optimizer_kind,
+        total_loss,
+        f1,
+        f2,
+        f3,
+        f4,
     )
+
     return theta_opt, total_loss, f1, f2, f3, f4

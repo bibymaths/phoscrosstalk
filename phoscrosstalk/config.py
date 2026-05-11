@@ -460,6 +460,7 @@ _VALID_ODE_ADJOINTS = {
     "checkpoint",
     "direct",
     "backsolve",
+    "implicit",
     "none",
 }
 

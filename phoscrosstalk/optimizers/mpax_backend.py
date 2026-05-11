@@ -162,8 +162,12 @@ def run_single_optimisation_mpax(
         val, _ = loss_fn(t, None)
         return val
 
-    grad_fn = jax.grad(scalar_loss)
-    hess_fn = jax.hessian(scalar_loss) if not diagonal_hessian else None
+    value_and_grad_fn = jax.jit(jax.value_and_grad(scalar_loss))
+
+    if diagonal_hessian:
+        hess_fn = None
+    else:
+        hess_fn = jax.jit(jax.jacfwd(jax.jacfwd(scalar_loss)))
 
     # Empty equality/inequality constraint matrices.
     A_eq = jnp.zeros((0, n), dtype=jnp.float64)
@@ -181,36 +185,37 @@ def run_single_optimisation_mpax(
     best_loss = jnp.asarray(jnp.inf, dtype=jnp.float64)
 
     for step in range(max_sqp_steps):
-        g = grad_fn(theta)  # (n,)
+        _loss_scalar, g = value_and_grad_fn(theta)  # (n,)
 
         if diagonal_hessian:
-            # Cheap diagonal approximation: scale gradient by per-element
-            # second-order finite-difference estimate.
+            # Current implementation: rough diagonal curvature proxy.
             eps_fd = 1e-4
-            g_plus = grad_fn(theta + eps_fd)
+            _, g_plus = value_and_grad_fn(theta + eps_fd)
             diag_H = jnp.clip((g_plus - g) / eps_fd, 0.0, None)
             H_reg = jnp.diag(diag_H + hess_reg)
+
         else:
             H = hess_fn(theta)  # (n, n)
+            H = 0.5 * (H + H.T)
             H_reg = H + hess_reg * jnp.eye(n, dtype=jnp.float64)
 
-        # Trust-region box in the step space.
         l_qp = jnp.maximum(xl_j - theta, -trust_radius)
         u_qp = jnp.minimum(xu_j - theta, trust_radius)
 
-        # ---------------------------------------------------------------- #
-        # create_qp API:
-        #   create_qp(Q, c, A, b, G, h, l, u, use_sparse_matrix=False)
-        # ---------------------------------------------------------------- #
         qp = create_qp(
-            H_reg, g,
-            A_eq, b_eq,
-            G_ineq, h_ineq,
-            l_qp, u_qp,
+            H_reg,
+            g,
+            A_eq,
+            b_eq,
+            G_ineq,
+            h_ineq,
+            l_qp,
+            u_qp,
             use_sparse_matrix=False,
         )
+
         result = solver.optimize(qp)
-        dtheta = result.primal_solution  # (n,)
+        dtheta = result.primal_solution
 
         theta = jnp.clip(theta + dtheta, xl_j, xu_j)
 
@@ -220,7 +225,12 @@ def run_single_optimisation_mpax(
         if verbose:
             logger.info(
                 "[mpax/SQP] step=%d  loss=%.4e  f1=%.3e f2=%.3e f3=%.3e f4=%.3e",
-                step, total, float(f1), float(f2), float(f3), float(f4),
+                step,
+                total,
+                float(f1),
+                float(f2),
+                float(f3),
+                float(f4),
             )
 
         if total < float(best_loss):

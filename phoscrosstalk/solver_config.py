@@ -129,6 +129,9 @@ def make_diffrax_adjoint(kind: str | None):
     if kind == "backsolve":
         return diffrax.BacksolveAdjoint()
 
+    if kind == "implicit":
+        return diffrax.ImplicitAdjoint()
+
     raise AssertionError("unreachable")
 
 
