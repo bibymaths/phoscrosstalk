@@ -915,9 +915,10 @@ def plot_fitted_simulation(outdir):
     phosphosites); otherwise creates two-panel figures (protein abundance /
     phosphosites).
 
-    The time axis is read from ``time_axes.json`` when present in *outdir*.
-    Falls back to ``np.arange(len(sim_cols))`` with a warning when the file is
-    absent (legacy behaviour).
+    The time axis is read from ``time_axes.json`` in *outdir* (written by
+    ``main.py`` during the fitting run).  The function returns early with an
+    error log if ``time_axes.json`` is absent or does not contain
+    ``phosphosite_time_points``.
 
     Args:
         outdir (str): Directory containing output TSV files.
@@ -952,34 +953,42 @@ def plot_fitted_simulation(outdir):
         )
         return
 
-    # --- Resolve time axis from time_axes.json (preferred) ---
+    # --- Resolve time axis from time_axes.json (required) ---
     _time_axes_path = os.path.join(outdir, "time_axes.json")
-    _time_axes_cfg = None
-    if os.path.exists(_time_axes_path):
-        try:
-            import json as _json
-            with open(_time_axes_path) as _fh:
-                _time_axes_cfg = _json.load(_fh)
-        except (OSError, ValueError) as _exc:
-            logger.warning("[!] Could not read time_axes.json: %s", _exc)
-
-    if _time_axes_cfg is not None:
-        t_vals = np.asarray(_time_axes_cfg.get("phosphosite_time_points", []), dtype=float)
-        if t_vals.size == 0 or len(sim_cols) != len(t_vals):
-            # Column count mismatch – fall back to arange
-            logger.warning(
-                "[!] time_axes.json phosphosite_time_points length (%d) does not match "
-                "sim_t column count (%d); falling back to column indices.",
-                len(t_vals),
-                len(sim_cols),
-            )
-            t_vals = np.arange(len(sim_cols), dtype=float)
-    else:
-        # Legacy fallback: no time_axes.json present
-        logger.warning(
-            "[!] time_axes.json not found in %s; using column indices as time axis.", outdir
+    if not os.path.exists(_time_axes_path):
+        logger.error(
+            "[!] plot_fitted_simulation: time_axes.json not found in %s. "
+            "This file is written by main.py during the fitting run. "
+            "Cannot plot without explicit time axis.",
+            outdir,
         )
-        t_vals = np.arange(len(sim_cols), dtype=float)
+        return
+
+    try:
+        import json as _json
+        with open(_time_axes_path) as _fh:
+            _time_axes_cfg = _json.load(_fh)
+    except (OSError, ValueError) as _exc:
+        logger.error("[!] Could not read time_axes.json: %s", _exc)
+        return
+
+    t_vals = np.asarray(_time_axes_cfg.get("phosphosite_time_points", []), dtype=float)
+    if t_vals.size == 0:
+        logger.error(
+            "[!] plot_fitted_simulation: time_axes.json in %s does not contain "
+            "phosphosite_time_points. Cannot plot without explicit time axis.",
+            outdir,
+        )
+        return
+    if len(sim_cols) != len(t_vals):
+        logger.error(
+            "[!] plot_fitted_simulation: time_axes.json phosphosite_time_points length (%d) "
+            "does not match sim_t column count (%d) in %s. Cannot plot.",
+            len(t_vals),
+            len(sim_cols),
+            outdir,
+        )
+        return
 
     # Optionally load mRNA fit data
     # Optionally load mRNA fit data

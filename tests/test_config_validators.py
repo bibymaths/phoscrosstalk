@@ -33,6 +33,10 @@ data = "{data_file}"
 ptm_intra = "{ptm_intra}"
 ptm_inter = "{ptm_inter}"
 {paths_extra}
+
+[time]
+phosphosite_time_points = [0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0]
+mrna_time_points = [4.0, 8.0, 15.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0]
 """
     cfg_path = tmp_path / "cfg.toml"
     cfg_path.write_text(paths_block + extra_toml)
@@ -288,12 +292,48 @@ class TestSProdFn:
 
 class TestTimeInterpolation:
     def test_invalid_interpolation_raises(self, tmp_path):
-        p = _write_cfg(tmp_path, '[time]\ninterpolation = "cubic"\n')
-        _assert_error(p)
+        # Override interpolation within the [time] section already in _write_cfg's base.
+        # Write a config that has a [time] section with invalid interpolation directly.
+        data_file = tmp_path / "data.csv"
+        data_file.write_text("gene,x1\nEGFR,1.0\n")
+        ptm_intra = tmp_path / "ptm_intra.db"
+        ptm_intra.write_bytes(b"")
+        ptm_inter = tmp_path / "ptm_inter.db"
+        ptm_inter.write_bytes(b"")
+        cfg_path = tmp_path / "cfg_interp.toml"
+        cfg_path.write_text(f"""
+[paths]
+data = "{data_file}"
+ptm_intra = "{ptm_intra}"
+ptm_inter = "{ptm_inter}"
+
+[time]
+phosphosite_time_points = [0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0]
+mrna_time_points = [4.0, 8.0, 15.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0]
+interpolation = "cubic"
+""")
+        _assert_error(str(cfg_path))
 
     def test_valid_interpolation_passes(self, tmp_path):
-        p = _write_cfg(tmp_path, '[time]\ninterpolation = "piecewise_constant"\n')
-        _assert_valid(p)
+        data_file = tmp_path / "data.csv"
+        data_file.write_text("gene,x1\nEGFR,1.0\n")
+        ptm_intra = tmp_path / "ptm_intra.db"
+        ptm_intra.write_bytes(b"")
+        ptm_inter = tmp_path / "ptm_inter.db"
+        ptm_inter.write_bytes(b"")
+        cfg_path = tmp_path / "cfg_interp.toml"
+        cfg_path.write_text(f"""
+[paths]
+data = "{data_file}"
+ptm_intra = "{ptm_intra}"
+ptm_inter = "{ptm_inter}"
+
+[time]
+phosphosite_time_points = [0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0]
+mrna_time_points = [4.0, 8.0, 15.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0]
+interpolation = "piecewise_constant"
+""")
+        _assert_valid(str(cfg_path))
 
 
 # ---------------------------------------------------------------------------

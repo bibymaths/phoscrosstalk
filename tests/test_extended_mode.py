@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from phoscrosstalk.config import DEFAULT_TIMEPOINTS, load_config
+from phoscrosstalk.config import load_config
 from phoscrosstalk.data_loader import (
     build_protein_entity_masks,
     build_tf_prot_weights,
@@ -35,7 +35,8 @@ from phoscrosstalk.derived_rates import make_k_act_fn
 # Helper factories
 # ---------------------------------------------------------------------------
 
-_N_TP = len(DEFAULT_TIMEPOINTS)
+# Number of observation time points used by all test fixtures in this module.
+_N_TP = 14
 
 
 def _make_phospho_csv(path, proteins, sites_per_protein=1):

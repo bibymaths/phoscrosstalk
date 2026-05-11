@@ -7,7 +7,6 @@ Provides:
                          with all tuneable parameters.
   * validate_config(cfg, config_path) – validate all required fields and file
                          paths; raises SystemExit(1) on any error.
-  * DEFAULT_TIMEPOINTS – legacy default time-point array.
   * EPS                – small constant for numerical stability.
 """
 
@@ -135,15 +134,6 @@ _DEFAULTS = {
         "root_find_max_steps": 10,
     },
     "time": {
-        "phosphosite_time_points": [
-            0.0, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0,
-            16.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0,
-        ],
-        "protein_time_points": [
-            0.0, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0,
-            16.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0,
-        ],
-        "mrna_time_points": [4.0, 8.0, 15.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0],
         "interpolation": "piecewise_constant",
     },
     "derived_rates": {
@@ -485,27 +475,31 @@ def load_config(path: str | None = None) -> SimpleNamespace:
     ).lower()
 
     # ------------------------------------------------------------------
-    # Normalize [time] fields – convert to float lists, supply defaults
-    # sourced from _DEFAULTS["time"] to avoid duplicating the authoritative
-    # default values.
+    # Normalize [time] fields – convert to float lists.
+    # Missing or empty arrays are left as empty lists so that
+    # validate_config() can report a clear error.  No hidden defaults
+    # are invented here; all three time arrays must be explicitly
+    # declared in config.toml under [time].
     # ------------------------------------------------------------------
-    _time_defaults = _DEFAULTS["time"]
-
     raw_phospho = getattr(cfg.time, "phosphosite_time_points", None)
-    if not raw_phospho:
-        raw_phospho = _time_defaults["phosphosite_time_points"]
-    cfg.time.phosphosite_time_points = [float(x) for x in raw_phospho]
+    if raw_phospho:
+        cfg.time.phosphosite_time_points = [float(x) for x in raw_phospho]
+    else:
+        cfg.time.phosphosite_time_points = []
 
     raw_protein = getattr(cfg.time, "protein_time_points", None)
-    if not raw_protein:
-        cfg.time.protein_time_points = list(cfg.time.phosphosite_time_points)
-    else:
+    if raw_protein:
         cfg.time.protein_time_points = [float(x) for x in raw_protein]
+    else:
+        # protein_time_points is optional – defaults to phosphosite_time_points
+        # when absent (they must be equal anyway).
+        cfg.time.protein_time_points = list(cfg.time.phosphosite_time_points)
 
     raw_mrna = getattr(cfg.time, "mrna_time_points", None)
-    if not raw_mrna:
-        raw_mrna = _time_defaults["mrna_time_points"]
-    cfg.time.mrna_time_points = [float(x) for x in raw_mrna]
+    if raw_mrna:
+        cfg.time.mrna_time_points = [float(x) for x in raw_mrna]
+    else:
+        cfg.time.mrna_time_points = []
 
     cfg.time.interpolation = str(
         getattr(cfg.time, "interpolation", "piecewise_constant")
@@ -1244,20 +1238,7 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
 
 
 # ---------------------------------------------------------------------------
-# Legacy constants
+# Module-level constants
 # ---------------------------------------------------------------------------
-
-DEFAULT_TIMEPOINTS = np.array(
-    [0.0, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0]
-)
-"""Legacy fallback time-point array.
-
-.. deprecated::
-    Deprecated in favour of ``cfg.time.phosphosite_time_points`` from
-    :func:`load_config`.  Use ``cfg.time.phosphosite_time_points`` everywhere
-    a config object is available.  This constant is kept only for backward
-    compatibility with code that cannot yet receive a config object.  Normal
-    execution paths must not rely on it.
-"""
 
 EPS = 1e-8

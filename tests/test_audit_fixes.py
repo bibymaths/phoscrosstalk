@@ -233,10 +233,9 @@ def test_model_dims_concurrent_set():
 
 def test_load_site_data_value_col_strict_regex(tmp_path):
     """M1: columns like 'velocity' must NOT be treated as time columns."""
-    from phoscrosstalk.config import DEFAULT_TIMEPOINTS
     from phoscrosstalk.data_loader import load_site_data
 
-    n = len(DEFAULT_TIMEPOINTS)
+    n = 14
     value_cols = {f"v{i}": [1.0] for i in range(n)}
     # Add a non-time column that starts with 'v' but is not a time column
     df = pd.DataFrame(
@@ -251,7 +250,8 @@ def test_load_site_data_value_col_strict_regex(tmp_path):
     df.to_csv(csv_path, index=False)
 
     # Should succeed: 'velocity' is not matched by the [vx]\d+ pattern
-    sites, proteins, _, _, t, Y, _, _ = load_site_data(csv_path)
+    timepoints = list(range(n))
+    sites, proteins, _, _, t, Y, _, _ = load_site_data(csv_path, timepoints=timepoints)
     assert len(t) == n
     assert Y.shape == (1, n)
 
