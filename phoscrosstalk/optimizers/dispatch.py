@@ -7,12 +7,15 @@ Provides a single dispatch_optimisation entry point that selects among the
 available backends by name.  This is the recommended way to switch solvers
 in multistart runners or experiment scripts without changing call sites.
 
-Solver key         Module                              Notes
------------------  ----------------------------------  --------------------------------
-"optimistix"       optimization.py                     Canonical LM / Gauss-Newton
-"jaxopt_lbfgsb"    optimizers/jaxopt_backend.py        SciPy L-BFGS-B via JAXopt
-"jaxopt_pgd"       optimizers/jaxopt_backend.py        Projected GD via JAXopt
-"scipy_jax"        optimizers/scipy_jax_backend.py     BFGS + reparameterisation
+Solver key             Module                              Notes
+---------------------  ----------------------------------  --------------------------------
+"optimistix"           optimization.py                     Canonical LM / Gauss-Newton
+"jaxopt_lbfgsb"        optimizers/jaxopt_backend.py        SciPy L-BFGS-B via JAXopt
+"jaxopt_pgd"           optimizers/jaxopt_backend.py        Projected GD via JAXopt
+"jaxopt_osqp"          optimizers/jaxopt_backend.py        Local QP surrogate via OSQP
+"jaxopt_box_osqp"      optimizers/jaxopt_backend.py        Local QP surrogate via BoxOSQP
+"jaxopt_eq_qp"         optimizers/jaxopt_backend.py        Local QP surrogate via EqQP
+"scipy_jax"            optimizers/scipy_jax_backend.py     BFGS + reparameterisation
 
 All backends share the same return signature::
 
@@ -66,6 +69,11 @@ _DISPATCH: dict[str, tuple] = {
     # JAXopt backends
     "jaxopt_lbfgsb": (_import_jaxopt_runner, {"solver_kind": "lbfgsb"}),
     "jaxopt_pgd": (_import_jaxopt_runner, {"solver_kind": "projected_gradient"}),
+
+    # JAXopt QP backends (local quadratic surrogate)
+    "jaxopt_osqp": (_import_jaxopt_runner, {"solver_kind": "osqp"}),
+    "jaxopt_box_osqp": (_import_jaxopt_runner, {"solver_kind": "box_osqp"}),
+    "jaxopt_eq_qp": (_import_jaxopt_runner, {"solver_kind": "eq_qp"}),
 
     # jax.scipy.optimize backends
     "scipy_jax": (_import_scipy_jax_runner, {"bounds_strategy": "reparameterize"}),

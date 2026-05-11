@@ -531,8 +531,13 @@ def _read_runtime_config():
 # ---------------------------------------------------------------------------
 
 _VALID_BACKENDS = [
-    "optimistix", "jaxopt_lbfgsb", "jaxopt_pgd",
-    "scipy_jax"
+    "optimistix",
+    "jaxopt_lbfgsb",
+    "jaxopt_pgd",
+    "jaxopt_osqp",
+    "jaxopt_box_osqp",
+    "jaxopt_eq_qp",
+    "scipy_jax",
 ]
 
 _VALID_MECHANISMS = {"dist", "seq", "rand"}
