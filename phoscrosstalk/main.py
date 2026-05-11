@@ -424,7 +424,7 @@ def main():
 
     # Use configured time axes for all downstream modeling.
     t = t_phospho_cfg
-    t_protein = t_protein_cfg  # noqa: F841 – reserved for protein-specific export paths
+    t_protein = t_protein_cfg  # noqa: F841 - reserved for protein-specific export paths
 
     # 2. Load optional mRNA data and TF network
     gene_ids = None

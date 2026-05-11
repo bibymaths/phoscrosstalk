@@ -1251,9 +1251,11 @@ DEFAULT_TIMEPOINTS = np.array(
 """Legacy fallback time-point array.
 
 .. deprecated::
-    Use ``cfg.time.phosphosite_time_points`` from :func:`load_config` instead.
-    This constant is kept only for backward compatibility with code that cannot
-    yet receive a config object.  Normal execution paths must not rely on it.
+    Deprecated in favour of ``cfg.time.phosphosite_time_points`` from
+    :func:`load_config`.  Use ``cfg.time.phosphosite_time_points`` everywhere
+    a config object is available.  This constant is kept only for backward
+    compatibility with code that cannot yet receive a config object.  Normal
+    execution paths must not rely on it.
 """
 
 EPS = 1e-8

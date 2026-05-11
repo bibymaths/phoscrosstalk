@@ -40,7 +40,9 @@ def load_site_data(path, timepoints=None):
             ``proteins`` is a list of unique sorted protein names.
             ``site_prot_idx`` maps each site to the ``proteins`` list.
             ``positions`` has numeric residue positions (``np.nan`` if parsing fails).
-            ``t`` is the time point array (placeholder; callers should override from config).
+            ``t`` is the time point array returned for backward compatibility; callers
+            should override this with ``cfg.time.phosphosite_time_points`` as the
+            authoritative source.
             ``Y`` is the phosphosite intensity matrix ``(N_sites, T)``.
             ``A_data`` is the protein abundance matrix ``(N_proteins, T)`` or ``None``.
             ``A_proteins`` is the list of protein names in ``A_data`` or ``None``.
