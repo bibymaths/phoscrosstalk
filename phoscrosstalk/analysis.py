@@ -991,7 +991,6 @@ def plot_fitted_simulation(outdir):
         return
 
     # Optionally load mRNA fit data
-    # Optionally load mRNA fit data
     mrna_path = os.path.join(outdir, "mrna_fit_timeseries.tsv")
     has_rna_data = os.path.exists(mrna_path)
     df_mrna = None

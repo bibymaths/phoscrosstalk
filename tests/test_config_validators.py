@@ -35,7 +35,7 @@ ptm_inter = "{ptm_inter}"
 {paths_extra}
 
 [time]
-phosphosite_time_points = [0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0]
+phosphosite_time_points = [0.0, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0]
 mrna_time_points = [4.0, 8.0, 15.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0]
 """
     cfg_path = tmp_path / "cfg.toml"
