@@ -628,6 +628,34 @@ def compute_objectives_jax(
     return f1, f2, f3
 
 
+def _compute_f3_reg(theta, L_alpha, lambda_net, reg_lambda, n_var, K, M, N):
+    """
+    Compute only the regularisation component f3.
+
+    Extracts the Laplacian network term from theta (alpha parameters) and
+    combines it with L2 regularisation.  Factored out so that make_loss_fn
+    can obtain f3 without running the (now unused) f1/f2 branches of
+    compute_objectives_jax.
+
+    Parameters
+    ----------
+    theta     : jax.Array, flat parameter vector
+    L_alpha   : jax.Array (M, M), kinase Laplacian
+    lambda_net: float
+    reg_lambda: float
+    n_var     : int – normalisation count
+    K, M, N   : int
+
+    Returns
+    -------
+    f3 : JAX scalar
+    """
+    _, _, _, _, alpha, _, _, _, _, _, _, _ = decode_theta(theta, K, M, N)
+    reg = jnp.asarray(reg_lambda, dtype=jnp.float64) * jnp.dot(theta, theta)
+    reg_net = jnp.asarray(lambda_net, dtype=jnp.float64) * jnp.dot(alpha, L_alpha @ alpha)
+    return (reg + reg_net) / jnp.asarray(max(n_var, 1), dtype=jnp.float64)
+
+
 # ---------------------------------------------------------------------------
 # Scalarized JAX loss for Optimistix
 # ---------------------------------------------------------------------------
@@ -852,27 +880,18 @@ def make_loss_fn(
         P_sim = jnp.clip(xs_prot[:, 3 * K + M:], 0.0, None).T  # (N, T_prot)
         A_sim = jnp.clip(xs_prot[:, 2 * K: 3 * K], 0.0, 5.0).T  # (K, T_prot)
 
-        f1, f2, f3 = compute_objectives_jax(
+        f3 = _compute_f3_reg(
             theta_j,
-            P_data_j,
-            P_sim,
-            A_scaled_j,
-            A_sim,
-            W_data_j,
-            W_prot_j,
-            prot_idx_j,
             La_loss_j,
             lambda_net,
             reg_lambda,
-            n_p,
-            n_A,
             n_var,
             K,
             M,
             N,
         )
 
-        # Replace f1 and f2 with configured loss (f3 is regularisation, unchanged)
+        # f1: phosphosite loss with configured loss function
         f1 = compute_weighted_timeseries_loss(
             P_sim,
             P_data_j,
@@ -893,7 +912,8 @@ def make_loss_fn(
                 slope_lambda=slope_lambda,
                 time_axis=1,
             )
-        # else: f2 already set to 0.0 by compute_objectives_jax
+        else:
+            f2 = jnp.asarray(0.0, dtype=jnp.float64)
 
         # f4: mRNA / R_rna loss (only when RNA data is available)
         if has_mrna:
