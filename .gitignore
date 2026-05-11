@@ -114,6 +114,11 @@ dmypy.json
 profile_default/
 ipython_config.py
 
+# -----------------------------------------------------------------------------
+# Notebook-generated outputs (regenerated on execution — do not track)
+# -----------------------------------------------------------------------------
+notebooks/_outputs/
+
 
 # -----------------------------------------------------------------------------
 # Documentation build outputs
