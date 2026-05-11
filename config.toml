@@ -261,6 +261,8 @@ jac_mode      = "bwd"        # options: "fwd" | "bwd"
 verbose       = false
 log_every     = 1
 loss_type     = "mse"
+pseudo_huber_delta = 0.1
+slope_lambda  = 0.1
 
 lambda_net    = 0.001
 reg_lambda    = 0.0001

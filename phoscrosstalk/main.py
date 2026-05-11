@@ -293,6 +293,10 @@ def main():
         loss_weight_abundance=cfg.loss_weights.abundance,
         loss_weight_reg=cfg.loss_weights.reg,
         loss_weight_mrna=cfg.loss_weights.mrna,
+        # configurable loss function
+        loss_type=getattr(cfg.optimisation, "loss_type", "mse"),
+        pseudo_huber_delta=getattr(cfg.optimisation, "pseudo_huber_delta", 0.1),
+        slope_lambda=getattr(cfg.optimisation, "slope_lambda", 0.1),
         # solver
         rtol=cfg.solver.rtol,
         atol=cfg.solver.atol,
@@ -881,6 +885,9 @@ def main():
         "[*] Optimizer backend: %s",
         getattr(args, "optimizer_backend", "optimistix"),
     )
+    logger.info("[*] Loss type: %s", args.loss_type)
+    logger.info("[*] pseudo_huber_delta: %.4g", float(args.pseudo_huber_delta))
+    logger.info("[*] slope_lambda: %.4g", float(args.slope_lambda))
     logger.info(
         f"[*] Initialising optimisation problem ({args.n_starts} starts, "
         f"max_steps={args.max_steps})"
@@ -926,6 +933,9 @@ def main():
         rtol=args.rtol,
         atol=args.atol,
         max_steps=args.solver_max_steps,
+        loss_type=args.loss_type,
+        pseudo_huber_delta=args.pseudo_huber_delta,
+        slope_lambda=args.slope_lambda,
     )
 
     logger.success(f"[*] Network problem initialized successfully")

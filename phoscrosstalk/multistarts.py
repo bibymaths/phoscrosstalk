@@ -272,6 +272,9 @@ def _build_residual_kwargs(
         "root_find_max_steps": getattr(args, "ode_root_find_max_steps", 10),
         "xl": problem.xl,
         "xu": problem.xu,
+        "loss_type": getattr(problem, "loss_type", "mse"),
+        "pseudo_huber_delta": getattr(problem, "pseudo_huber_delta", 0.1),
+        "slope_lambda": getattr(problem, "slope_lambda", 0.1),
     }
 
     # k_act_fn: prefer picklable rebuild kwargs stored on problem; fall back
