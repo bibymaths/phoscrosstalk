@@ -114,6 +114,116 @@ def test_jaxopt_pgd():
 
 
 # ---------------------------------------------------------------------------
+# JAXopt QP backend tests
+# ---------------------------------------------------------------------------
+
+def test_jaxopt_osqp_inside_bounds():
+    """OSQP QP surrogate: target inside bounds should find near-optimal."""
+    from phoscrosstalk.optimizers import dispatch_optimisation
+    loss_fn = make_quadratic_loss(TARGET_INSIDE)
+    result = dispatch_optimisation(
+        "jaxopt_osqp", loss_fn, THETA0, XL, XU,
+        ridge=1e-4, line_search=True, line_search_steps=8,
+    )
+    _check_result(result, XL, XU, THETA0, loss_fn)
+
+
+def test_jaxopt_osqp_outside_bounds():
+    """OSQP QP surrogate: target outside bounds should clip to boundary."""
+    from phoscrosstalk.optimizers import dispatch_optimisation
+    loss_fn = make_quadratic_loss(TARGET_OUTSIDE)
+    result = dispatch_optimisation(
+        "jaxopt_osqp", loss_fn, THETA0, XL, XU,
+        ridge=1e-4, line_search=True, line_search_steps=8,
+    )
+    theta_opt, total_loss, f1, f2, f3, f4 = result
+    assert isinstance(theta_opt, np.ndarray)
+    assert np.all(theta_opt >= XL - 1e-6) and np.all(theta_opt <= XU + 1e-6)
+    assert np.isfinite(total_loss)
+
+
+def test_jaxopt_box_osqp_inside_bounds():
+    """BoxOSQP QP surrogate: target inside bounds should find near-optimal."""
+    from phoscrosstalk.optimizers import dispatch_optimisation
+    loss_fn = make_quadratic_loss(TARGET_INSIDE)
+    result = dispatch_optimisation(
+        "jaxopt_box_osqp", loss_fn, THETA0, XL, XU,
+        ridge=1e-4, line_search=True, line_search_steps=8,
+    )
+    _check_result(result, XL, XU, THETA0, loss_fn)
+
+
+def test_jaxopt_box_osqp_outside_bounds():
+    """BoxOSQP QP surrogate: target outside bounds should clip to boundary."""
+    from phoscrosstalk.optimizers import dispatch_optimisation
+    loss_fn = make_quadratic_loss(TARGET_OUTSIDE)
+    result = dispatch_optimisation(
+        "jaxopt_box_osqp", loss_fn, THETA0, XL, XU,
+        ridge=1e-4, line_search=True, line_search_steps=8,
+    )
+    theta_opt, total_loss, f1, f2, f3, f4 = result
+    assert isinstance(theta_opt, np.ndarray)
+    assert np.all(theta_opt >= XL - 1e-6) and np.all(theta_opt <= XU + 1e-6)
+    assert np.isfinite(total_loss)
+
+
+def test_jaxopt_eq_qp_inside_bounds():
+    """EqQP surrogate: post-solve clipping enforces bounds."""
+    from phoscrosstalk.optimizers import dispatch_optimisation
+    loss_fn = make_quadratic_loss(TARGET_INSIDE)
+    result = dispatch_optimisation(
+        "jaxopt_eq_qp", loss_fn, THETA0, XL, XU,
+        ridge=1e-4, line_search=True, line_search_steps=8,
+    )
+    theta_opt, total_loss, f1, f2, f3, f4 = result
+    assert isinstance(theta_opt, np.ndarray)
+    assert np.all(np.isfinite(theta_opt))
+    assert np.all(theta_opt >= XL - 1e-6) and np.all(theta_opt <= XU + 1e-6)
+    assert np.isfinite(total_loss)
+
+
+def test_jaxopt_qp_explicit_mode():
+    """Explicit QP data bypass: pass (Q, c) directly."""
+    from phoscrosstalk.optimizers.jaxopt_backend import run_single_optimisation_jaxopt
+    # Build explicit QP for sum((theta - target)^2): Q = 2*I, c = -2*target
+    target = jnp.asarray(TARGET_INSIDE, dtype=jnp.float64)
+    Q = 2.0 * np.eye(3)
+    c = -2.0 * np.asarray(TARGET_INSIDE)
+    loss_fn = make_quadratic_loss(TARGET_INSIDE)
+    result = run_single_optimisation_jaxopt(
+        loss_fn, THETA0, XL, XU,
+        solver_kind="osqp",
+        qp_mode="explicit",
+        params_obj=(Q, c),
+        line_search=False,
+    )
+    theta_opt, total_loss, f1, f2, f3, f4 = result
+    assert isinstance(theta_opt, np.ndarray)
+    assert np.all(theta_opt >= XL - 1e-6) and np.all(theta_opt <= XU + 1e-6)
+    assert np.isfinite(total_loss)
+
+
+def test_jaxopt_hessian_mode_invalid():
+    """Invalid hessian_mode should raise ValueError."""
+    from phoscrosstalk.optimizers.jaxopt_backend import run_single_optimisation_jaxopt
+    loss_fn = make_quadratic_loss(TARGET_INSIDE)
+    with pytest.raises(ValueError, match="hessian_mode"):
+        run_single_optimisation_jaxopt(
+            loss_fn, THETA0, XL, XU,
+            solver_kind="osqp",
+            hessian_mode="gauss_newton",
+        )
+
+
+def test_jaxopt_qp_new_backends_in_dispatch():
+    """All three QP backends should be registered in AVAILABLE_BACKENDS."""
+    from phoscrosstalk.optimizers import AVAILABLE_BACKENDS
+    assert "jaxopt_osqp" in AVAILABLE_BACKENDS
+    assert "jaxopt_box_osqp" in AVAILABLE_BACKENDS
+    assert "jaxopt_eq_qp" in AVAILABLE_BACKENDS
+
+
+# ---------------------------------------------------------------------------
 # JAX scipy backend tests
 # ---------------------------------------------------------------------------
 

@@ -65,17 +65,30 @@ def _strip_aux(loss_fn):
 
 def _regularize_psd_matrix(H: jnp.ndarray, ridge: float = 1e-6) -> jnp.ndarray:
     """
-    Symmetrize H and add a ridge to guarantee positive semi-definiteness.
+    Project H to the positive semi-definite cone, then add a ridge.
+
+    Steps:
+    1. Symmetrize: ``H_sym = 0.5 * (H + H.T)``.
+    2. Eigendecompose and clamp negative eigenvalues to zero
+       (projection onto the PSD cone).
+    3. Add ``ridge * I`` to ensure strict positive definiteness.
+
+    This guarantees that the returned matrix is PSD regardless of whether the
+    input Hessian has negative eigenvalues (indefinite or negative definite).
 
     Args:
         H: Square matrix (Hessian or Gauss-Newton approximation).
-        ridge: Regularisation strength added to the diagonal.
+        ridge: Diagonal regularisation strength added after PSD projection
+            (default 1e-6).
 
     Returns:
-        Regularised, symmetric matrix Q = 0.5*(H+H.T) + ridge*I.
+        PSD matrix ``Q = V @ diag(max(λ, 0)) @ V.T + ridge * I``.
     """
     H_sym = 0.5 * (H + H.T)
-    return H_sym + ridge * jnp.eye(H_sym.shape[0], dtype=H_sym.dtype)
+    eigenvalues, eigenvectors = jnp.linalg.eigh(H_sym)
+    eigenvalues = jnp.maximum(eigenvalues, 0.0)
+    H_psd = eigenvectors @ jnp.diag(eigenvalues) @ eigenvectors.T
+    return H_psd + ridge * jnp.eye(H_psd.shape[0], dtype=H_psd.dtype)
 
 
 def _extract_qp_data_from_kwargs(kwargs: dict) -> dict | None:
@@ -94,10 +107,17 @@ def _extract_qp_data_from_kwargs(kwargs: dict) -> dict | None:
     """
     if kwargs.get("qp_mode") != "explicit":
         return None
-    if "params_obj" not in kwargs:
+    params_obj = kwargs.get("params_obj")
+    if params_obj is None:
         return None
+    # Validate that params_obj looks like a (Q, c) tuple
+    if not (isinstance(params_obj, (tuple, list)) and len(params_obj) == 2):
+        raise ValueError(
+            "optimizer_backend_kwargs['params_obj'] must be a (Q, c) tuple "
+            f"when qp_mode='explicit'; got {type(params_obj)!r}."
+        )
     return {
-        "params_obj": kwargs["params_obj"],
+        "params_obj": params_obj,
         "params_eq": kwargs.get("params_eq"),
         "params_ineq": kwargs.get("params_ineq"),
     }
@@ -182,21 +202,23 @@ def _bounds_to_osqp_ineq(
 def _bounds_to_box_osqp_ineq(
         xl: jnp.ndarray,
         xu: jnp.ndarray,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """
-    Return box bounds as a (lower, upper) tuple for BoxOSQP params_ineq.
+    Return a ``(C, l, u)`` triple for BoxOSQP ``params_ineq``.
 
-    BoxOSQP expects ``params_ineq = (l, u)`` where ``l <= C @ x <= u``.
-    For pure box constraints on theta itself, C = I, l = xl, u = xu.
+    BoxOSQP solves ``l <= C @ x <= u``.  For pure box constraints on theta
+    itself, ``C = I``, ``l = xl``, ``u = xu``.
 
     Args:
         xl: Lower bound vector, shape (n,).
         xu: Upper bound vector, shape (n,).
 
     Returns:
-        (xl, xu) – lower and upper bound vectors.
+        ``(C, xl, xu)`` where ``C`` is the (n, n) identity matrix.
     """
-    return xl, xu
+    n = xl.shape[0]
+    C = jnp.eye(n, dtype=xl.dtype)
+    return C, xl, xu
 
 
 def _run_osqp_qp(
@@ -253,6 +275,7 @@ def _run_box_osqp_qp(
         xl: jnp.ndarray,
         xu: jnp.ndarray,
         theta0: jnp.ndarray,
+        params_ineq: tuple | None = None,
         **solver_kwargs,
 ) -> jnp.ndarray:
     """
@@ -263,7 +286,12 @@ def _run_box_osqp_qp(
         min  0.5 x^T Q x + c^T x
         s.t. xl <= x <= xu
 
-    BoxOSQP takes ``params_ineq = (l, u)`` where the constraint matrix C = I.
+    BoxOSQP solves ``l <= C @ x <= u`` and expects
+    ``params_ineq = (C, l, u)``.  For box constraints on theta, ``C = I``.
+
+    When *params_ineq* is not None it is passed directly to BoxOSQP (allowing
+    custom constraint matrices for ``qp_mode="explicit"``); otherwise the box
+    bounds are converted automatically via :func:`_bounds_to_box_osqp_ineq`.
 
     Args:
         Q: Cost matrix (n, n), PSD.
@@ -271,6 +299,8 @@ def _run_box_osqp_qp(
         xl: Lower bound vector (n,).
         xu: Upper bound vector (n,).
         theta0: Initial guess.
+        params_ineq: Optional explicit ``(C, l, u)`` triple.  If provided,
+            *xl* and *xu* are ignored for constraint construction.
         **solver_kwargs: Forwarded to ``jaxopt.BoxOSQP()``.
 
     Returns:
@@ -284,12 +314,15 @@ def _run_box_osqp_qp(
             "Install with: pip install jaxopt"
         ) from exc
 
-    n = Q.shape[0]
-    I = jnp.eye(n, dtype=Q.dtype)
+    if params_ineq is None:
+        ineq = _bounds_to_box_osqp_ineq(xl, xu)
+    else:
+        ineq = params_ineq
+
     solver = BoxOSQP(**solver_kwargs)
     sol = solver.run(
         params_obj=(Q, c),
-        params_ineq=(I, xl, xu),
+        params_ineq=ineq,
     )
     return sol.params.primal[0]
 
@@ -358,33 +391,30 @@ def _line_search(
     Backtracking line search between *theta0* and *theta_qp* on the original
     nonlinear scalar loss.
 
-    Tries alpha in (1.0, 0.5, 0.25, …) and returns the theta_trial that gives
-    the lowest original loss value.  Falls back to theta0 if all trials are
-    worse.
+    Evaluates alpha values (1.0, 0.5, 0.25, …) plus the fallback theta0
+    (alpha=0), stacks all candidate losses into a JAX array, finds the argmin
+    in JAX to avoid scalar device→host transfers inside the loop, and returns
+    the best theta.
 
     Args:
         scalar_loss: Original nonlinear scalar loss ``f(theta) -> scalar``.
-        theta0: Starting point.
-        theta_qp: QP solution.
-        n_steps: Number of halving steps to try (default 8, giving alpha down
-            to ~0.004).
+        theta0: Starting point (alpha = 0 fallback).
+        theta_qp: QP solution (alpha = 1 full step).
+        n_steps: Number of halving steps to evaluate (default 8, covering
+            alpha in {1.0, 0.5, …, ~0.004}).
 
     Returns:
         Best theta_trial (float64 JAX array).
     """
-    best_theta = theta0
-    best_loss = scalar_loss(theta0)
+    direction = theta_qp - theta0
+    # Build candidate thetas: theta0 (fallback) + n_steps trial steps
+    alphas = [0.0] + [1.0 * 0.5 ** i for i in range(n_steps)]
+    candidates = [theta0 + a * direction for a in alphas]
 
-    alpha = 1.0
-    for _ in range(n_steps):
-        theta_trial = theta0 + alpha * (theta_qp - theta0)
-        loss_trial = scalar_loss(theta_trial)
-        if float(loss_trial) < float(best_loss):
-            best_loss = loss_trial
-            best_theta = theta_trial
-        alpha *= 0.5
-
-    return best_theta
+    # Evaluate losses without device-host transfers in the loop
+    losses = jnp.array([scalar_loss(t) for t in candidates])
+    best_idx = int(jnp.argmin(losses))
+    return candidates[best_idx]
 
 
 # ---------------------------------------------------------------------------
@@ -460,9 +490,16 @@ def run_single_optimisation_jaxopt(
 
     Raises:
         ImportError: If jaxopt is not installed.
-        ValueError: If solver_kind is not recognised.
+        ValueError: If solver_kind or hessian_mode is not recognised.
         RuntimeError: If the Hessian-based QP surrogate cannot be constructed.
     """
+    _VALID_HESSIAN_MODES = {"hessian"}
+    if hessian_mode not in _VALID_HESSIAN_MODES:
+        raise ValueError(
+            f"Unsupported hessian_mode={hessian_mode!r}. "
+            f"Only 'hessian' is currently implemented."
+        )
+
     # Lazy import so the rest of the codebase does not require JAXopt
     try:
         from jaxopt import ProjectedGradient, ScipyBoundedMinimize
@@ -578,7 +615,22 @@ def run_single_optimisation_jaxopt(
             theta_opt_j = _run_osqp_qp(Q, c, G, h, theta0_j)
 
         elif solver_kind == "box_osqp":
-            theta_opt_j = _run_box_osqp_qp(Q, c, xl_j, xu_j, theta0_j)
+            # Honor explicit (C, l, u) params_ineq when provided
+            explicit_ineq = None
+            if explicit_data is not None and explicit_data.get("params_ineq") is not None:
+                raw = explicit_data["params_ineq"]
+                if not (isinstance(raw, (tuple, list)) and len(raw) == 3):
+                    raise ValueError(
+                        "For box_osqp qp_mode='explicit', params_ineq must be a "
+                        f"(C, l, u) triple; got {type(raw)!r} of length "
+                        f"{len(raw) if hasattr(raw, '__len__') else '?'}."
+                    )
+                C_ineq = jnp.asarray(raw[0], dtype=jnp.float64)
+                l_ineq = jnp.asarray(raw[1], dtype=jnp.float64)
+                u_ineq = jnp.asarray(raw[2], dtype=jnp.float64)
+                explicit_ineq = (C_ineq, l_ineq, u_ineq)
+            theta_opt_j = _run_box_osqp_qp(Q, c, xl_j, xu_j, theta0_j,
+                                            params_ineq=explicit_ineq)
 
         else:  # eq_qp
             logger.warning(
