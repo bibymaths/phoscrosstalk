@@ -322,28 +322,82 @@ _DEFAULTS = {
         # Never fills the original training arrays.
         "replace_nans_at_start": None,
     },
-    # MCMC posterior inference using BlackJax NUTS.
-    # Runs after the multi-start optimisation (and optionally neural_ode mode).
-    # Disabled by default; set enabled = true to activate.
+    # Optimizer-based uncertainty analysis.
+    # It runs after the main optimisation step and estimates parameter
+    # uncertainty using residual bootstrap refits and/or profile likelihood.
+    #
+    # Methods:
+    #   "bootstrap" = residual bootstrap refitting
+    #   "profile"   = profile-likelihood identifiability analysis
+    #   "both"      = run bootstrap and profile likelihood
     "posterior": {
-        # Set to true to run MCMC posterior inference after optimisation.
+        # Set to true to run optimizer-based uncertainty after optimisation.
         "enabled": False,
-        # NUTS warm-up steps (dual-averaging step-size adaptation).
-        "num_warmup": 500,
-        # Number of posterior samples to draw.
-        "num_samples": 1000,
-        # Initial step size for NUTS (adapted during warm-up).
-        "step_size": 1e-3,
-        # Sub-sample every thin_factor-th sample to reduce autocorrelation.
-        "thin_factor": 10,
-        # Target acceptance rate for dual-averaging adaptation.
-        "target_acceptance_rate": 0.8,
+
+        # Uncertainty method: "bootstrap", "profile", or "both".
+        "method": "bootstrap",
+
         # Random seed for reproducibility.
         "seed": 42,
-        # Number of leading parameters to include in trace and pairs plots.
-        "plot_params": 8,
-        # Observation noise standard deviation for the Gaussian likelihood.
-        "sigma_noise": 0.1,
+
+        # Number of leading parameters to include in diagnostic plots.
+        "plot_params": 30,
+
+        # ------------------------------------------------------------------
+        # Residual bootstrap settings
+        # ------------------------------------------------------------------
+
+        # Number of bootstrap refits.
+        "n_bootstrap": 100,
+
+        # Residual resampling mode:
+        #   "case"    = resample whole phosphosite/protein/gene residual trajectories
+        #   "time"    = resample time columns
+        #   "element" = resample individual residual values
+        "bootstrap_residual_mode": "case",
+
+        # Optimisation settings for each bootstrap refit.
+        "bootstrap_max_steps": 200,
+        "bootstrap_rtol": 1e-8,
+        "bootstrap_atol": 1e-8,
+
+        # Optional jitter added to theta_best before each bootstrap refit.
+        # Keep 0.0 for maximum stability.
+        "bootstrap_start_jitter": 0.0,
+
+        # Rebuild s_prod(t) from each bootstrapped phosphosite dataset.
+        # This is more internally consistent because s_prod is data-derived.
+        "rebuild_s_prod_from_bootstrap": True,
+
+        # Save posterior-predictive-style intervals from bootstrap refits.
+        "save_prediction_intervals": True,
+
+        # Maximum bootstrap parameter samples used for prediction intervals.
+        "max_prediction_samples": 200,
+
+        # ------------------------------------------------------------------
+        # Profile likelihood settings
+        # ------------------------------------------------------------------
+
+        # Number of parameters to profile. If an integer, profile the first N
+        # parameters. If a list is supported by posterior.py, use explicit indices.
+        "profile_params": 12,
+
+        # Number of fixed grid points per profiled parameter.
+        "profile_points": 21,
+
+        # Fraction of each parameter bound interval to cover around theta_best.
+        # 1.0 uses the full [lower, upper] bound.
+        "profile_grid_fraction": 1.0,
+
+        # Penalty strength used to keep the selected parameter fixed during
+        # profile refits.
+        "profile_fix_lambda": 1e8,
+
+        # Optimisation settings for each profile refit.
+        "profile_max_steps": 300,
+        "profile_rtol": 1e-8,
+        "profile_atol": 1e-8,
     },
 }
 
@@ -369,13 +423,13 @@ def load_config(path: str | None = None) -> SimpleNamespace:
     missing file.
 
     Args:
-        path: Path to a ``config.toml`` file.  Defaults to ``None``.
+        path: Path to a ``config.toml`` file. Defaults to ``None``.
 
     Returns:
-        SimpleNamespace with sections: paths, model, optimisation, loss_weights,
-        solver, time, derived_rates, analysis.
+        SimpleNamespace with sections corresponding to config.toml sections.
     """
     merged = dict(_DEFAULTS)
+
     if path is not None and os.path.exists(path):
         with open(path, "rb") as fh:
             toml_data = tomllib.load(fh)
@@ -386,7 +440,43 @@ def load_config(path: str | None = None) -> SimpleNamespace:
             return SimpleNamespace(**{k: _to_ns(v) for k, v in d.items()})
         return d
 
-    return _to_ns(merged)
+    cfg = _to_ns(merged)
+
+    # ------------------------------------------------------------------
+    # Normalize string-valued config fields after TOML/default merge.
+    # ------------------------------------------------------------------
+
+    # Optimisation fields
+    cfg.optimisation.loss_type = str(
+        getattr(cfg.optimisation, "loss_type", "mse")
+    ).lower()
+
+    cfg.optimisation.optimizer_backend = str(
+        getattr(cfg.optimisation, "optimizer_backend", "optimistix")
+    ).lower()
+
+    cfg.optimisation.ls_solver = str(
+        getattr(cfg.optimisation, "ls_solver", "lm")
+    ).lower()
+
+    cfg.optimisation.optx_adjoint = str(
+        getattr(cfg.optimisation, "optx_adjoint", "implicit")
+    ).lower()
+
+    cfg.optimisation.jac_mode = str(
+        getattr(cfg.optimisation, "jac_mode", "fwd")
+    ).lower()
+
+    # Posterior / optimizer-based uncertainty fields
+    cfg.posterior.method = str(
+        getattr(cfg.posterior, "method", "bootstrap")
+    ).lower()
+
+    cfg.posterior.bootstrap_residual_mode = str(
+        getattr(cfg.posterior, "bootstrap_residual_mode", "case")
+    ).lower()
+
+    return cfg
 
 
 def _read_runtime_config():
@@ -954,6 +1044,77 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
                 "PINN mode will bypass post-fit neuralODE; [neural_ode] will be skipped."
             )
 
+    # ------------------------------------------------------------------
+    # posterior / optimizer-based uncertainty validation
+    # ------------------------------------------------------------------
+    if hasattr(cfg, "posterior"):
+        posterior = cfg.posterior
+
+        allowed_uncertainty_methods = {"bootstrap", "profile", "both"}
+        method = str(getattr(posterior, "method", "bootstrap")).lower()
+
+        if method not in allowed_uncertainty_methods:
+            raise ValueError(
+                f"Invalid [posterior] method={method!r}. Expected one of: "
+                "bootstrap, profile, both."
+            )
+
+        allowed_bootstrap_modes = {"case", "time", "element"}
+        bootstrap_mode = str(
+            getattr(posterior, "bootstrap_residual_mode", "case")
+        ).lower()
+
+        if bootstrap_mode not in allowed_bootstrap_modes:
+            raise ValueError(
+                "[posterior] bootstrap_residual_mode must be one of: "
+                "case, time, element. "
+                f"Got {bootstrap_mode!r}."
+            )
+
+        if int(getattr(posterior, "n_bootstrap", 100)) <= 0:
+            raise ValueError("[posterior] n_bootstrap must be > 0.")
+
+        if int(getattr(posterior, "bootstrap_max_steps", 200)) <= 0:
+            raise ValueError("[posterior] bootstrap_max_steps must be > 0.")
+
+        if float(getattr(posterior, "bootstrap_rtol", 1e-8)) <= 0:
+            raise ValueError("[posterior] bootstrap_rtol must be > 0.")
+
+        if float(getattr(posterior, "bootstrap_atol", 1e-8)) <= 0:
+            raise ValueError("[posterior] bootstrap_atol must be > 0.")
+
+        if float(getattr(posterior, "bootstrap_start_jitter", 0.0)) < 0:
+            raise ValueError("[posterior] bootstrap_start_jitter must be >= 0.")
+
+        if int(getattr(posterior, "max_prediction_samples", 200)) <= 0:
+            raise ValueError("[posterior] max_prediction_samples must be > 0.")
+
+        if int(getattr(posterior, "profile_points", 21)) < 3:
+            raise ValueError("[posterior] profile_points must be >= 3.")
+
+        profile_grid_fraction = float(
+            getattr(posterior, "profile_grid_fraction", 1.0)
+        )
+        if not (0.0 < profile_grid_fraction <= 1.0):
+            raise ValueError(
+                "[posterior] profile_grid_fraction must be in (0, 1]. "
+                f"Got {profile_grid_fraction}."
+            )
+
+        if float(getattr(posterior, "profile_fix_lambda", 1e8)) <= 0:
+            raise ValueError("[posterior] profile_fix_lambda must be > 0.")
+
+        if int(getattr(posterior, "profile_max_steps", 300)) <= 0:
+            raise ValueError("[posterior] profile_max_steps must be > 0.")
+
+        if float(getattr(posterior, "profile_rtol", 1e-8)) <= 0:
+            raise ValueError("[posterior] profile_rtol must be > 0.")
+
+        if float(getattr(posterior, "profile_atol", 1e-8)) <= 0:
+            raise ValueError("[posterior] profile_atol must be > 0.")
+
+        if int(getattr(posterior, "plot_params", 30)) <= 0:
+            raise ValueError("[posterior] plot_params must be > 0.")
     # -------------------------------------------------------------------
     # Report
     # -------------------------------------------------------------------

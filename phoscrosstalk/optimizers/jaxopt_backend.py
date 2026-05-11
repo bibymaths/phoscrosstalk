@@ -14,11 +14,6 @@ Solver options
     gradient descent.  JIT-able; fully differentiable through the solution via
     implicit-function theorem.  Use when you need the result to be
     differentiable w.r.t. hyper-parameters (e.g. meta-learning bounds).
-
-Warning:
-    JAXopt is no longer actively developed upstream (as of 2025).  Use this
-    module for legacy compatibility or when ProjectedGradient differentiability
-    is strictly required.  Prefer optax_backend.py for new work.
 """
 
 from __future__ import annotations

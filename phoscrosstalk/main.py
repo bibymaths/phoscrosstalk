@@ -936,6 +936,16 @@ def main():
         loss_type=args.loss_type,
         pseudo_huber_delta=args.pseudo_huber_delta,
         slope_lambda=args.slope_lambda,
+        # Runtime settings for posterior/uncertainty parallel refits.
+        cpu_threads=args.cpu_threads,
+        parallel_starts=args.parallel_starts,
+        threads_per_start=args.threads_per_start,
+        use_physical_cores=args.use_physical_cores,
+        reserve_cores=args.reserve_cores,
+        # Optimizer controls reused by bootstrap/profile refits.
+        ls_solver=args.ls_solver,
+        optx_adjoint=args.optx_adjoint,
+        jac_mode=args.jac_mode,
     )
 
     logger.success(f"[*] Network problem initialized successfully")
@@ -1661,184 +1671,73 @@ def main():
         )
 
     # ------------------------------------------------------------------
-    # 14. MCMC Posterior inference (optional; enabled via [posterior] config)
+    # 14. Optimizer-based uncertainty
+    # ------------------------------------------------------------------
+    # Replaces fragile MCMC/NUTS posterior inference with methods that reuse
+    # the same optimizer path as the fitted model:
+    #
+    #   method = "bootstrap"  -> residual bootstrap refits
+    #   method = "profile"    -> profile-likelihood identifiability
+    #   method = "both"       -> run both
+    #
+    # Outputs are written to:
+    #   {outdir}/uncertainty/bootstrap_samples.npz
+    #   {outdir}/uncertainty/bootstrap_summary.tsv
+    #   {outdir}/uncertainty/bootstrap_failures.tsv
+    #   {outdir}/uncertainty/bootstrap_parameter_distributions.png
+    #   {outdir}/uncertainty/bootstrap_prediction_intervals/
+    #   {outdir}/uncertainty/profile_likelihood/profile_likelihood.tsv
     # ------------------------------------------------------------------
     _posterior_cfg = getattr(cfg, "posterior", None)
+
     if _posterior_cfg is not None and getattr(_posterior_cfg, "enabled", False):
         try:
-            from phoscrosstalk.posterior import (  # noqa: PLC0415
-                run_posterior_inference,
-                make_log_posterior_fn,
+            from phoscrosstalk.posterior import run_optimizer_uncertainty  # noqa: PLC0415
+
+            _uncertainty_method = str(
+                getattr(_posterior_cfg, "method", "bootstrap")
+            ).lower()
+
+            logger.header(
+                f"[*] Running optimizer-based uncertainty analysis: {_uncertainty_method}"
             )
 
-            logger.header("[*] Running MCMC posterior inference (NUTS / BlackJax)")
-
-            # Precompute A0 once in Python so the JAX-traced residuals closure
-            # does not rebuild it on every log-posterior call (build_full_A0 is
-            # a NumPy/Python routine; calling it inside jax.jit breaks tracing).
-            from phoscrosstalk.simulation import simulate as _post_sim  # noqa: PLC0415
-            from phoscrosstalk.optimization import build_full_A0 as _bfa0  # noqa: PLC0415
-            _A0_post = _bfa0(dims.K, len(t), A_scaled, prot_idx_for_A)
-
-            # Build a JAX-traceable residuals function using the mechanistic
-            # simulation.  The residuals are (P_sim - P_scaled) flattened,
-            # which is consistent with the mechanistic loss used in optimisation.
-            # return_jax=True skips np.asarray(sol.ys) so the function is safely
-            # traceable inside jax.jit / jax.lax.scan (BlackJax NUTS).
-            import jax.numpy as jnp  # noqa: PLC0415
-            _P_scaled_jax = jnp.asarray(P_scaled, dtype=jnp.float64)
-
-            def _mech_residuals_fn(theta):
-                P_sim_post, _A_sim_post = _post_sim(
-                    t, P_scaled, _A0_post, theta,
-                    problem.Cg, problem.Cl, problem.site_prot_idx,
-                    problem.K_site_kin, problem.R, problem.L_alpha,
-                    problem.kin_to_prot_idx, problem.receptor_mask_prot,
-                    problem.receptor_mask_kin, mechanism,
-                    full_output=False,
-                    k_act_fn=k_act_fn, s_prod_fn=s_prod_fn,
-                    R_data0=R_data0, dims=dims,
-                    return_jax=True,
-                )
-                return (P_sim_post - _P_scaled_jax).ravel()
-
-            _sigma_noise = float(getattr(_posterior_cfg, "sigma_noise", 0.1))
-
-            # ------------------------------------------------------------
-            # Diagnose posterior initial point before BlackJAX
-            # ------------------------------------------------------------
-            theta_best_post = np.asarray(theta_best, dtype=np.float64)
-            xl_post = np.asarray(problem.xl, dtype=np.float64)
-            xu_post = np.asarray(problem.xu, dtype=np.float64)
-
-            if theta_best_post.shape != xl_post.shape or theta_best_post.shape != xu_post.shape:
-                raise RuntimeError(
-                    "[posterior] theta_best/bounds shape mismatch: "
-                    f"theta_best={theta_best_post.shape}, xl={xl_post.shape}, xu={xu_post.shape}"
-                )
-
-            below = theta_best_post < xl_post
-            above = theta_best_post > xu_post
-            out = below | above
-
-            if np.any(out):
-                bad_idx = np.where(out)[0]
-                preview = bad_idx[:20]
-
-                logger.error(
-                    "[posterior] theta_best is outside bounds for %d/%d parameter(s). "
-                    "First offending indices: %s",
-                    int(out.sum()),
-                    len(theta_best_post),
-                    preview.tolist(),
-                )
-
-                for i in preview:
-                    logger.error(
-                        "[posterior] theta[%d]=%.8e, lower=%.8e, upper=%.8e, "
-                        "below=%s, above=%s",
-                        int(i),
-                        float(theta_best_post[i]),
-                        float(xl_post[i]),
-                        float(xu_post[i]),
-                        bool(below[i]),
-                        bool(above[i]),
-                    )
-
-                # Repair tiny optimiser-bound violations.
-                # This is acceptable for posterior initialization, but large violations
-                # indicate a scale mismatch or broken optimizer output.
-                span = xu_post - xl_post
-                eps = np.maximum(1e-10 * span, 1e-12)
-                theta_best_post = np.clip(theta_best_post, xl_post + eps, xu_post - eps)
-
-                logger.warning(
-                    "[posterior] Clipped theta_best into open bounds for posterior initialization."
-                )
-
-            # Check residuals before building the posterior.
-            try:
-                _resid0 = np.asarray(
-                    _mech_residuals_fn(jnp.asarray(theta_best_post, dtype=jnp.float64)),
-                    dtype=np.float64,
-                )
-            except Exception as exc:
-                raise RuntimeError(
-                    "[posterior] Residual function failed at theta_best_post before MCMC. "
-                    "This usually means the ODE simulation fails at the optimized parameter vector."
-                ) from exc
-
-            if _resid0.ndim != 1:
-                _resid0 = _resid0.ravel()
-
-            finite_mask = np.isfinite(_resid0)
-
-            logger.info(
-                "[posterior] Initial residual diagnostic: shape=%s, finite=%d/%d, "
-                "min=%.4e, max=%.4e, rms=%.4e",
-                _resid0.shape,
-                int(finite_mask.sum()),
-                int(_resid0.size),
-                float(np.nanmin(_resid0)) if _resid0.size else float("nan"),
-                float(np.nanmax(_resid0)) if _resid0.size else float("nan"),
-                float(np.sqrt(np.nanmean(_resid0 ** 2))) if _resid0.size else float("nan"),
+            # Use proper parameter labels when available.
+            # These match the flattened theta layout:
+            # 2*K + 2 + 3*M + N + 4.
+            _theta_names = _generate_param_labels(
+                dims.K,
+                dims.M,
+                dims.N,
+                proteins,
+                kinases,
+                sites,
             )
 
-            if not np.all(finite_mask):
-                bad_resid_idx = np.where(~finite_mask)[0][:20]
-                raise RuntimeError(
-                    "[posterior] Non-finite residuals at theta_best_post before MCMC. "
-                    f"First offending residual indices: {bad_resid_idx.tolist()}"
-                )
-
-            _sigma_noise = float(getattr(_posterior_cfg, "sigma_noise", 0.1))
-
-            if _sigma_noise <= 0:
-                raise RuntimeError(
-                    f"[posterior] sigma_noise must be > 0. Got sigma_noise={_sigma_noise}."
-                )
-
-            _initial_log_lik = -0.5 * float(np.sum(_resid0 ** 2)) / (_sigma_noise ** 2)
-
-            logger.info(
-                "[posterior] Initial likelihood diagnostic: sigma_noise=%.4e, "
-                "log_likelihood_without_prior=%.4e",
-                _sigma_noise,
-                _initial_log_lik,
-            )
-
-            _log_post_fn = make_log_posterior_fn(
-                residuals_fn=_mech_residuals_fn,
-                theta_lower=problem.xl,
-                theta_upper=problem.xu,
-                sigma_noise=_sigma_noise,
-            )
-
-            # Simple indexed theta names (dim can be large; indices are unambiguous).
-            _theta_names = [f"theta_{i}" for i in range(len(theta_best_post))]
-
-            run_posterior_inference(
+            run_optimizer_uncertainty(
                 outdir=outdir,
-                theta_best=theta_best_post,
-                log_posterior_fn=_log_post_fn,
+                problem=problem,
+                theta_best=np.asarray(theta_best, dtype=np.float64),
                 posterior_cfg=_posterior_cfg,
                 theta_names=_theta_names,
-                theta_lower=problem.xl,
-                theta_upper=problem.xu,
+                w_phospho=float(args.loss_weight_phospho),
+                w_abundance=float(args.loss_weight_abundance),
+                w_reg=float(args.loss_weight_reg),
+                w_mrna=float(args.loss_weight_mrna),
             )
 
-            logger.success("[*] Posterior inference complete. Results in %s/posterior", outdir)
-        except ImportError as _post_err:
-            logger.warning(
-                "[posterior] Skipped: %s  "
-                "Install blackjax to enable MCMC posterior inference.", _post_err
+            logger.success(
+                "[*] Optimizer-based uncertainty complete. Results in %s/uncertainty",
+                outdir,
             )
-        except Exception as _post_exc:
+
+        except Exception as _unc_exc:
             raise RuntimeError(
-                "[posterior] Posterior inference failed. "
-                "Check the exception chain above; likely causes are non-finite log posterior, "
-                "ODE instability, shape mismatch in residuals, or invalid sampler config."
-            ) from _post_exc
+                "[uncertainty] Optimizer-based uncertainty failed. "
+                "Likely causes are failed bootstrap refits, ODE instability, "
+                "invalid profile grid, or incompatible optimizer settings."
+            ) from _unc_exc
+
     logger.success("[*] Done.")
 
 

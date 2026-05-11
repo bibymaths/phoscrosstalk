@@ -29,7 +29,6 @@ dependencies = [
   "graphviz>=0.21",
   "rich>=14.3.2",
   "pyfiglet>=1.0.4",
-  "evosax==0.2.0",
   "weasyprint>=68.1",
   "optax>=0.2.8",
   "ipykernel>=7.2.0",
@@ -37,8 +36,6 @@ dependencies = [
   "jaxopt>=0.8.5",
   "jax>=0.8.3",
   "sympy>=1.14.0",
-  "pytensor>=2.38.3",
-  "pymc>=5.28.5",
 ]
 
 [project.optional-dependencies]
@@ -48,9 +45,6 @@ dev = [
   "black",
   "ruff",
   "ipython",
-]
-posterior = [
-  "blackjax>=1.0",
 ]
 docs = [
   "mkdocs",

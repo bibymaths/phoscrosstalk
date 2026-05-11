@@ -125,7 +125,7 @@
 data              = "data_timeseries/input1.csv"
 ptm_intra         = "data_curated/processed/ptm_intra.db"
 ptm_inter         = "data_curated/processed/ptm_inter.db"
-output_dir        = "results_rand_EGFR_MET_ERBB2_optmistix"
+output_dir        = "results_rand_EGFR_MET_ERBB2"
 
 crosstalk_tsv     = ""
 rna_data          = "data_timeseries/input3.csv"
@@ -1121,7 +1121,7 @@ learning_rate           = 1e-3
 rtol                    = 1e-8
 atol                    = 1e-8
 seed                    = 0
-verbose                 = true
+verbose                 = false
 print_every             = 1
 grad_clip               = 1.0
 optimizer               = "adabelief"
@@ -1135,43 +1135,48 @@ save_jaxpr_reports = true
 run_bundle_analysis = true
 
 # =============================================================================
-# [posterior] – MCMC posterior inference using BlackJax NUTS (optional)
-# =============================================================================
-#
-# Runs after multi-start optimisation (and optionally neural_ode mode).
-# Disabled by default; set enabled = true to activate.
-#
-# num_warmup:
-#   NUTS warm-up steps for dual-averaging step-size adaptation.
-#
-# num_samples:
-#   Number of posterior samples to draw after warm-up.
-#
-# step_size:
-#   Initial NUTS step size (adapted during warm-up).
-#
-# thin_factor:
-#   Sub-sample every thin_factor-th sample to reduce autocorrelation.
-#
-# target_acceptance_rate:
-#   Target acceptance rate for dual-averaging adaptation (typically 0.8).
-#
-# seed:
-#   JAX random seed for reproducibility.
-#
-# plot_params:
-#   Number of leading parameters to include in trace and pairs plots.
-#
-# sigma_noise:
-#   Observation noise standard deviation for the Gaussian likelihood.
+# [posterior] – Optimizer-based uncertainty
 # =============================================================================
 [posterior]
-enabled                 = true
-num_warmup              = 300
-num_samples             = 500
-step_size               = 1e-3
-thin_factor             = 5
-target_acceptance_rate  = 0.85
-seed                    = 42
-plot_params             = 8
-sigma_noise             = 0.1
+enabled = true
+
+# Options:
+#   "bootstrap" = residual bootstrap refitting
+#   "profile"   = profile likelihood
+#   "both"      = run bootstrap and profile likelihood
+method = "both"
+
+# -----------------------------
+# Residual bootstrap settings
+# -----------------------------
+n_bootstrap = 100
+
+# Residual resampling mode:
+#   "case"    = resample whole phosphosite/protein/gene residual trajectories
+#   "time"    = resample time columns
+#   "element" = resample individual residual values
+bootstrap_residual_mode = "case"
+
+bootstrap_max_steps = 200
+bootstrap_rtol = 1e-8
+bootstrap_atol = 1e-8
+bootstrap_start_jitter = 0.0
+
+# Rebuild s_prod(t) from each bootstrapped phosphosite dataset.
+# This is more internally consistent because s_prod is data-derived.
+rebuild_s_prod_from_bootstrap = true
+
+save_prediction_intervals = true
+max_prediction_samples = 200
+
+# -----------------------------
+# Profile likelihood settings
+# -----------------------------
+profile_params = 12
+profile_points = 21
+profile_grid_fraction = 1.0
+profile_fix_lambda = 1e8
+
+profile_max_steps = 300
+profile_rtol = 1e-8
+profile_atol = 1e-8

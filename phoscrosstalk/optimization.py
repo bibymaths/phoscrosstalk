@@ -1837,6 +1837,18 @@ class NetworkProblem:
         self.pseudo_huber_delta = float(pseudo_huber_delta)
         self.slope_lambda = float(slope_lambda)
 
+        # Runtime metadata for downstream parallel uncertainty refits.
+        self.cpu_threads = kwargs.get("cpu_threads", "auto")
+        self.parallel_starts = kwargs.get("parallel_starts", "auto")
+        self.threads_per_start = kwargs.get("threads_per_start", "auto")
+        self.use_physical_cores = bool(kwargs.get("use_physical_cores", True))
+        self.reserve_cores = int(kwargs.get("reserve_cores", 0))
+
+        # Optimizer metadata reused by bootstrap/profile refits.
+        self.ls_solver = str(kwargs.get("ls_solver", "lm"))
+        self.optx_adjoint = str(kwargs.get("optx_adjoint", "implicit"))
+        self.jac_mode = str(kwargs.get("jac_mode", "fwd"))
+
     def simulate(self, x):
         """
         Run a simulation for parameter vector x and return phosphosite trajectories.
