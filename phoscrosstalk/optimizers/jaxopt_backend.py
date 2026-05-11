@@ -411,10 +411,12 @@ def _line_search(
     alphas = [0.0] + [1.0 * 0.5 ** i for i in range(n_steps)]
     candidates = [theta0 + a * direction for a in alphas]
 
-    # Evaluate losses without device-host transfers in the loop
+    # Evaluate all losses and find the best using JAX operations only
+    # (no float() or int() conversions to avoid device→host transfers)
     losses = jnp.array([scalar_loss(t) for t in candidates])
-    best_idx = int(jnp.argmin(losses))
-    return candidates[best_idx]
+    candidates_stacked = jnp.stack(candidates)  # shape (n_steps+1, n)
+    best_idx = jnp.argmin(losses)
+    return candidates_stacked[best_idx]
 
 
 # ---------------------------------------------------------------------------

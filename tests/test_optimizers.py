@@ -186,7 +186,6 @@ def test_jaxopt_qp_explicit_mode():
     """Explicit QP data bypass: pass (Q, c) directly."""
     from phoscrosstalk.optimizers.jaxopt_backend import run_single_optimisation_jaxopt
     # Build explicit QP for sum((theta - target)^2): Q = 2*I, c = -2*target
-    target = jnp.asarray(TARGET_INSIDE, dtype=jnp.float64)
     Q = 2.0 * np.eye(3)
     c = -2.0 * np.asarray(TARGET_INSIDE)
     loss_fn = make_quadratic_loss(TARGET_INSIDE)
