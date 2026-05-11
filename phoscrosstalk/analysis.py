@@ -967,7 +967,7 @@ def plot_fitted_simulation(outdir):
         n_panels = 3 if has_rna_for_prot else 2
         color = plt.cm.tab10(proteins.index(prot) % 10)
 
-        figsize = (16, 9) if n_panels == 2 else (24, 13.5)
+        figsize = (16, 5) if n_panels == 2 else (22, 5)
 
         fig, axes = plt.subplots(
             1,
