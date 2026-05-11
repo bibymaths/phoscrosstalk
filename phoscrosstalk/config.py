@@ -73,6 +73,12 @@ class ModelDims:
 # TOML config loader
 # ---------------------------------------------------------------------------
 
+# Allowed loss types for data-fit components (f1, f2, f4).
+# This constant is also imported by optimization.py to avoid duplication.
+ALLOWED_LOSS_TYPES: frozenset = frozenset(
+    {"mse", "pseudo_huber", "pseudo_huber_slope", "log_cosh"}
+)
+
 _DEFAULTS = {
     "paths": {
         "data": "",
@@ -651,7 +657,7 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
     if not isinstance(reg_lambda, (int, float)) or reg_lambda < 0:
         errors.append(f"  [optimisation] reg_lambda = {reg_lambda!r} must be >= 0.")
 
-    _allowed_loss_types = {"mse", "pseudo_huber", "pseudo_huber_slope", "log_cosh"}
+    _allowed_loss_types = ALLOWED_LOSS_TYPES
     loss_type = getattr(cfg.optimisation, "loss_type", "mse")
     if loss_type not in _allowed_loss_types:
         errors.append(

@@ -39,7 +39,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import optimistix as optx
 
-from phoscrosstalk.config import ModelDims
+from phoscrosstalk.config import ModelDims, ALLOWED_LOSS_TYPES
 from phoscrosstalk.mechanisms import (
     compute_prev_site_idx,
     make_rhs, decode_theta,
@@ -425,8 +425,6 @@ def build_parameter_labels(K: int, M: int, N: int) -> list[str]:
 # ---------------------------------------------------------------------------
 # Configurable loss helpers (JAX-traceable, JIT-safe)
 # ---------------------------------------------------------------------------
-
-_ALLOWED_LOSS_TYPES = frozenset({"mse", "pseudo_huber", "pseudo_huber_slope", "log_cosh"})
 
 
 def _safe_weighted_mean(values, weights, eps=1e-8):
@@ -1802,8 +1800,7 @@ class NetworkProblem:
         self.max_steps = max_steps
         self.pinn_model = pinn_model
         # Configurable loss parameters
-        _allowed = {"mse", "pseudo_huber", "pseudo_huber_slope", "log_cosh"}
-        if str(loss_type) not in _allowed:
+        if str(loss_type) not in ALLOWED_LOSS_TYPES:
             raise ValueError(
                 f"Invalid loss_type={loss_type!r} in NetworkProblem. "
                 f"Expected one of: mse, pseudo_huber, pseudo_huber_slope, log_cosh"
