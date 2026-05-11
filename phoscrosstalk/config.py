@@ -73,6 +73,12 @@ class ModelDims:
 # TOML config loader
 # ---------------------------------------------------------------------------
 
+# Allowed loss types for data-fit components (f1, f2, f4).
+# This constant is also imported by optimization.py to avoid duplication.
+ALLOWED_LOSS_TYPES: frozenset = frozenset(
+    {"mse", "pseudo_huber", "pseudo_huber_slope", "log_cosh"}
+)
+
 _DEFAULTS = {
     "paths": {
         "data": "",
@@ -105,6 +111,8 @@ _DEFAULTS = {
         "rtol": 1e-8,
         "atol": 1e-8,
         "loss_type": "mse",
+        "pseudo_huber_delta": 0.1,
+        "slope_lambda": 0.1,
         "lambda_net": 0.0001,
         "reg_lambda": 0.0001,
         "log_every": 100,
@@ -648,6 +656,26 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
     reg_lambda = getattr(cfg.optimisation, "reg_lambda", 0.0001)
     if not isinstance(reg_lambda, (int, float)) or reg_lambda < 0:
         errors.append(f"  [optimisation] reg_lambda = {reg_lambda!r} must be >= 0.")
+
+    _allowed_loss_types = ALLOWED_LOSS_TYPES
+    loss_type = getattr(cfg.optimisation, "loss_type", "mse")
+    if loss_type not in _allowed_loss_types:
+        errors.append(
+            f"  Invalid [optimisation] loss_type={loss_type!r}. Expected one of:\n"
+            "  mse, pseudo_huber, pseudo_huber_slope, log_cosh"
+        )
+
+    pseudo_huber_delta = getattr(cfg.optimisation, "pseudo_huber_delta", 0.1)
+    if not isinstance(pseudo_huber_delta, (int, float)) or pseudo_huber_delta <= 0:
+        errors.append(
+            f"  [optimisation] pseudo_huber_delta = {pseudo_huber_delta!r} must be > 0."
+        )
+
+    slope_lambda = getattr(cfg.optimisation, "slope_lambda", 0.1)
+    if not isinstance(slope_lambda, (int, float)) or slope_lambda < 0:
+        errors.append(
+            f"  [optimisation] slope_lambda = {slope_lambda!r} must be >= 0."
+        )
 
     backend = getattr(cfg.optimisation, "optimizer_backend", "optimistix")
     if backend not in _VALID_BACKENDS:

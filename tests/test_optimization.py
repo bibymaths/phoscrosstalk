@@ -436,3 +436,208 @@ def test_config_optimisation_defaults():
     assert o.verbose is False, f"Default verbose should be False, got {o.verbose}"
     assert o.rtol > 0, f"Default rtol should be positive, got {o.rtol}"
     assert o.atol > 0, f"Default atol should be positive, got {o.atol}"
+
+
+# ---------------------------------------------------------------------------
+# 11. Loss helper functions – unit tests for all loss_type values
+# ---------------------------------------------------------------------------
+
+
+class TestLossHelpers:
+    """Unit tests for compute_weighted_data_loss / compute_weighted_timeseries_loss."""
+
+    def _arrays(self):
+        """Return (y_sim, y_data, weights) with known residuals."""
+        import jax.numpy as jnp
+        y_sim = jnp.array([[1.1, 1.2, 1.3], [0.9, 0.8, 0.7]], dtype=jnp.float64)
+        y_data = jnp.ones((2, 3), dtype=jnp.float64)
+        weights = jnp.ones((2, 3), dtype=jnp.float64)
+        return y_sim, y_data, weights
+
+    def test_mse_returns_scalar(self):
+        import jax.numpy as jnp
+        from phoscrosstalk.optimization import compute_weighted_timeseries_loss
+        y_sim, y_data, w = self._arrays()
+        out = compute_weighted_timeseries_loss(y_sim, y_data, w, loss_type="mse")
+        assert jnp.ndim(out) == 0
+
+    def test_mse_correct_value(self):
+        """MSE with uniform weights = mean of squared residuals."""
+        import jax.numpy as jnp
+        from phoscrosstalk.optimization import compute_weighted_timeseries_loss
+        y_sim, y_data, w = self._arrays()
+        resid = y_sim - y_data
+        expected = float(jnp.mean(resid ** 2))
+        got = float(compute_weighted_timeseries_loss(y_sim, y_data, w, loss_type="mse"))
+        assert abs(got - expected) < 1e-10
+
+    def test_mse_zero_residual(self):
+        import jax.numpy as jnp
+        from phoscrosstalk.optimization import compute_weighted_timeseries_loss
+        y = jnp.ones((3, 4), dtype=jnp.float64)
+        w = jnp.ones((3, 4), dtype=jnp.float64)
+        assert float(compute_weighted_timeseries_loss(y, y, w, loss_type="mse")) < 1e-12
+
+    def test_pseudo_huber_smaller_than_mse_for_large_residuals(self):
+        """Pseudo-Huber is more robust: smaller than MSE for large errors."""
+        import jax.numpy as jnp
+        from phoscrosstalk.optimization import compute_weighted_timeseries_loss
+        y_sim = jnp.array([[10.0, 20.0]], dtype=jnp.float64)
+        y_data = jnp.zeros((1, 2), dtype=jnp.float64)
+        w = jnp.ones((1, 2), dtype=jnp.float64)
+        mse_val = float(compute_weighted_timeseries_loss(
+            y_sim, y_data, w, loss_type="mse"))
+        ph_val = float(compute_weighted_timeseries_loss(
+            y_sim, y_data, w, loss_type="pseudo_huber", pseudo_huber_delta=1.0))
+        assert ph_val < mse_val
+
+    def test_pseudo_huber_zero_residual(self):
+        import jax.numpy as jnp
+        from phoscrosstalk.optimization import compute_weighted_timeseries_loss
+        y = jnp.ones((2, 5), dtype=jnp.float64)
+        w = jnp.ones((2, 5), dtype=jnp.float64)
+        val = float(compute_weighted_timeseries_loss(
+            y, y, w, loss_type="pseudo_huber", pseudo_huber_delta=0.1))
+        assert abs(val) < 1e-12
+
+    def test_log_cosh_returns_scalar(self):
+        import jax.numpy as jnp
+        from phoscrosstalk.optimization import compute_weighted_timeseries_loss
+        y_sim, y_data, w = self._arrays()
+        out = compute_weighted_timeseries_loss(y_sim, y_data, w, loss_type="log_cosh")
+        assert jnp.ndim(out) == 0
+
+    def test_log_cosh_zero_residual(self):
+        import jax.numpy as jnp
+        from phoscrosstalk.optimization import compute_weighted_timeseries_loss
+        y = jnp.ones((3, 3), dtype=jnp.float64)
+        w = jnp.ones((3, 3), dtype=jnp.float64)
+        assert float(compute_weighted_timeseries_loss(
+            y, y, w, loss_type="log_cosh")) < 1e-12
+
+    def test_pseudo_huber_slope_greater_than_pseudo_huber(self):
+        """pseudo_huber_slope adds a slope term so should be >= pseudo_huber."""
+        import jax.numpy as jnp
+        from phoscrosstalk.optimization import compute_weighted_timeseries_loss
+        y_sim, y_data, w = self._arrays()
+        ph_val = float(compute_weighted_timeseries_loss(
+            y_sim, y_data, w, loss_type="pseudo_huber",
+            pseudo_huber_delta=0.1, slope_lambda=0.1))
+        phs_val = float(compute_weighted_timeseries_loss(
+            y_sim, y_data, w, loss_type="pseudo_huber_slope",
+            pseudo_huber_delta=0.1, slope_lambda=0.1))
+        # slope_lambda > 0 adds a positive slope term
+        assert phs_val >= ph_val
+
+    def test_pseudo_huber_slope_zero_slope_lambda_equals_pseudo_huber(self):
+        """With slope_lambda=0, pseudo_huber_slope == pseudo_huber."""
+        import jax.numpy as jnp
+        from phoscrosstalk.optimization import compute_weighted_timeseries_loss
+        y_sim, y_data, w = self._arrays()
+        ph_val = float(compute_weighted_timeseries_loss(
+            y_sim, y_data, w, loss_type="pseudo_huber",
+            pseudo_huber_delta=0.1, slope_lambda=0.0))
+        phs_val = float(compute_weighted_timeseries_loss(
+            y_sim, y_data, w, loss_type="pseudo_huber_slope",
+            pseudo_huber_delta=0.1, slope_lambda=0.0))
+        assert abs(phs_val - ph_val) < 1e-12
+
+    def test_all_loss_types_finite(self):
+        """All loss_type values must produce finite scalars."""
+        import jax.numpy as jnp
+        from phoscrosstalk.optimization import compute_weighted_timeseries_loss, ALLOWED_LOSS_TYPES
+        y_sim = jnp.array([[0.5, 1.0, 1.5], [2.0, 1.0, 0.5]], dtype=jnp.float64)
+        y_data = jnp.ones((2, 3), dtype=jnp.float64)
+        w = jnp.ones((2, 3), dtype=jnp.float64)
+        for lt in ALLOWED_LOSS_TYPES:
+            val = float(compute_weighted_timeseries_loss(
+                y_sim, y_data, w, loss_type=lt,
+                pseudo_huber_delta=0.1, slope_lambda=0.1))
+            assert np.isfinite(val), f"loss_type={lt!r} produced non-finite value: {val}"
+
+    def test_unknown_loss_type_raises(self):
+        import jax.numpy as jnp
+        from phoscrosstalk.optimization import compute_weighted_timeseries_loss
+        y = jnp.ones((2, 3), dtype=jnp.float64)
+        with pytest.raises(ValueError, match="Unknown loss_type"):
+            compute_weighted_timeseries_loss(y, y, y, loss_type="huber_absolute")
+
+    def test_weighted_mean_uses_weights(self):
+        """_safe_weighted_mean with zero weight on an element should ignore it."""
+        import jax.numpy as jnp
+        from phoscrosstalk.optimization import compute_weighted_timeseries_loss
+        # Two-row array; second row has zero weight
+        y_sim = jnp.array([[1.1, 1.2], [10.0, 20.0]], dtype=jnp.float64)
+        y_data = jnp.ones((2, 2), dtype=jnp.float64)
+        w_uniform = jnp.ones((2, 2), dtype=jnp.float64)
+        w_zero_row2 = jnp.array([[1.0, 1.0], [0.0, 0.0]], dtype=jnp.float64)
+        val_uniform = float(compute_weighted_timeseries_loss(
+            y_sim, y_data, w_uniform, loss_type="mse"))
+        val_zeroed = float(compute_weighted_timeseries_loss(
+            y_sim, y_data, w_zero_row2, loss_type="mse"))
+        # Zeroing out large residuals should reduce the loss
+        assert val_zeroed < val_uniform
+
+    def test_network_problem_stores_loss_params(self):
+        """NetworkProblem stores loss_type, pseudo_huber_delta, slope_lambda."""
+        from phoscrosstalk.optimization import NetworkProblem
+        K, M, N, T = 2, 3, 4, 6
+        rng = np.random.default_rng(99)
+        from phoscrosstalk.config import ModelDims
+        dims = ModelDims(K=K, M=M, N=N)
+        t = np.linspace(0, 60, T)
+        n_params = 2 * K + 2 + 3 * M + N + 4
+        prob = NetworkProblem(
+            dims, t, rng.uniform(0.1, 0.9, (N, T)),
+            np.eye(N) * 0.1, np.eye(N) * 0.05,
+            np.array([0, 0, 1, 1]), np.ones((N, M)) / M,
+            np.ones((M, N)) / N,
+            np.zeros((0, T)), np.array([], dtype=int),
+            np.ones((N, T)), np.zeros((0, T)),
+            np.zeros((M, M)), np.array([0, 1, -1]),
+            1e-4, 1e-4, np.zeros(K), np.zeros(M), "dist",
+            np.full(n_params, -2.0), np.full(n_params, 0.0),
+            loss_type="pseudo_huber",
+            pseudo_huber_delta=0.5,
+            slope_lambda=0.2,
+        )
+        assert prob.loss_type == "pseudo_huber"
+        assert prob.pseudo_huber_delta == 0.5
+        assert prob.slope_lambda == 0.2
+
+    def test_network_problem_invalid_loss_type_raises(self):
+        """NetworkProblem raises ValueError for unknown loss_type."""
+        from phoscrosstalk.optimization import NetworkProblem
+        K, M, N, T = 2, 3, 4, 6
+        rng = np.random.default_rng(100)
+        from phoscrosstalk.config import ModelDims
+        dims = ModelDims(K=K, M=M, N=N)
+        t = np.linspace(0, 60, T)
+        n_params = 2 * K + 2 + 3 * M + N + 4
+        with pytest.raises(ValueError, match="loss_type"):
+            NetworkProblem(
+                dims, t, rng.uniform(0.1, 0.9, (N, T)),
+                np.eye(N) * 0.1, np.eye(N) * 0.05,
+                np.array([0, 0, 1, 1]), np.ones((N, M)) / M,
+                np.ones((M, N)) / N,
+                np.zeros((0, T)), np.array([], dtype=int),
+                np.ones((N, T)), np.zeros((0, T)),
+                np.zeros((M, M)), np.array([0, 1, -1]),
+                1e-4, 1e-4, np.zeros(K), np.zeros(M), "dist",
+                np.full(n_params, -2.0), np.full(n_params, 0.0),
+                loss_type="not_valid",
+            )
+
+    def test_compute_weighted_data_loss_all_types_finite(self):
+        """compute_weighted_data_loss must return finite scalars for all loss types."""
+        import jax.numpy as jnp
+        from phoscrosstalk.optimization import (
+            compute_weighted_data_loss, ALLOWED_LOSS_TYPES,
+        )
+        y_sim = jnp.array([0.8, 1.2, 1.5, 0.4], dtype=jnp.float64)
+        y_data = jnp.ones(4, dtype=jnp.float64)
+        w = jnp.ones(4, dtype=jnp.float64)
+        for lt in ALLOWED_LOSS_TYPES:
+            val = float(compute_weighted_data_loss(
+                y_sim, y_data, w, loss_type=lt, pseudo_huber_delta=0.1))
+            assert np.isfinite(val), f"loss_type={lt!r} produced non-finite value: {val}"

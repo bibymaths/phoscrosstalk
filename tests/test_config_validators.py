@@ -390,3 +390,84 @@ class TestDataInterpolationSection:
     def test_valid_data_interpolation_passes(self, tmp_path):
         p = _write_cfg(tmp_path, '[data_interpolation]\nmethod = "linear"\nreplace_nans_at_start = "zero"\n')
         _assert_valid(p)
+
+
+# ---------------------------------------------------------------------------
+# [optimisation] loss_type / pseudo_huber_delta / slope_lambda validation
+# ---------------------------------------------------------------------------
+
+class TestLossTypeValidation:
+    """Tests for the new configurable loss fields in [optimisation]."""
+
+    def test_invalid_loss_type_raises(self, tmp_path):
+        p = _write_cfg(tmp_path, '[optimisation]\nloss_type = "huber_absolute"\n')
+        _assert_error(p)
+
+    def test_valid_loss_types_pass(self, tmp_path):
+        for lt in ("mse", "pseudo_huber", "pseudo_huber_slope", "log_cosh"):
+            p = _write_cfg(tmp_path, f'[optimisation]\nloss_type = "{lt}"\n')
+            _assert_valid(p)
+
+    def test_pseudo_huber_delta_zero_raises(self, tmp_path):
+        p = _write_cfg(
+            tmp_path,
+            "[optimisation]\nloss_type = \"pseudo_huber\"\npseudo_huber_delta = 0.0\n",
+        )
+        _assert_error(p)
+
+    def test_pseudo_huber_delta_negative_raises(self, tmp_path):
+        p = _write_cfg(
+            tmp_path,
+            "[optimisation]\nloss_type = \"pseudo_huber\"\npseudo_huber_delta = -0.5\n",
+        )
+        _assert_error(p)
+
+    def test_pseudo_huber_delta_positive_passes(self, tmp_path):
+        p = _write_cfg(
+            tmp_path,
+            "[optimisation]\nloss_type = \"pseudo_huber\"\npseudo_huber_delta = 0.2\n",
+        )
+        _assert_valid(p)
+
+    def test_slope_lambda_negative_raises(self, tmp_path):
+        p = _write_cfg(
+            tmp_path,
+            "[optimisation]\nloss_type = \"pseudo_huber_slope\"\nslope_lambda = -0.1\n",
+        )
+        _assert_error(p)
+
+    def test_slope_lambda_zero_passes(self, tmp_path):
+        """slope_lambda = 0 is allowed (disables slope term)."""
+        p = _write_cfg(
+            tmp_path,
+            "[optimisation]\nloss_type = \"pseudo_huber_slope\"\nslope_lambda = 0.0\n",
+        )
+        _assert_valid(p)
+
+    def test_slope_lambda_positive_passes(self, tmp_path):
+        p = _write_cfg(
+            tmp_path,
+            "[optimisation]\nloss_type = \"pseudo_huber_slope\"\nslope_lambda = 0.5\n",
+        )
+        _assert_valid(p)
+
+    def test_default_loss_type_is_mse(self, tmp_path):
+        """Without explicit loss_type, default must be 'mse' (no error)."""
+        p = _write_cfg(tmp_path)
+        cfg = load_config(p)
+        assert getattr(cfg.optimisation, "loss_type", "mse") == "mse"
+        _assert_valid(p)
+
+    def test_default_pseudo_huber_delta(self, tmp_path):
+        """Without explicit pseudo_huber_delta, default must be positive."""
+        p = _write_cfg(tmp_path)
+        cfg = load_config(p)
+        delta = getattr(cfg.optimisation, "pseudo_huber_delta", 0.1)
+        assert delta > 0
+
+    def test_default_slope_lambda(self, tmp_path):
+        """Without explicit slope_lambda, default must be >= 0."""
+        p = _write_cfg(tmp_path)
+        cfg = load_config(p)
+        sl = getattr(cfg.optimisation, "slope_lambda", 0.1)
+        assert sl >= 0

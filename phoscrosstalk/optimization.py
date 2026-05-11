@@ -39,7 +39,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import optimistix as optx
 
-from phoscrosstalk.config import ModelDims
+from phoscrosstalk.config import ModelDims, ALLOWED_LOSS_TYPES
 from phoscrosstalk.mechanisms import (
     compute_prev_site_idx,
     make_rhs, decode_theta,
@@ -423,6 +423,142 @@ def build_parameter_labels(K: int, M: int, N: int) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Configurable loss helpers (JAX-traceable, JIT-safe)
+# ---------------------------------------------------------------------------
+
+
+def _safe_weighted_mean(values, weights, eps=1e-8):
+    """Weighted mean: sum(weights * values) / (sum(weights) + eps)."""
+    values = jnp.asarray(values, dtype=jnp.float64)
+    weights = jnp.asarray(weights, dtype=jnp.float64)
+    return jnp.sum(weights * values) / (jnp.sum(weights) + jnp.asarray(eps, dtype=jnp.float64))
+
+
+def _pseudo_huber_values(resid, delta):
+    """Element-wise pseudo-Huber loss: delta^2 * (sqrt(1 + (resid/delta)^2) - 1)."""
+    delta = jnp.asarray(delta, dtype=jnp.float64)
+    return delta ** 2 * (jnp.sqrt(1.0 + (resid / delta) ** 2) - 1.0)
+
+
+def _log_cosh_values(resid):
+    """Element-wise numerically-stable log(cosh(x)) = logaddexp(x, -x) - log(2)."""
+    resid = jnp.asarray(resid, dtype=jnp.float64)
+    return jnp.logaddexp(resid, -resid) - jnp.log(jnp.asarray(2.0, dtype=jnp.float64))
+
+
+def compute_weighted_data_loss(
+    y_sim,
+    y_data,
+    weights,
+    *,
+    loss_type="mse",
+    pseudo_huber_delta=0.1,
+):
+    """
+    Compute a weighted scalar loss between simulation and data.
+
+    Suitable for non-time-series components or when slope penalty is not needed.
+    For pseudo_huber_slope, the slope term is omitted (use
+    compute_weighted_timeseries_loss for time-series data).
+
+    Parameters
+    ----------
+    y_sim, y_data : array-like — same shape
+    weights : array-like — same shape, non-negative
+    loss_type : str — one of 'mse', 'pseudo_huber', 'pseudo_huber_slope', 'log_cosh'
+    pseudo_huber_delta : float — delta for pseudo-Huber loss (> 0)
+
+    Returns
+    -------
+    JAX scalar
+    """
+    y_sim = jnp.asarray(y_sim, dtype=jnp.float64)
+    y_data = jnp.asarray(y_data, dtype=jnp.float64)
+    weights = jnp.asarray(weights, dtype=jnp.float64)
+    resid = y_sim - y_data
+
+    if loss_type == "mse":
+        return _safe_weighted_mean(resid ** 2, weights)
+    if loss_type in ("pseudo_huber", "pseudo_huber_slope"):
+        values = _pseudo_huber_values(resid, pseudo_huber_delta)
+        return _safe_weighted_mean(values, weights)
+    if loss_type == "log_cosh":
+        values = _log_cosh_values(resid)
+        return _safe_weighted_mean(values, weights)
+    raise ValueError(
+        f"Unknown loss_type={loss_type!r}. Expected one of: "
+        "mse, pseudo_huber, pseudo_huber_slope, log_cosh."
+    )
+
+
+def compute_weighted_timeseries_loss(
+    y_sim,
+    y_data,
+    weights,
+    *,
+    loss_type="mse",
+    pseudo_huber_delta=0.1,
+    slope_lambda=0.1,
+    time_axis=1,
+):
+    """
+    Compute a weighted scalar loss for time-series data.
+
+    For 'pseudo_huber_slope', an additional slope-consistency term is added.
+    All other loss types ignore slope_lambda.
+
+    Parameters
+    ----------
+    y_sim, y_data : array-like — same shape
+    weights : array-like — same shape, non-negative
+    loss_type : str — one of 'mse', 'pseudo_huber', 'pseudo_huber_slope', 'log_cosh'
+    pseudo_huber_delta : float — delta for pseudo-Huber loss (> 0)
+    slope_lambda : float — weight for slope penalty term (>= 0)
+    time_axis : int — axis corresponding to time (0 or 1)
+
+    Returns
+    -------
+    JAX scalar
+    """
+    y_sim = jnp.asarray(y_sim, dtype=jnp.float64)
+    y_data = jnp.asarray(y_data, dtype=jnp.float64)
+    weights = jnp.asarray(weights, dtype=jnp.float64)
+    resid = y_sim - y_data
+
+    if loss_type == "mse":
+        return _safe_weighted_mean(resid ** 2, weights)
+    if loss_type == "pseudo_huber":
+        values = _pseudo_huber_values(resid, pseudo_huber_delta)
+        return _safe_weighted_mean(values, weights)
+    if loss_type == "log_cosh":
+        values = _log_cosh_values(resid)
+        return _safe_weighted_mean(values, weights)
+    if loss_type == "pseudo_huber_slope":
+        base_values = _pseudo_huber_values(resid, pseudo_huber_delta)
+        base_loss = _safe_weighted_mean(base_values, weights)
+
+        d_sim = jnp.diff(y_sim, axis=time_axis)
+        d_data = jnp.diff(y_data, axis=time_axis)
+        d_resid = d_sim - d_data
+
+        if time_axis == 1:
+            w_slope = 0.5 * (weights[:, 1:] + weights[:, :-1])
+        elif time_axis == 0:
+            w_slope = 0.5 * (weights[1:, :] + weights[:-1, :])
+        else:
+            raise ValueError(
+                "compute_weighted_timeseries_loss currently supports time_axis=0 or 1."
+            )
+
+        slope_loss = _safe_weighted_mean(d_resid ** 2, w_slope)
+        return base_loss + jnp.asarray(slope_lambda, dtype=jnp.float64) * slope_loss
+    raise ValueError(
+        f"Unknown loss_type={loss_type!r}. Expected one of: "
+        "mse, pseudo_huber, pseudo_huber_slope, log_cosh."
+    )
+
+
+# ---------------------------------------------------------------------------
 # JAX objective computation (loss components)
 # ---------------------------------------------------------------------------
 
@@ -492,6 +628,34 @@ def compute_objectives_jax(
     return f1, f2, f3
 
 
+def _compute_f3_reg(theta, L_alpha, lambda_net, reg_lambda, n_var, K, M, N):
+    """
+    Compute only the regularisation component f3.
+
+    Extracts the Laplacian network term from theta (alpha parameters) and
+    combines it with L2 regularisation.  Factored out so that make_loss_fn
+    can obtain f3 without running the (now unused) f1/f2 branches of
+    compute_objectives_jax.
+
+    Parameters
+    ----------
+    theta     : jax.Array, flat parameter vector
+    L_alpha   : jax.Array (M, M), kinase Laplacian
+    lambda_net: float
+    reg_lambda: float
+    n_var     : int – normalisation count
+    K, M, N   : int
+
+    Returns
+    -------
+    f3 : JAX scalar
+    """
+    _, _, _, _, alpha, _, _, _, _, _, _, _ = decode_theta(theta, K, M, N)
+    reg = jnp.asarray(reg_lambda, dtype=jnp.float64) * jnp.dot(theta, theta)
+    reg_net = jnp.asarray(lambda_net, dtype=jnp.float64) * jnp.dot(alpha, L_alpha @ alpha)
+    return (reg + reg_net) / jnp.asarray(max(n_var, 1), dtype=jnp.float64)
+
+
 # ---------------------------------------------------------------------------
 # Scalarized JAX loss for Optimistix
 # ---------------------------------------------------------------------------
@@ -535,6 +699,9 @@ def make_loss_fn(
         dt0=0.01,
         root_find_max_steps=10,
         scan_kind=None,
+        loss_type="mse",
+        pseudo_huber_delta=0.1,
+        slope_lambda=0.1,
 ):
     """
     Build a JAX-differentiable scalarized loss function for Optimistix.
@@ -713,36 +880,57 @@ def make_loss_fn(
         P_sim = jnp.clip(xs_prot[:, 3 * K + M:], 0.0, None).T  # (N, T_prot)
         A_sim = jnp.clip(xs_prot[:, 2 * K: 3 * K], 0.0, 5.0).T  # (K, T_prot)
 
-        f1, f2, f3 = compute_objectives_jax(
+        f3 = _compute_f3_reg(
             theta_j,
-            P_data_j,
-            P_sim,
-            A_scaled_j,
-            A_sim,
-            W_data_j,
-            W_prot_j,
-            prot_idx_j,
             La_loss_j,
             lambda_net,
             reg_lambda,
-            n_p,
-            n_A,
             n_var,
             K,
             M,
             N,
         )
 
+        # f1: phosphosite loss with configured loss function
+        f1 = compute_weighted_timeseries_loss(
+            P_sim,
+            P_data_j,
+            W_data_j,
+            loss_type=loss_type,
+            pseudo_huber_delta=pseudo_huber_delta,
+            slope_lambda=slope_lambda,
+            time_axis=1,
+        )
+        if A_scaled_j.size > 0:
+            A_sim_obs = A_sim[prot_idx_j, :]  # (K_obs, T)
+            f2 = compute_weighted_timeseries_loss(
+                A_sim_obs,
+                A_scaled_j,
+                W_prot_j,
+                loss_type=loss_type,
+                pseudo_huber_delta=pseudo_huber_delta,
+                slope_lambda=slope_lambda,
+                time_axis=1,
+            )
+        else:
+            f2 = jnp.asarray(0.0, dtype=jnp.float64)
+
         # f4: mRNA / R_rna loss (only when RNA data is available)
-        # Use raw MSE (not log1p) to avoid overflow to inf when R_sim is far from obs.
         if has_mrna:
             xs_rna = xs[mrna_idx_j, :]
             R_sim_rna = jnp.clip(
                 xs_rna[:, :K], 0.0, _RNA_CLIP_UPPER
             ).T  # (K, T_rna); clip to prevent overflow
             R_sim_matched = R_sim_rna[rna_prot_idx_j, :]  # (n_match, T_rna)
-            diff_R = rna_j - R_sim_matched
-            f4 = jnp.sum(W_rna_j * diff_R * diff_R) / n_rna
+            f4 = compute_weighted_timeseries_loss(
+                R_sim_matched,
+                rna_j,
+                W_rna_j,
+                loss_type=loss_type,
+                pseudo_huber_delta=pseudo_huber_delta,
+                slope_lambda=slope_lambda,
+                time_axis=1,
+            )
         else:
             f4 = jnp.asarray(0.0, dtype=jnp.float64)
 
@@ -803,6 +991,9 @@ def make_residuals_fn(
         root_find_max_steps=10,
         xl=None,
         xu=None,
+        loss_type="mse",
+        pseudo_huber_delta=0.1,
+        slope_lambda=0.1,
 ):
     """
     Build a JAX-differentiable residual-vector function for Optimistix least_squares.
@@ -1033,15 +1224,31 @@ def make_residuals_fn(
         diff_p = P_sim - P_data_j  # (N, T_prot)
         r_phospho = (sqrt_wp * diff_p).ravel()  # (N*T_prot,)
 
-        # --- f1 diagnostic (mean unweighted-by-modality MSE) ---
-        f1 = jnp.sum(W_data_j_diag * diff_p * diff_p) / n_p
+        # --- f1 diagnostic: use configured loss ---
+        f1 = compute_weighted_timeseries_loss(
+            P_sim,
+            P_data_j,
+            W_data_j_diag,
+            loss_type=loss_type,
+            pseudo_huber_delta=pseudo_huber_delta,
+            slope_lambda=slope_lambda,
+            time_axis=1,
+        )
 
         # --- Abundance residuals ---
         if has_abundance:
             A_sim_obs = A_sim[prot_idx_j, :]  # (K_obs, T_prot)
             diff_A = A_sim_obs - A_scaled_j  # (K_obs, T_prot)
             r_abund = (sqrt_wa * diff_A).ravel()
-            f2 = jnp.sum(W_prot_j_diag * diff_A * diff_A) / n_A
+            f2 = compute_weighted_timeseries_loss(
+                A_sim_obs,
+                A_scaled_j,
+                W_prot_j_diag,
+                loss_type=loss_type,
+                pseudo_huber_delta=pseudo_huber_delta,
+                slope_lambda=slope_lambda,
+                time_axis=1,
+            )
         else:
             r_abund = jnp.zeros(0, dtype=jnp.float64)
             f2 = jnp.asarray(0.0, dtype=jnp.float64)
@@ -1054,7 +1261,15 @@ def make_residuals_fn(
             R_sim_matched = R_sim_rna[rna_prot_idx_j, :]  # (n_match, T_rna)
             diff_R = R_sim_matched - rna_j  # (n_match, T_rna)
             r_rna = (sqrt_wr * diff_R).ravel()
-            f4 = jnp.sum(W_rna_j_diag * diff_R * diff_R) / n_rna
+            f4 = compute_weighted_timeseries_loss(
+                R_sim_matched,
+                rna_j,
+                W_rna_j_diag,
+                loss_type=loss_type,
+                pseudo_huber_delta=pseudo_huber_delta,
+                slope_lambda=slope_lambda,
+                time_axis=1,
+            )
         else:
             r_rna = jnp.zeros(0, dtype=jnp.float64)
             f4 = jnp.asarray(0.0, dtype=jnp.float64)
@@ -1538,6 +1753,9 @@ class NetworkProblem:
             atol=1e-9,
             max_steps=16384,
             pinn_model=None,
+            loss_type="mse",
+            pseudo_huber_delta=0.1,
+            slope_lambda=0.1,
             **kwargs,  # absorb legacy keyword args (elementwise_runner, etc.)
     ):
         # Note: ode_adjoint_kind was previously defaulted to the non-existent value
@@ -1601,6 +1819,23 @@ class NetworkProblem:
         self.atol = atol
         self.max_steps = max_steps
         self.pinn_model = pinn_model
+        # Configurable loss parameters
+        if str(loss_type) not in ALLOWED_LOSS_TYPES:
+            raise ValueError(
+                f"Invalid loss_type={loss_type!r} in NetworkProblem. "
+                f"Expected one of: mse, pseudo_huber, pseudo_huber_slope, log_cosh"
+            )
+        if float(pseudo_huber_delta) <= 0:
+            raise ValueError(
+                f"pseudo_huber_delta must be > 0; got {pseudo_huber_delta!r}"
+            )
+        if float(slope_lambda) < 0:
+            raise ValueError(
+                f"slope_lambda must be >= 0; got {slope_lambda!r}"
+            )
+        self.loss_type = str(loss_type)
+        self.pseudo_huber_delta = float(pseudo_huber_delta)
+        self.slope_lambda = float(slope_lambda)
 
     def simulate(self, x):
         """
