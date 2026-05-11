@@ -135,7 +135,15 @@ _DEFAULTS = {
         "root_find_max_steps": 10,
     },
     "time": {
-        "mrna_time_points": [4, 8, 15, 30, 60, 120, 240, 480, 960],
+        "phosphosite_time_points": [
+            0.0, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0,
+            16.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0,
+        ],
+        "protein_time_points": [
+            0.0, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0,
+            16.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0,
+        ],
+        "mrna_time_points": [4.0, 8.0, 15.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0],
         "interpolation": "piecewise_constant",
     },
     "derived_rates": {
@@ -476,6 +484,35 @@ def load_config(path: str | None = None) -> SimpleNamespace:
         getattr(cfg.posterior, "bootstrap_residual_mode", "case")
     ).lower()
 
+    # ------------------------------------------------------------------
+    # Normalize [time] fields – convert to float lists, supply defaults.
+    # ------------------------------------------------------------------
+    _phospho_default = [
+        0.0, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0,
+        16.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0,
+    ]
+    _mrna_default = [4.0, 8.0, 15.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0]
+
+    raw_phospho = getattr(cfg.time, "phosphosite_time_points", None)
+    if not raw_phospho:
+        raw_phospho = _phospho_default
+    cfg.time.phosphosite_time_points = [float(x) for x in raw_phospho]
+
+    raw_protein = getattr(cfg.time, "protein_time_points", None)
+    if not raw_protein:
+        cfg.time.protein_time_points = list(cfg.time.phosphosite_time_points)
+    else:
+        cfg.time.protein_time_points = [float(x) for x in raw_protein]
+
+    raw_mrna = getattr(cfg.time, "mrna_time_points", None)
+    if not raw_mrna:
+        raw_mrna = _mrna_default
+    cfg.time.mrna_time_points = [float(x) for x in raw_mrna]
+
+    cfg.time.interpolation = str(
+        getattr(cfg.time, "interpolation", "piecewise_constant")
+    ).lower()
+
     return cfg
 
 
@@ -581,6 +618,44 @@ def _opt(val: str) -> str | None:
     """Return *val* stripped, or ``None`` if it is empty/absent."""
     v = (val or "").strip()
     return v if v else None
+
+
+def _validate_time_points(name: str, values, errors: list) -> "np.ndarray":
+    """
+    Validate a time-point array and append error messages to *errors*.
+
+    Checks:
+    * Non-empty 1-D list of numbers.
+    * All values are finite.
+    * No negative values.
+    * Strictly increasing (no duplicates).
+
+    Returns a float64 NumPy array (possibly empty on critical failure).
+    """
+    try:
+        arr = np.asarray(values, dtype=float)
+    except (TypeError, ValueError):
+        errors.append(
+            f"  [time] {name} could not be converted to a numeric array."
+        )
+        return np.array([], dtype=float)
+
+    if arr.ndim != 1 or arr.size == 0:
+        errors.append(
+            f"  [time] {name} must be a non-empty 1D list of numbers."
+        )
+        return arr
+
+    if not np.all(np.isfinite(arr)):
+        errors.append(f"  [time] {name} contains non-finite values.")
+
+    if np.any(arr < 0):
+        errors.append(f"  [time] {name} must not contain negative values.")
+
+    if arr.size > 1 and np.any(np.diff(arr) <= 0):
+        errors.append(f"  [time] {name} must be strictly increasing (no duplicates or decreasing values).")
+
+    return arr
 
 
 def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> None:
@@ -883,13 +958,42 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
         )
 
     # -------------------------------------------------------------------
-    # Time interpolation
+    # Time interpolation and time-point arrays
     # -------------------------------------------------------------------
     interp = getattr(cfg.time, "interpolation", "piecewise_constant")
     if interp not in _VALID_INTERP:
         errors.append(
             f"  [time] interpolation = {interp!r} is invalid. "
             f"Must be one of: {sorted(_VALID_INTERP)}"
+        )
+
+    t_phospho = _validate_time_points(
+        "phosphosite_time_points",
+        cfg.time.phosphosite_time_points,
+        errors,
+    )
+    t_protein = _validate_time_points(
+        "protein_time_points",
+        cfg.time.protein_time_points,
+        errors,
+    )
+    _validate_time_points(
+        "mrna_time_points",
+        cfg.time.mrna_time_points,
+        errors,
+    )
+
+    # Enforce shared ODE grid for the current mechanistic fitting path.
+    if (
+        t_phospho.size > 0
+        and t_protein.size > 0
+        and not np.allclose(t_phospho, t_protein, equal_nan=False)
+    ):
+        errors.append(
+            "  [time] protein_time_points and phosphosite_time_points differ, "
+            "but the current mechanistic fitting path expects a shared "
+            "protein/phosphosite ODE save grid. "
+            "Set them equal or implement separate observation grids first."
         )
 
     # -------------------------------------------------------------------
@@ -1144,5 +1248,12 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
 DEFAULT_TIMEPOINTS = np.array(
     [0.0, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0]
 )
+"""Legacy fallback time-point array.
+
+.. deprecated::
+    Use ``cfg.time.phosphosite_time_points`` from :func:`load_config` instead.
+    This constant is kept only for backward compatibility with code that cannot
+    yet receive a config object.  Normal execution paths must not rely on it.
+"""
 
 EPS = 1e-8

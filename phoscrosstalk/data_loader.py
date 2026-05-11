@@ -17,7 +17,7 @@ from phoscrosstalk.logger import get_logger
 logger = get_logger()
 
 
-def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
+def load_site_data(path, timepoints=None):
     """
     Parses a time-series CSV file to extract phosphosite data and optional protein abundance.
 
@@ -27,7 +27,11 @@ def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
 
     Args:
         path (str): File path to the dataset (CSV).
-        timepoints (list/array): Expected time points corresponding to value columns.
+        timepoints (list/array | None): Expected time points corresponding to value columns.
+            When ``None`` the function infers them from the number of value columns using
+            :data:`DEFAULT_TIMEPOINTS` as a legacy fallback and logs a deprecation warning.
+            Callers should always pass explicit time points sourced from
+            ``cfg.time.phosphosite_time_points``.
 
     Returns:
         (tuple[list[str], list[str], np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]):
@@ -36,7 +40,7 @@ def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
             ``proteins`` is a list of unique sorted protein names.
             ``site_prot_idx`` maps each site to the ``proteins`` list.
             ``positions`` has numeric residue positions (``np.nan`` if parsing fails).
-            ``t`` is the time point array.
+            ``t`` is the time point array (placeholder; callers should override from config).
             ``Y`` is the phosphosite intensity matrix ``(N_sites, T)``.
             ``A_data`` is the protein abundance matrix ``(N_proteins, T)`` or ``None``.
             ``A_proteins`` is the list of protein names in ``A_data`` or ``None``.
@@ -50,6 +54,25 @@ def load_site_data(path, timepoints=DEFAULT_TIMEPOINTS):
     value_cols = [
         c for c in df.columns if re.fullmatch(r"[vx]\d+", str(c), re.IGNORECASE)
     ]
+
+    # Resolve timepoints: if caller did not supply them, fall back to the legacy
+    # DEFAULT_TIMEPOINTS only when the column count matches, and warn.
+    if timepoints is None:
+        if len(value_cols) == len(DEFAULT_TIMEPOINTS):
+            logger.warning(
+                "[data_loader] load_site_data() called without explicit timepoints; "
+                "using DEFAULT_TIMEPOINTS as a legacy fallback. "
+                "Pass cfg.time.phosphosite_time_points explicitly."
+            )
+            timepoints = DEFAULT_TIMEPOINTS
+        else:
+            # Cannot guess – caller must provide timepoints.
+            raise ValueError(
+                f"load_site_data() received no timepoints and the data file has "
+                f"{len(value_cols)} value columns which do not match "
+                f"DEFAULT_TIMEPOINTS ({len(DEFAULT_TIMEPOINTS)} entries). "
+                "Pass explicit timepoints sourced from cfg.time.phosphosite_time_points."
+            )
     if len(value_cols) != len(timepoints):
         raise ValueError(
             f"Expected {len(timepoints)} value columns matching pattern [vx]<number> "

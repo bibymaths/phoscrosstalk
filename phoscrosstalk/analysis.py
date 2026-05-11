@@ -14,7 +14,7 @@ import matplotlib
 matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 
-from phoscrosstalk.config import DEFAULT_TIMEPOINTS, ModelDims
+from phoscrosstalk.config import ModelDims
 from phoscrosstalk.mechanisms import decode_theta
 from phoscrosstalk.logger import get_logger
 from phoscrosstalk.optimization import bio_score, build_full_A0
@@ -915,6 +915,10 @@ def plot_fitted_simulation(outdir):
     phosphosites); otherwise creates two-panel figures (protein abundance /
     phosphosites).
 
+    The time axis is read from ``time_axes.json`` when present in *outdir*.
+    Falls back to ``np.arange(len(sim_cols))`` with a warning when the file is
+    absent (legacy behaviour).
+
     Args:
         outdir (str): Directory containing output TSV files.
 
@@ -936,9 +940,34 @@ def plot_fitted_simulation(outdir):
 
     sim_cols = [col for col in df.columns if col.startswith("sim_t")]
     data_cols = [col for col in df.columns if col.startswith("data_t")]
-    t_vals = DEFAULT_TIMEPOINTS
 
-    if len(sim_cols) != len(t_vals) or len(data_cols) != len(t_vals):
+    # --- Resolve time axis from time_axes.json (preferred) ---
+    _time_axes_path = os.path.join(outdir, "time_axes.json")
+    _time_axes_cfg = None
+    if os.path.exists(_time_axes_path):
+        try:
+            import json as _json
+            with open(_time_axes_path) as _fh:
+                _time_axes_cfg = _json.load(_fh)
+        except (OSError, ValueError) as _exc:
+            logger.warning("[!] Could not read time_axes.json: %s", _exc)
+
+    if _time_axes_cfg is not None:
+        t_vals = np.asarray(_time_axes_cfg.get("phosphosite_time_points", []), dtype=float)
+        if t_vals.size == 0 or len(sim_cols) != len(t_vals):
+            # Column count mismatch – fall back to arange
+            logger.warning(
+                "[!] time_axes.json phosphosite_time_points length (%d) does not match "
+                "sim_t column count (%d); falling back to column indices.",
+                len(t_vals),
+                len(sim_cols),
+            )
+            t_vals = np.arange(len(sim_cols), dtype=float)
+    else:
+        # Legacy fallback: no time_axes.json present
+        logger.warning(
+            "[!] time_axes.json not found in %s; using column indices as time axis.", outdir
+        )
         t_vals = np.arange(len(sim_cols), dtype=float)
 
     # Optionally load mRNA fit data

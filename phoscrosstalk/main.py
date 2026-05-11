@@ -54,6 +54,7 @@ enable_x64()  # Must be before any JAX import
 
 import argparse
 from types import SimpleNamespace
+import json
 import subprocess
 import sys
 
@@ -380,8 +381,12 @@ def main():
 
     try:
         # 1. Load primary phospho data
+        # Pass configured time points so the loader validates column count.
         (sites, proteins, site_prot_idx, positions, t, Y, A_data, A_proteins) = (
-            data_loader.load_site_data(_filtered_data_path)
+            data_loader.load_site_data(
+                _filtered_data_path,
+                timepoints=cfg.time.phosphosite_time_points,
+            )
         )
     finally:
         # Delete the phospho temp file as soon as the loader has consumed it.
@@ -391,6 +396,35 @@ def main():
             except OSError:
                 pass
         _tmp_files_to_cleanup.clear()
+
+    # Override / validate t from the authoritative config source.
+    t_phospho_cfg = np.asarray(cfg.time.phosphosite_time_points, dtype=float)
+    t_protein_cfg = np.asarray(cfg.time.protein_time_points, dtype=float)
+
+    if len(t_phospho_cfg) != Y.shape[1]:
+        raise RuntimeError(
+            "[time] phosphosite_time_points length does not match phosphosite data columns: "
+            f"len(phosphosite_time_points)={len(t_phospho_cfg)}, Y.shape[1]={Y.shape[1]}"
+        )
+
+    if A_data is not None and A_data.size > 0:
+        if len(t_protein_cfg) != A_data.shape[1]:
+            raise RuntimeError(
+                "[time] protein_time_points length does not match protein abundance data columns: "
+                f"len(protein_time_points)={len(t_protein_cfg)}, A_data.shape[1]={A_data.shape[1]}"
+            )
+
+    if not np.allclose(t_protein_cfg, t_phospho_cfg):
+        raise RuntimeError(
+            "[time] protein_time_points and phosphosite_time_points differ, "
+            "but the current mechanistic fitting path expects a shared "
+            "protein/phosphosite ODE save grid. "
+            "Set them equal or implement separate observation grids first."
+        )
+
+    # Use configured time axes for all downstream modeling.
+    t = t_phospho_cfg
+    t_protein = t_protein_cfg  # noqa: F841 – reserved for protein-specific export paths
 
     # 2. Load optional mRNA data and TF network
     gene_ids = None
@@ -409,7 +443,10 @@ def main():
         )
         _rna_tmp = _filtered_rna_path if _filtered_rna_path != args.rna_data else None
         try:
-            gene_ids, t_rna, rna_matrix = data_loader.load_rna_data(_filtered_rna_path)
+            gene_ids, t_rna, rna_matrix = data_loader.load_rna_data(
+                _filtered_rna_path,
+                timepoints=cfg.time.mrna_time_points,
+            )
         finally:
             # H1: delete RNA temp file immediately after loader returns.
             if _rna_tmp is not None:
@@ -417,11 +454,36 @@ def main():
                     os.unlink(_rna_tmp)
                 except OSError:
                     pass
+
+        # Override t_rna from the authoritative config source.
+        t_rna_cfg = np.asarray(cfg.time.mrna_time_points, dtype=float)
+        if rna_matrix is not None and len(t_rna_cfg) != rna_matrix.shape[1]:
+            raise RuntimeError(
+                "[time] mrna_time_points length does not match mRNA data columns: "
+                f"len(mrna_time_points)={len(t_rna_cfg)}, rna_matrix.shape[1]={rna_matrix.shape[1]}"
+            )
+        t_rna = t_rna_cfg
+
         logger.success(
             f"[*] Loaded mRNA data: {len(gene_ids)} genes x {len(t_rna)} time points."
         )
 
     logger.success(f"[*] Loaded {len(sites)} phosphorylation sites & {len(proteins)} proteins.")
+
+    # Write time_axes.json so plots and downstream consumers can reproduce the axes.
+    _time_axes = {
+        "phosphosite_time_points": cfg.time.phosphosite_time_points,
+        "protein_time_points": cfg.time.protein_time_points,
+        "mrna_time_points": cfg.time.mrna_time_points,
+        "interpolation": cfg.time.interpolation,
+    }
+    _time_axes_path = os.path.join(outdir, "time_axes.json")
+    try:
+        with open(_time_axes_path, "w") as _fh:
+            json.dump(_time_axes, _fh, indent=2)
+        logger.info("[*] Written time_axes.json to %s", _time_axes_path)
+    except OSError as _exc:
+        logger.warning("[!] Could not write time_axes.json: %s", _exc)
 
     if args.tf_net:
         tf_net_df = data_loader.load_tf_network(args.tf_net, gene_ids=gene_ids)
