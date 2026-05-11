@@ -251,7 +251,7 @@ include_tfs_as_proteins = false
 # =============================================================================
 [optimisation]
 n_starts      = 5
-max_steps     = 100
+max_steps     = 1000
 
 ls_solver     = "lm"         # options: "lm" | "gauss_newton" | "dogleg" | "indirect_lm"
 
@@ -275,14 +275,14 @@ atol          = 1e-6
 
 # 1. Optimistix default / recommended least-squares path
 # API: handled by Optimistix backend; no extra backend kwargs needed here.
-optimizer_backend = "optimistix"
-optimizer_backend_kwargs = {}
+#optimizer_backend = "optimistix"
+#optimizer_backend_kwargs = {}
 
 # 2. JAXopt native bounded L-BFGS-B
 # API: run_single_optimisation_jaxopt(..., solver_kind="lbfgsb",
 #      max_steps, tol, verbose)
-# optimizer_backend = "jaxopt_lbfgsb"
-# optimizer_backend_kwargs = { solver_kind = "lbfgsb", max_steps = 1000, tol = 1e-6, verbose = true }
+ optimizer_backend = "jaxopt_lbfgsb"
+ optimizer_backend_kwargs = { solver_kind = "lbfgsb", max_steps = 1000, tol = 1e-6, verbose = false }
 
 # 3. JAXopt projected gradient
 # API: run_single_optimisation_jaxopt(..., solver_kind="projected_gradient",
@@ -1165,11 +1165,11 @@ run_bundle_analysis = true
 # =============================================================================
 [posterior]
 enabled                 = true
-num_warmup              = 500
-num_samples             = 1000
+num_warmup              = 300
+num_samples             = 500
 step_size               = 1e-3
-thin_factor             = 10
-target_acceptance_rate  = 0.8
+thin_factor             = 5
+target_acceptance_rate  = 0.85
 seed                    = 42
 plot_params             = 8
 sigma_noise             = 0.1
