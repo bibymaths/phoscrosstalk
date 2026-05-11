@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 from types import SimpleNamespace
+from collections import namedtuple
 
 from phoscrosstalk import posterior
 
@@ -210,10 +211,19 @@ def test_run_residual_bootstrap_uncertainty_serial(monkeypatch, tmp_path):
         lambda **kwargs: {"P_sim": "written"},
     )
 
+    WorkerResult = namedtuple(
+        "WorkerResult",
+        ["b", "ok", "theta_opt", "total_loss", "f1", "f2", "f3", "f4", "error"],
+    )
+
     def fake_worker(task):
         if task[0] == 0:
-            return (0, True, np.array([0.2, 0.3, 0.4]), 1.0, 0.1, 0.2, 0.3, 0.4, "")
-        return (1, False, None, np.nan, np.nan, np.nan, np.nan, np.nan, "RuntimeError: boom")
+            return WorkerResult(
+                0, True, np.array([0.2, 0.3, 0.4]), 1.0, 0.1, 0.2, 0.3, 0.4, ""
+            )
+        return WorkerResult(
+            1, False, None, np.nan, np.nan, np.nan, np.nan, np.nan, "RuntimeError: boom"
+        )
 
     monkeypatch.setattr(posterior, "_bootstrap_refit_worker", fake_worker)
     result = posterior.run_residual_bootstrap_uncertainty(

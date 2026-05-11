@@ -16,6 +16,10 @@ def _write_gzip(path: Path, text: str):
         fh.write(text)
 
 
+def _tsv_line(*values):
+    return "\t".join(str(v) for v in values)
+
+
 def test_data_curator_init_and_download_helpers(tmp_path):
     curator = DataCurator(str(tmp_path))
     assert curator.raw_dir.exists()
@@ -81,8 +85,8 @@ def test_build_ptm_databases_and_convert_custom_csv(tmp_path):
         "\n".join(
             [
                 "# comment",
-                "P1\tHomo sapiens\tphosphorylation\tY10\t0.1\tx\tphosphorylation\tS20\t0.2\tx\tx\tx\tx",
-                "P2\tMus musculus\tphosphorylation\tY1\t0.1\tx\tphosphorylation\tS2\t0.2\tx\tx\tx\tx",
+                _tsv_line("P1", "Homo sapiens", "phosphorylation", "Y10", 0.1, "x", "phosphorylation", "S20", 0.2, "x", "x", "x", "x"),
+                _tsv_line("P2", "Mus musculus", "phosphorylation", "Y1", 0.1, "x", "phosphorylation", "S2", 0.2, "x", "x", "x", "x"),
             ]
         ),
     )
@@ -91,8 +95,8 @@ def test_build_ptm_databases_and_convert_custom_csv(tmp_path):
         "\n".join(
             [
                 "# comment",
-                "P1\tP2\tHomo sapiens\tphosphorylation\tY10\t0.1\tx\tphosphorylation\tS20\t0.2\tx\tx\tx",
-                "P3\tP4\tMus musculus\tphosphorylation\tY1\t0.1\tx\tphosphorylation\tS2\t0.2\tx\tx\tx",
+                _tsv_line("P1", "P2", "Homo sapiens", "phosphorylation", "Y10", 0.1, "x", "phosphorylation", "S20", 0.2, "x", "x", "x"),
+                _tsv_line("P3", "P4", "Mus musculus", "phosphorylation", "Y1", 0.1, "x", "phosphorylation", "S2", 0.2, "x", "x", "x"),
             ]
         ),
     )

@@ -92,6 +92,10 @@ def test_build_weight_matrices_all_modalities_and_validations():
         weighting.build_weight_matrices(t, np.ones((1, 2)))
     with pytest.raises(ValueError, match="A_data has 2 columns"):
         weighting.build_weight_matrices(t, Y, np.ones((1, 2)))
+    ok = weighting.build_weight_matrices(
+        t, Y, None, t_mrna=np.array([0.0, 1.0, 2.0]), rna_data=np.ones((1, 3))
+    )
+    assert ok[2].shape == (1, 3)
     with pytest.raises(ValueError, match="rna_data was provided but t_mrna is None"):
         weighting.build_weight_matrices(t, Y, None, rna_data=RNA)
     with pytest.raises(ValueError, match="rna_data has 3 columns"):
