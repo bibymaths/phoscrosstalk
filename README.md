@@ -80,10 +80,11 @@ Use this mode to inspect a completed run directory (existing behaviour):
 ## Documentation
 
 - [Model overview](docs/model.md)
-- [Configuration reference](docs/configuration.md)
-- [Input data format](docs/input_data.md)
+- [Configuration reference](docs/configuration.md) — full `config.toml` reference including optimizer backends
+- [Input data format](docs/inputs.md)
 - [Outputs](docs/outputs.md)
 - [Running the pipeline](docs/running.md)
+- [PINN / Universal ODE](docs/pinn.md)
 - [Dashboard](docs/dashboard.md)
 - [Developer guide](docs/developer.md)
 - [Troubleshooting](docs/troubleshooting.md)

@@ -274,6 +274,19 @@ atol          = 1e-6
 # Choose ONE optimizer_backend + matching optimizer_backend_kwargs line.
 # Keep all others commented.
 # -------------------------------------------------------------------------
+#
+# Optimizer backend.
+# Options:
+#   "optimistix"        = default residual least-squares backend
+#   "jaxopt_lbfgsb"     = bounded scalar objective via JAXopt/Scipy L-BFGS-B
+#   "jaxopt_pgd"        = projected-gradient bounded scalar objective
+#   "jaxopt_osqp"       = local quadratic surrogate solved with JAXopt OSQP
+#   "jaxopt_box_osqp"   = local quadratic surrogate solved with JAXopt BoxOSQP
+#   "jaxopt_eq_qp"      = local quadratic surrogate solved with JAXopt EqualityConstrainedQP
+#
+# Note: QP backends ("jaxopt_osqp", "jaxopt_box_osqp", "jaxopt_eq_qp") solve a
+# Hessian-based local quadratic approximation of the nonlinear ODE loss, not the
+# full nonlinear problem.  They are experimental for full PhosCrosstalk fitting.
 
 # 1. Optimistix default / recommended least-squares path
 # API: handled by Optimistix backend; no extra backend kwargs needed here.
@@ -297,6 +310,25 @@ atol          = 1e-6
 #      verbose, bounds_strategy)
 # optimizer_backend = "scipy_jax"
 # optimizer_backend_kwargs = { max_steps = 1000, gtol = 1e-5, verbose = true, bounds_strategy = "reparameterize" }
+
+# 5. JAXopt OSQP – local quadratic surrogate (experimental)
+# Builds a Hessian-based QP around the current iterate and solves it.
+# Backend-specific options (all optional, keep empty {} for defaults):
+#   qp_mode           = "local_quadratic"   # or "explicit" to supply Q/c/G/h directly
+#   ridge             = 1e-6                # diagonal regularisation on Hessian
+#   line_search       = true                # backtracking line search on original loss
+#   line_search_steps = 8                   # number of halving steps
+# optimizer_backend = "jaxopt_osqp"
+# optimizer_backend_kwargs = { qp_mode = "local_quadratic", ridge = 1e-6, line_search = true, line_search_steps = 8 }
+
+# 6. JAXopt BoxOSQP – local quadratic surrogate with box constraints (experimental)
+# optimizer_backend = "jaxopt_box_osqp"
+# optimizer_backend_kwargs = { qp_mode = "local_quadratic", ridge = 1e-6, line_search = true, line_search_steps = 8 }
+
+# 7. JAXopt EqualityConstrainedQP – local quadratic surrogate, bounds by clipping (experimental)
+# Box bounds are enforced via post-solve clipping (no inequality support).
+# optimizer_backend = "jaxopt_eq_qp"
+# optimizer_backend_kwargs = { qp_mode = "local_quadratic", ridge = 1e-6, line_search = true, line_search_steps = 8 }
 
 # =============================================================================
 # [solver] – Diffrax ODE solver configuration
