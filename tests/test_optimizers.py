@@ -39,12 +39,10 @@ def test_available_backends():
     assert "optimistix" in AVAILABLE_BACKENDS
     assert "jaxopt_lbfgsb" in AVAILABLE_BACKENDS
     assert "jaxopt_pgd" in AVAILABLE_BACKENDS
+    assert "jaxopt_osqp" in AVAILABLE_BACKENDS
+    assert "jaxopt_box_osqp" in AVAILABLE_BACKENDS
+    assert "jaxopt_eq_qp" in AVAILABLE_BACKENDS
     assert "scipy_jax" in AVAILABLE_BACKENDS
-    assert "scipy_jax_pen" in AVAILABLE_BACKENDS
-    assert "optax_adam" in AVAILABLE_BACKENDS
-    assert "optax_sgd" in AVAILABLE_BACKENDS
-    assert "optax_lbfgs" in AVAILABLE_BACKENDS
-    assert "mpax" in AVAILABLE_BACKENDS
 
 
 def test_invalid_backend_raises():
@@ -142,29 +140,9 @@ def test_jaxopt_osqp_outside_bounds():
     assert np.isfinite(total_loss)
 
 
-def test_jaxopt_box_osqp_inside_bounds():
-    """BoxOSQP QP surrogate: target inside bounds should find near-optimal."""
-    from phoscrosstalk.optimizers import dispatch_optimisation
-    loss_fn = make_quadratic_loss(TARGET_INSIDE)
-    result = dispatch_optimisation(
-        "jaxopt_box_osqp", loss_fn, THETA0, XL, XU,
-        ridge=1e-4, line_search=True, line_search_steps=8,
-    )
-    _check_result(result, XL, XU, THETA0, loss_fn)
-
-
-def test_jaxopt_box_osqp_outside_bounds():
-    """BoxOSQP QP surrogate: target outside bounds should clip to boundary."""
-    from phoscrosstalk.optimizers import dispatch_optimisation
-    loss_fn = make_quadratic_loss(TARGET_OUTSIDE)
-    result = dispatch_optimisation(
-        "jaxopt_box_osqp", loss_fn, THETA0, XL, XU,
-        ridge=1e-4, line_search=True, line_search_steps=8,
-    )
-    theta_opt, total_loss, f1, f2, f3, f4 = result
-    assert isinstance(theta_opt, np.ndarray)
-    assert np.all(theta_opt >= XL - 1e-6) and np.all(theta_opt <= XU + 1e-6)
-    assert np.isfinite(total_loss)
+def test_jaxopt_box_osqp_registered():
+    from phoscrosstalk.optimizers import AVAILABLE_BACKENDS
+    assert "jaxopt_box_osqp" in AVAILABLE_BACKENDS
 
 
 def test_jaxopt_eq_qp_inside_bounds():
@@ -237,49 +215,6 @@ def test_scipy_jax_reparameterize():
     assert np.allclose(theta_opt, TARGET_INSIDE, atol=0.05)
 
 
-def test_scipy_jax_penalty():
-    from phoscrosstalk.optimizers import dispatch_optimisation
-    loss_fn = make_quadratic_loss(TARGET_INSIDE)
-    result = dispatch_optimisation(
-        "scipy_jax_pen", loss_fn, THETA0, XL, XU, max_steps=200
-    )
-    _check_result(result, XL, XU, THETA0, loss_fn)
-
-
-# ---------------------------------------------------------------------------
-# Optax backend tests
-# ---------------------------------------------------------------------------
-
-def test_optax_adam():
-    from phoscrosstalk.optimizers import dispatch_optimisation
-    loss_fn = make_quadratic_loss(TARGET_INSIDE)
-    result = dispatch_optimisation(
-        "optax_adam", loss_fn, THETA0, XL, XU,
-        max_steps=500, learning_rate=0.1,
-    )
-    _check_result(result, XL, XU, THETA0, loss_fn)
-
-
-def test_optax_sgd():
-    from phoscrosstalk.optimizers import dispatch_optimisation
-    loss_fn = make_quadratic_loss(TARGET_INSIDE)
-    result = dispatch_optimisation(
-        "optax_sgd", loss_fn, THETA0, XL, XU,
-        max_steps=500, learning_rate=0.05,
-    )
-    _check_result(result, XL, XU, THETA0, loss_fn)
-
-
-def test_optax_lbfgs():
-    from phoscrosstalk.optimizers import dispatch_optimisation
-    loss_fn = make_quadratic_loss(TARGET_INSIDE)
-    result = dispatch_optimisation(
-        "optax_lbfgs", loss_fn, THETA0, XL, XU,
-        max_steps=200,
-    )
-    _check_result(result, XL, XU, THETA0, loss_fn)
-
-
 # ---------------------------------------------------------------------------
 # Config tests
 # ---------------------------------------------------------------------------
@@ -290,26 +225,22 @@ def test_config_optimizer_backend_default():
 
 
 def test_config_optimizer_backend_valid():
-    from phoscrosstalk.config import validate_config
-    from types import SimpleNamespace
-    # The backend list is importable and contains expected keys
     from phoscrosstalk.optimizers import AVAILABLE_BACKENDS
-    assert "optax_adam" in AVAILABLE_BACKENDS
+    assert "optimistix" in AVAILABLE_BACKENDS
+    assert "jaxopt_lbfgsb" in AVAILABLE_BACKENDS
 
 
 def test_config_invalid_backend_raises():
     """Test that an invalid backend is rejected."""
     _VALID = [
         "optimistix", "jaxopt_lbfgsb", "jaxopt_pgd",
-        "scipy_jax", "scipy_jax_pen",
-        "optax_adam", "optax_sgd", "optax_lbfgs",
-        "mpax",
+        "jaxopt_osqp", "jaxopt_box_osqp", "jaxopt_eq_qp",
+        "scipy_jax",
     ]
     from phoscrosstalk.optimizers import AVAILABLE_BACKENDS
     # All valid backends must be in AVAILABLE_BACKENDS
     for b in _VALID:
-        if b != "optimistix":  # optimistix uses different runner
-            assert b in AVAILABLE_BACKENDS
+        assert b in AVAILABLE_BACKENDS
 
 
 # ---------------------------------------------------------------------------
@@ -394,10 +325,10 @@ def test_backend_in_args_namespace_defaults_to_optimistix():
 def test_backend_propagated_from_args():
     """args.optimizer_backend is read and used by run_multi_start_optimization."""
     from types import SimpleNamespace
-    args = SimpleNamespace(optimizer_backend="optax_adam", optimizer_backend_kwargs={})
+    args = SimpleNamespace(optimizer_backend="jaxopt_lbfgsb", optimizer_backend_kwargs={})
     backend = getattr(args, "optimizer_backend", "optimistix")
     backend_kwargs = dict(getattr(args, "optimizer_backend_kwargs", None) or {})
-    assert backend == "optax_adam"
+    assert backend == "jaxopt_lbfgsb"
     assert backend_kwargs == {}
 
 

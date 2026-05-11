@@ -6,6 +6,7 @@ Tests for analysis.py covering the previously uncovered lines.
 import matplotlib
 matplotlib.use("Agg")
 
+import json
 import os
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -504,6 +505,11 @@ def _write_timeseries_tsv(path, proteins, sites, T=5):
     pd.DataFrame(records).to_csv(path, sep="\t", index=False)
 
 
+def _write_time_axes_json(outdir, T=5):
+    with open(os.path.join(outdir, "time_axes.json"), "w", encoding="utf-8") as fh:
+        json.dump({"phosphosite_time_points": [float(i) for i in range(T)]}, fh)
+
+
 class TestPlotFittedSimulation:
     def test_no_tsv_returns_silently(self, tmp_path):
         from phoscrosstalk.analysis import plot_fitted_simulation
@@ -515,6 +521,7 @@ class TestPlotFittedSimulation:
         proteins = ["ProtA", "ProtB"]
         sites = ["ProtA_T1", "ProtA_S2", "ProtB_Y3"]
         _write_timeseries_tsv(tmp_path / "protein_fit_timeseries.tsv", proteins, sites)
+        _write_time_axes_json(tmp_path, T=5)
         plot_fitted_simulation(str(tmp_path))
         pngs = list(tmp_path.glob("*.png"))
         assert len(pngs) >= 1
@@ -532,6 +539,7 @@ class TestPlotFittedSimulation:
         pd.DataFrame(mrna_records).to_csv(
             tmp_path / "mrna_fit_timeseries.tsv", sep="\t", index=False
         )
+        _write_time_axes_json(tmp_path, T=5)
         plot_fitted_simulation(str(tmp_path))
         pngs = list(tmp_path.glob("*.png"))
         assert len(pngs) >= 1
@@ -548,6 +556,7 @@ class TestPlotFittedSimulation:
         pd.DataFrame(mrna_records).to_csv(
             tmp_path / "mrna_fit_timeseries.tsv", sep="\t", index=False
         )
+        _write_time_axes_json(tmp_path, T=5)
         plot_fitted_simulation(str(tmp_path))
         pngs = list(tmp_path.glob("*.png"))
         assert len(pngs) >= 1
@@ -561,6 +570,7 @@ class TestPlotFittedSimulation:
         pd.DataFrame(columns=["gene", "time", "fitted", "observed"]).to_csv(
             tmp_path / "mrna_fit_timeseries.tsv", sep="\t", index=False
         )
+        _write_time_axes_json(tmp_path, T=5)
         plot_fitted_simulation(str(tmp_path))
         pngs = list(tmp_path.glob("*.png"))
         assert len(pngs) >= 1
