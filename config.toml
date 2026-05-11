@@ -125,7 +125,7 @@
 data              = "data_timeseries/input1.csv"
 ptm_intra         = "data_curated/processed/ptm_intra.db"
 ptm_inter         = "data_curated/processed/ptm_inter.db"
-output_dir        = "results_rand_EGFR_MET_ERBB2_jaxoptpgd"
+output_dir        = "results_rand_EGFR_MET_ERBB2_optmistix"
 
 crosstalk_tsv     = ""
 rna_data          = "data_timeseries/input3.csv"
@@ -255,11 +255,11 @@ max_steps     = 10000
 
 ls_solver     = "lm"         # options: "lm" | "gauss_newton" | "dogleg" | "indirect_lm"
 
-optx_adjoint  = "implicit"   # options: "implicit" | "checkpoint"
+optx_adjoint  = "checkpoint"   # options: "implicit" | "checkpoint"
 jac_mode      = "bwd"        # options: "fwd" | "bwd"
 
-verbose       = false
-log_every     = 1          # log diagnostics every N steps for optax-style backends
+verbose       = true
+log_every     = 1
 loss_type     = "mse"
 
 lambda_net    = 0.001
@@ -268,16 +268,33 @@ reg_lambda    = 0.0001
 rtol          = 1e-6
 atol          = 1e-6
 
-# Optimizer backend. Options: "optimistix" (default), "jaxopt_lbfgsb", "jaxopt_pgd",
-# "scipy_jax", "scipy_jax_pen", "optax_adam", "optax_sgd", "optax_lbfgs", "mpax".
-optimizer_backend = "jaxopt_pgd"
+# -------------------------------------------------------------------------
+# Choose ONE optimizer_backend + matching optimizer_backend_kwargs line.
+# Keep all others commented.
+# -------------------------------------------------------------------------
 
-# Optional TOML inline table of backend-specific keyword arguments.
-# Passed directly to the backend constructor.  Leave as empty table unless the
-# selected backend requires extra settings.
-# Example for jaxopt_lbfgsb:  optimizer_backend_kwargs = {history_size = 20}
+# 1. Optimistix default / recommended least-squares path
+# API: handled by Optimistix backend; no extra backend kwargs needed here.
+optimizer_backend = "optimistix"
 optimizer_backend_kwargs = {}
 
+# 2. JAXopt native bounded L-BFGS-B
+# API: run_single_optimisation_jaxopt(..., solver_kind="lbfgsb",
+#      max_steps, tol, verbose)
+# optimizer_backend = "jaxopt_lbfgsb"
+# optimizer_backend_kwargs = { solver_kind = "lbfgsb", max_steps = 1000, tol = 1e-6, verbose = true }
+
+# 3. JAXopt projected gradient
+# API: run_single_optimisation_jaxopt(..., solver_kind="projected_gradient",
+#      max_steps, tol, verbose, stepsize, acceleration)
+# optimizer_backend = "jaxopt_pgd"
+# optimizer_backend_kwargs = { solver_kind = "projected_gradient", max_steps = 3000, tol = 1e-6, stepsize = 1e-3, acceleration = true, verbose = true }
+
+# 4. jax.scipy BFGS with smooth bound reparameterisation
+# API: run_single_optimisation_scipy_jax(..., max_steps, gtol,
+#      verbose, bounds_strategy)
+# optimizer_backend = "scipy_jax"
+# optimizer_backend_kwargs = { max_steps = 1000, gtol = 1e-5, verbose = true, bounds_strategy = "reparameterize" }
 
 # =============================================================================
 # [solver] – Diffrax ODE solver configuration
@@ -696,9 +713,9 @@ s_prod_tau = 15.0
 # =============================================================================
 [analysis]
 tune            = false
-run_steadystate = true
-run_knockouts   = true
-run_sensitivity = true
+run_steadystate = false
+run_knockouts   = false
+run_sensitivity = false
 
 
 # =============================================================================
@@ -1005,7 +1022,7 @@ optimizer               = "adabelief"
 optax_loop              = "scan"
 print_every             = 250
 
-enabled                 = true
+enabled                 = false
 width                   = 128
 depth                   = 4
 steps                   = 500

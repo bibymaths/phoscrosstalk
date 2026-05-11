@@ -390,7 +390,6 @@ def render_config_editor(
 
         backends = [
             "optimistix", "jaxopt_lbfgsb", "jaxopt_pgd", "scipy_jax",
-            "scipy_jax_pen", "optax_adam", "optax_sgd", "optax_lbfgs", "mpax",
         ]
         cur_back = opt.get("optimizer_backend", "optimistix")
         opt["optimizer_backend"] = st.selectbox(
@@ -400,23 +399,8 @@ def render_config_editor(
             help=(
                 "**optimistix** – recommended default (Levenberg-Marquardt / Gauss-Newton).  "
                 "**jaxopt_lbfgsb** – L-BFGS-B via JAXopt; good for smooth objectives.  "
-                "**mpax** – PDLP-based LP/QP solver; experimental for nonlinear ODE fitting.  "
-                "**optax_*** – first-order gradient descent variants."
             ),
         )
-        if opt["optimizer_backend"] == "mpax":
-            st.warning(
-                "⚠️ **mpax** is experimental for nonlinear ODE fitting. "
-                "Requires JAX_ENABLE_X64=true at startup. "
-                "Not recommended unless you know what you are doing."
-            )
-        if opt["optimizer_backend"].startswith("optax_"):
-            st.info(
-                "ℹ️ optax backends use first-order gradient descent. "
-                "They may converge slowly for stiff nonlinear ODE fitting. "
-                "Consider optimistix or jaxopt_lbfgsb first."
-            )
-
         ls_solvers = ["lm", "gauss_newton", "dogleg", "indirect_lm"]
         cur_ls = opt.get("ls_solver", "lm")
         opt["ls_solver"] = st.selectbox(

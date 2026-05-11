@@ -434,9 +434,7 @@ def _read_runtime_config():
 
 _VALID_BACKENDS = [
     "optimistix", "jaxopt_lbfgsb", "jaxopt_pgd",
-    "scipy_jax", "scipy_jax_pen",
-    "optax_adam", "optax_sgd", "optax_lbfgs",
-    "mpax",
+    "scipy_jax"
 ]
 
 _VALID_MECHANISMS = {"dist", "seq", "rand"}

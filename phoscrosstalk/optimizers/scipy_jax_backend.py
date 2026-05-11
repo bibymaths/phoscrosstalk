@@ -3,8 +3,7 @@
 jax.scipy.optimize.minimize backend for the phospho-network.
 
 jax.scipy.optimize.minimize only supports unconstrained BFGS (the only
-method currently implemented in JAX).  Bounds are therefore enforced via
-one of two strategies selectable at call time:
+method currently implemented in JAX).
 
 "reparameterize" (default, recommended)
     theta = xl + (xu - xl) * sigmoid(phi).
@@ -13,11 +12,6 @@ one of two strategies selectable at call time:
     from the corners.  phi0 is initialised from theta0 via the inverse logit.
     This strategy preserves full end-to-end differentiability of the solution
     w.r.t. xl / xu.
-
-"penalty"
-    Add a quadratic penalty ``_PENALTY_COEFF * sum(violation**2)`` outside
-    [xl, xu].  Simpler but less accurate; the solution may sit slightly inside
-    the feasible region rather than on the boundary.
 
 Note on jax.scipy.optimize.minimize:
     API (as of JAX 0.4.x)::
@@ -129,31 +123,9 @@ def run_single_optimisation_scipy_jax(
             options=options,
         )
         theta_opt_j = phi_to_theta(result.x)
-
-    elif bounds_strategy == "penalty":
-        # ------------------------------------------------------------------ #
-        # Augmented loss: original + quadratic penalty for constraint violation.
-        # The solution is clipped to [xl, xu] after optimisation.
-        # ------------------------------------------------------------------ #
-        def penalized_loss(theta):
-            val, _ = loss_fn(theta, None)
-            lo_viol = jnp.sum(jnp.maximum(xl_j - theta, 0.0) ** 2)
-            hi_viol = jnp.sum(jnp.maximum(theta - xu_j, 0.0) ** 2)
-            return val + jnp.asarray(_PENALTY_COEFF, jnp.float64) * (lo_viol + hi_viol)
-
-        result = jax_minimize(
-            penalized_loss,
-            theta0_j,
-            method="BFGS",
-            options=options,
-        )
-        # Hard-project to guarantee feasibility after the penalty solve.
-        theta_opt_j = jnp.clip(result.x, xl_j, xu_j)
-
     else:
         raise ValueError(
             f"Unknown bounds_strategy {bounds_strategy!r}. "
-            "Choose 'reparameterize' or 'penalty'."
         )
 
     if verbose:

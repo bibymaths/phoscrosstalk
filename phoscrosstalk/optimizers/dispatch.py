@@ -13,11 +13,6 @@ Solver key         Module                              Notes
 "jaxopt_lbfgsb"    optimizers/jaxopt_backend.py        SciPy L-BFGS-B via JAXopt
 "jaxopt_pgd"       optimizers/jaxopt_backend.py        Projected GD via JAXopt
 "scipy_jax"        optimizers/scipy_jax_backend.py     BFGS + reparameterisation
-"scipy_jax_pen"    optimizers/scipy_jax_backend.py     BFGS + quadratic penalty
-"optax_adam"       optimizers/optax_backend.py         Adam + projection_box
-"optax_sgd"        optimizers/optax_backend.py         SGD  + projection_box
-"optax_lbfgs"      optimizers/optax_backend.py         L-BFGS + projection_box
-"mpax"             optimizers/mpax_backend.py          SQP with MPAX QP subproblem
 
 All backends share the same return signature::
 
@@ -58,16 +53,6 @@ def _import_scipy_jax_runner():
     return run_single_optimisation_scipy_jax
 
 
-def _import_optax_runner():
-    from phoscrosstalk.optimizers.optax_backend import run_single_optimisation_optax
-    return run_single_optimisation_optax
-
-
-def _import_mpax_runner():
-    from phoscrosstalk.optimizers.mpax_backend import run_single_optimisation_mpax
-    return run_single_optimisation_mpax
-
-
 # ---------------------------------------------------------------------------
 # Dispatch table
 # ---------------------------------------------------------------------------
@@ -84,15 +69,6 @@ _DISPATCH: dict[str, tuple] = {
 
     # jax.scipy.optimize backends
     "scipy_jax": (_import_scipy_jax_runner, {"bounds_strategy": "reparameterize"}),
-    "scipy_jax_pen": (_import_scipy_jax_runner, {"bounds_strategy": "penalty"}),
-
-    # Optax backends
-    "optax_adam": (_import_optax_runner, {"optimizer_kind": "adam"}),
-    "optax_sgd": (_import_optax_runner, {"optimizer_kind": "sgd"}),
-    "optax_lbfgs": (_import_optax_runner, {"optimizer_kind": "lbfgs"}),
-
-    # MPAX SQP backend
-    "mpax": (_import_mpax_runner, {}),
 }
 
 AVAILABLE_BACKENDS: list[str] = list(_DISPATCH.keys())

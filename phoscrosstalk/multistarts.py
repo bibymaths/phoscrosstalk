@@ -325,7 +325,7 @@ def _residuals_fn_to_loss_fn(residuals_fn):
     """
     Adapt a residuals_fn to the scalar loss_fn interface.
 
-    Gradient-based backends (jaxopt, optax, scipy_jax, mpax) expect::
+    Gradient-based backends (jaxopt, scipy_jax) expect::
 
         loss_fn(theta, args) -> (scalar_loss, (f1, f2, f3, f4))
 
@@ -374,9 +374,6 @@ def _run_one_start(
 
     All other backends
         Expect a *loss_fn*: ``(theta, args) -> (scalar_loss, aux)``.
-        The residuals_fn is adapted via :func:`_residuals_fn_to_loss_fn`.
-        ``max_steps`` is forwarded; for ``"mpax"`` it is mapped to
-        ``max_sqp_steps`` unless overridden in ``backend_kwargs``.
 
     ``backend_kwargs`` (from ``args.optimizer_backend_kwargs``) can override
     any of the auto-forwarded kwargs for fine-grained per-backend tuning.
@@ -435,16 +432,10 @@ def _run_one_start(
     else:
         # Gradient-based backends: adapt residuals_fn to scalar loss_fn.
         loss_fn = _residuals_fn_to_loss_fn(residuals_fn)
-        if backend == "mpax":
-            # MPAX uses max_sqp_steps instead of max_steps.
-            kw = {"verbose": opt_verbose}
-            if "max_sqp_steps" not in backend_kwargs:
-                kw["max_sqp_steps"] = max_steps
-        else:
-            kw = {"max_steps": max_steps, "verbose": opt_verbose}
-            # Forward log_every for optax-style backends that support it.
-            if backend.startswith("optax_") and "log_every" not in backend_kwargs:
-                kw["log_every"] = opt_log_every
+        kw = {"max_steps": max_steps, "verbose": opt_verbose}
+        # Forward log_every for optax-style backends that support it.
+        if backend.startswith("optax_") and "log_every" not in backend_kwargs:
+            kw["log_every"] = opt_log_every
         kw.update(backend_kwargs)
         return dispatch_optimisation(backend, loss_fn, theta0, xl, xu, **kw)
 
