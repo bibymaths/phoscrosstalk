@@ -485,17 +485,15 @@ def load_config(path: str | None = None) -> SimpleNamespace:
     ).lower()
 
     # ------------------------------------------------------------------
-    # Normalize [time] fields – convert to float lists, supply defaults.
+    # Normalize [time] fields – convert to float lists, supply defaults
+    # sourced from _DEFAULTS["time"] to avoid duplicating the authoritative
+    # default values.
     # ------------------------------------------------------------------
-    _phospho_default = [
-        0.0, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0,
-        16.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0,
-    ]
-    _mrna_default = [4.0, 8.0, 15.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0]
+    _time_defaults = _DEFAULTS["time"]
 
     raw_phospho = getattr(cfg.time, "phosphosite_time_points", None)
     if not raw_phospho:
-        raw_phospho = _phospho_default
+        raw_phospho = _time_defaults["phosphosite_time_points"]
     cfg.time.phosphosite_time_points = [float(x) for x in raw_phospho]
 
     raw_protein = getattr(cfg.time, "protein_time_points", None)
@@ -506,7 +504,7 @@ def load_config(path: str | None = None) -> SimpleNamespace:
 
     raw_mrna = getattr(cfg.time, "mrna_time_points", None)
     if not raw_mrna:
-        raw_mrna = _mrna_default
+        raw_mrna = _time_defaults["mrna_time_points"]
     cfg.time.mrna_time_points = [float(x) for x in raw_mrna]
 
     cfg.time.interpolation = str(
@@ -984,17 +982,21 @@ def validate_config(cfg: SimpleNamespace, config_path: str | None = None) -> Non
     )
 
     # Enforce shared ODE grid for the current mechanistic fitting path.
-    if (
-        t_phospho.size > 0
-        and t_protein.size > 0
-        and not np.allclose(t_phospho, t_protein, equal_nan=False)
-    ):
-        errors.append(
-            "  [time] protein_time_points and phosphosite_time_points differ, "
-            "but the current mechanistic fitting path expects a shared "
-            "protein/phosphosite ODE save grid. "
-            "Set them equal or implement separate observation grids first."
-        )
+    if t_phospho.size > 0 and t_protein.size > 0:
+        if len(t_phospho) != len(t_protein):
+            errors.append(
+                "  [time] protein_time_points and phosphosite_time_points have different "
+                f"lengths ({len(t_protein)} vs {len(t_phospho)}), but the current "
+                "mechanistic fitting path expects a shared protein/phosphosite ODE save grid. "
+                "Set them equal or implement separate observation grids first."
+            )
+        elif not np.allclose(t_phospho, t_protein, equal_nan=False):
+            errors.append(
+                "  [time] protein_time_points and phosphosite_time_points differ, "
+                "but the current mechanistic fitting path expects a shared "
+                "protein/phosphosite ODE save grid. "
+                "Set them equal or implement separate observation grids first."
+            )
 
     # -------------------------------------------------------------------
     # Bounds (optional section – all values must be positive when present)

@@ -941,6 +941,17 @@ def plot_fitted_simulation(outdir):
     sim_cols = [col for col in df.columns if col.startswith("sim_t")]
     data_cols = [col for col in df.columns if col.startswith("data_t")]
 
+    # Guard against corrupted/legacy outputs where sim and data column counts differ.
+    if len(sim_cols) != len(data_cols):
+        logger.warning(
+            "[!] plot_fitted_simulation: sim_t column count (%d) != data_t column count (%d) "
+            "in %s. Skipping plot to avoid length mismatch.",
+            len(sim_cols),
+            len(data_cols),
+            ts_path,
+        )
+        return
+
     # --- Resolve time axis from time_axes.json (preferred) ---
     _time_axes_path = os.path.join(outdir, "time_axes.json")
     _time_axes_cfg = None

@@ -414,7 +414,7 @@ def main():
                 f"len(protein_time_points)={len(t_protein_cfg)}, A_data.shape[1]={A_data.shape[1]}"
             )
 
-    if not np.allclose(t_protein_cfg, t_phospho_cfg):
+    if len(t_protein_cfg) != len(t_phospho_cfg) or not np.allclose(t_protein_cfg, t_phospho_cfg):
         raise RuntimeError(
             "[time] protein_time_points and phosphosite_time_points differ, "
             "but the current mechanistic fitting path expects a shared "
