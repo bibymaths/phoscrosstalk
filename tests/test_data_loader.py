@@ -3,7 +3,7 @@ Regression tests for data_loader.py
 
 Covers:
 - FileNotFoundError raised when input files are missing
-- ValueError raised when value-column count mismatches DEFAULT_TIMEPOINTS
+- ValueError raised when value-column count does not match the supplied timepoints
 - ValueError raised when required columns are absent
 - load_site_data returns correct shapes on valid minimal input
 """
@@ -15,7 +15,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from phoscrosstalk.config import DEFAULT_TIMEPOINTS
 from phoscrosstalk.data_loader import (
     apply_scaling,
     build_alpha_laplacian_from_unified_graph,
@@ -26,6 +25,10 @@ from phoscrosstalk.data_loader import (
     row_normalize,
 )
 
+# Number of time points used throughout the test suite.
+# Matches the example time-point array that tests supply explicitly.
+_N_TP = 14
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -34,7 +37,7 @@ from phoscrosstalk.data_loader import (
 def _make_valid_csv(path, n_sites=3, n_timepoints=None):
     """Write a minimal valid phosphosite CSV with the expected column structure."""
     if n_timepoints is None:
-        n_timepoints = len(DEFAULT_TIMEPOINTS)
+        n_timepoints = _N_TP
     value_cols = {f"v{i}": np.random.rand(n_sites) for i in range(n_timepoints)}
     df = pd.DataFrame(
         {
@@ -46,6 +49,11 @@ def _make_valid_csv(path, n_sites=3, n_timepoints=None):
     df.to_csv(path, index=False)
 
 
+def _make_timepoints(n=_N_TP):
+    """Return a valid strictly-increasing time-point list of length *n*."""
+    return list(range(n))
+
+
 # ---------------------------------------------------------------------------
 # load_site_data
 # ---------------------------------------------------------------------------
@@ -53,14 +61,14 @@ def _make_valid_csv(path, n_sites=3, n_timepoints=None):
 
 def test_load_site_data_missing_file():
     with pytest.raises(FileNotFoundError, match="not found"):
-        load_site_data("/nonexistent/path/data.csv")
+        load_site_data("/nonexistent/path/data.csv", timepoints=[0, 1, 2])
 
 
 def test_load_site_data_wrong_column_count():
     with tempfile.NamedTemporaryFile(suffix=".csv", delete=False, mode="w") as f:
         fname = f.name
     try:
-        # Write CSV with wrong number of value columns (only 2 instead of 14)
+        # Write CSV with 2 value columns but pass 14 timepoints
         df = pd.DataFrame(
             {
                 "Protein": ["PROT1"],
@@ -71,7 +79,7 @@ def test_load_site_data_wrong_column_count():
         )
         df.to_csv(fname, index=False)
         with pytest.raises(ValueError, match="value columns"):
-            load_site_data(fname)
+            load_site_data(fname, timepoints=_make_timepoints(_N_TP))
     finally:
         os.unlink(fname)
 
@@ -80,12 +88,12 @@ def test_load_site_data_missing_protein_column():
     with tempfile.NamedTemporaryFile(suffix=".csv", delete=False, mode="w") as f:
         fname = f.name
     try:
-        n = len(DEFAULT_TIMEPOINTS)
+        n = _N_TP
         value_cols = {f"v{i}": [float(i)] for i in range(n)}
         df = pd.DataFrame({"Residue": ["S1"], **value_cols})
         df.to_csv(fname, index=False)
         with pytest.raises(ValueError, match="'Protein' or 'GeneID'"):
-            load_site_data(fname)
+            load_site_data(fname, timepoints=_make_timepoints(n))
     finally:
         os.unlink(fname)
 
@@ -94,12 +102,12 @@ def test_load_site_data_missing_residue_column():
     with tempfile.NamedTemporaryFile(suffix=".csv", delete=False, mode="w") as f:
         fname = f.name
     try:
-        n = len(DEFAULT_TIMEPOINTS)
+        n = _N_TP
         value_cols = {f"v{i}": [float(i)] for i in range(n)}
         df = pd.DataFrame({"Protein": ["PROT1"], **value_cols})
         df.to_csv(fname, index=False)
         with pytest.raises(ValueError, match="'Residue' or 'Psite'"):
-            load_site_data(fname)
+            load_site_data(fname, timepoints=_make_timepoints(n))
     finally:
         os.unlink(fname)
 
@@ -108,12 +116,13 @@ def test_load_site_data_valid(tmp_path):
     csv_path = str(tmp_path / "data.csv")
     n_sites = 4
     _make_valid_csv(csv_path, n_sites=n_sites)
+    tp = _make_timepoints(_N_TP)
     sites, proteins, site_prot_idx, positions, t, Y, A_data, A_proteins = (
-        load_site_data(csv_path)
+        load_site_data(csv_path, timepoints=tp)
     )
     assert len(sites) == n_sites
-    assert Y.shape == (n_sites, len(DEFAULT_TIMEPOINTS))
-    assert len(t) == len(DEFAULT_TIMEPOINTS)
+    assert Y.shape == (n_sites, _N_TP)
+    assert len(t) == _N_TP
     assert site_prot_idx.shape == (n_sites,)
     assert A_data is None
     assert A_proteins is None

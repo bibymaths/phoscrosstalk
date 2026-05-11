@@ -665,8 +665,19 @@ abundance_max           = 5.0     # A hard clip in make_rhs() / simulation; not 
 # [time] – time-point and interpolation options
 # =============================================================================
 #
+# phosphosite_time_points:
+#   Observation time points for phosphosite trajectories (minutes).
+#   Must match the number of phosphosite data columns in [paths] data.
+#
+# protein_time_points:
+#   Observation time points for protein abundance trajectories (minutes).
+#   Must match the number of protein-abundance data columns in [paths] data.
+#   The current mechanistic fitting path assumes protein and phosphosite
+#   observations share the same ODE save grid; keep equal to
+#   phosphosite_time_points unless the model path is explicitly extended.
+#
 # mrna_time_points:
-#   RNA sampling time points.
+#   RNA/mRNA sampling time points (minutes).
 #   Used when RNA data is provided and matched to model proteins.
 #
 # interpolation:
@@ -682,7 +693,19 @@ abundance_max           = 5.0     # A hard clip in make_rhs() / simulation; not 
 #   piecewise_constant for sparse omics time series.
 # =============================================================================
 [time]
+# Observation time points for phosphosite trajectories.
+# Must match the number of phosphosite data columns in [paths] data.
+phosphosite_time_points = [0, 0.5, 0.75, 1, 2, 4, 8, 16, 30, 60, 120, 240, 480, 960]
+
+# Observation time points for protein abundance trajectories.
+# Must match the number of protein-abundance data columns in [paths] data.
+# Keep equal to phosphosite_time_points for the current mechanistic fitting path.
+protein_time_points = [0, 0.5, 0.75, 1, 2, 4, 8, 16, 30, 60, 120, 240, 480, 960]
+
+# Observation time points for RNA/mRNA trajectories.
+# Must match the number of mRNA data columns in [paths] rna_data.
 mrna_time_points = [4, 8, 15, 30, 60, 120, 240, 480, 960]
+
 interpolation    = "piecewise_constant"   # options: "piecewise_constant" | "linear"
 
 

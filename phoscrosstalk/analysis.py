@@ -14,7 +14,7 @@ import matplotlib
 matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 
-from phoscrosstalk.config import DEFAULT_TIMEPOINTS, ModelDims
+from phoscrosstalk.config import ModelDims
 from phoscrosstalk.mechanisms import decode_theta
 from phoscrosstalk.logger import get_logger
 from phoscrosstalk.optimization import bio_score, build_full_A0
@@ -915,6 +915,11 @@ def plot_fitted_simulation(outdir):
     phosphosites); otherwise creates two-panel figures (protein abundance /
     phosphosites).
 
+    The time axis is read from ``time_axes.json`` in *outdir* (written by
+    ``main.py`` during the fitting run).  The function returns early with an
+    error log if ``time_axes.json`` is absent or does not contain
+    ``phosphosite_time_points``.
+
     Args:
         outdir (str): Directory containing output TSV files.
 
@@ -936,12 +941,55 @@ def plot_fitted_simulation(outdir):
 
     sim_cols = [col for col in df.columns if col.startswith("sim_t")]
     data_cols = [col for col in df.columns if col.startswith("data_t")]
-    t_vals = DEFAULT_TIMEPOINTS
 
-    if len(sim_cols) != len(t_vals) or len(data_cols) != len(t_vals):
-        t_vals = np.arange(len(sim_cols), dtype=float)
+    # Guard against corrupted/legacy outputs where sim and data column counts differ.
+    if len(sim_cols) != len(data_cols):
+        logger.warning(
+            "[!] plot_fitted_simulation: sim_t column count (%d) != data_t column count (%d) "
+            "in %s. Skipping plot to avoid length mismatch.",
+            len(sim_cols),
+            len(data_cols),
+            ts_path,
+        )
+        return
 
-    # Optionally load mRNA fit data
+    # --- Resolve time axis from time_axes.json (required) ---
+    _time_axes_path = os.path.join(outdir, "time_axes.json")
+    if not os.path.exists(_time_axes_path):
+        logger.error(
+            "[!] plot_fitted_simulation: time_axes.json not found in %s. "
+            "This file is written by main.py during the fitting run. "
+            "Cannot plot without explicit time axis.",
+            outdir,
+        )
+        return
+
+    try:
+        import json as _json
+        with open(_time_axes_path) as _fh:
+            _time_axes_cfg = _json.load(_fh)
+    except (OSError, ValueError) as _exc:
+        logger.error("[!] Could not read time_axes.json: %s", _exc)
+        return
+
+    t_vals = np.asarray(_time_axes_cfg.get("phosphosite_time_points", []), dtype=float)
+    if t_vals.size == 0:
+        logger.error(
+            "[!] plot_fitted_simulation: time_axes.json in %s does not contain "
+            "phosphosite_time_points. Cannot plot without explicit time axis.",
+            outdir,
+        )
+        return
+    if len(sim_cols) != len(t_vals):
+        logger.error(
+            "[!] plot_fitted_simulation: time_axes.json phosphosite_time_points length (%d) "
+            "does not match sim_t column count (%d) in %s. Cannot plot.",
+            len(t_vals),
+            len(sim_cols),
+            outdir,
+        )
+        return
+
     # Optionally load mRNA fit data
     mrna_path = os.path.join(outdir, "mrna_fit_timeseries.tsv")
     has_rna_data = os.path.exists(mrna_path)

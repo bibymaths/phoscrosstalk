@@ -37,8 +37,10 @@ atol = 1e-9
 max_steps = 16384
 
 [time]
-mrna_time_points = [4, 8, 15, 30, 60, 120, 240, 480, 960]
-interpolation    = "piecewise_constant"
+phosphosite_time_points = [0, 0.5, 0.75, 1, 2, 4, 8, 16, 30, 60, 120, 240, 480, 960]
+protein_time_points     = [0, 0.5, 0.75, 1, 2, 4, 8, 16, 30, 60, 120, 240, 480, 960]
+mrna_time_points        = [4, 8, 15, 30, 60, 120, 240, 480, 960]
+interpolation           = "piecewise_constant"
 
 [derived_rates]
 s_prod_fn = "softplus"
@@ -108,10 +110,51 @@ s_prod_fn = "softplus"
 
 ### `[time]`
 
-| Key                 | Default                           | Description                       |
-|---------------------|-----------------------------------|-----------------------------------|
-| `mrna_time_points`  | `[4,8,15,30,60,120,240,480,960]`  | mRNA time points (minutes)        |
-| `interpolation`     | `"piecewise_constant"`            | Derived rate interpolation mode   |
+The `[time]` section is the single source of truth for all biological observation time points.
+After `load_config()`, `cfg.time` exposes four fields:
+
+| Key                         | Default                                              | Description                                       |
+|-----------------------------|------------------------------------------------------|---------------------------------------------------|
+| `phosphosite_time_points`   | `[0,0.5,0.75,1,2,4,8,16,30,60,120,240,480,960]`     | Phosphosite observation time points (minutes)     |
+| `protein_time_points`       | same as `phosphosite_time_points`                    | Protein abundance observation time points (min)   |
+| `mrna_time_points`          | `[4,8,15,30,60,120,240,480,960]`                     | mRNA/RNA observation time points (minutes)        |
+| `interpolation`             | `"piecewise_constant"`                               | Derived rate interpolation mode                   |
+
+**Important constraints:**
+
+- `protein_time_points` and `phosphosite_time_points` **must be equal** for the current
+  mechanistic fitting path (they share the same ODE save grid).  A clear error is raised if
+  they differ.
+- `mrna_time_points` may be a separate, independent time grid.
+- All time-point lists must be strictly increasing, non-negative, and non-empty.
+- The length of each list must match the corresponding data columns in the input files.
+
+**Backward compatibility:** Old config files that only set `mrna_time_points` (and optionally
+`interpolation`) will continue to work; the pipeline supplies defaults for the new keys.
+
+**Output:** After loading data, `main.py` writes a `time_axes.json` file to the output
+directory. This file records the exact time axes used so that plots and downstream analysis
+can reproduce the same axes without re-running the full pipeline:
+
+```json
+{
+  "phosphosite_time_points": [...],
+  "protein_time_points": [...],
+  "mrna_time_points": [...],
+  "interpolation": "piecewise_constant"
+}
+```
+
+**Do not** confuse observation time points with simulation grids:
+
+| Config key                   | Section          | Purpose                                           |
+|------------------------------|------------------|---------------------------------------------------|
+| `phosphosite_time_points`    | `[time]`         | Observed data sampling times                      |
+| `protein_time_points`        | `[time]`         | Observed data sampling times                      |
+| `mrna_time_points`           | `[time]`         | Observed data sampling times                      |
+| `dense_n_points`             | `[simulation]`   | Post-fit dense output grid (not observed data)    |
+| `t_end`, `n_early`, `n_late` | `[steadystate]`  | Long-horizon simulation grid (not observed data)  |
+| `dense_n_points`             | `[neural_ode]`   | Neural ODE dense output grid (not observed data)  |
 
 ### `[derived_rates]`
 

@@ -124,6 +124,10 @@ data = "{data_file}"
 ptm_intra = "{ptm_intra}"
 ptm_inter = "{ptm_inter}"
 output_dir = "{tmp_path}"
+
+[time]
+phosphosite_time_points = [0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0]
+mrna_time_points = [4.0, 8.0, 15.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0]
 """
     cfg_path = tmp_path / "valid.toml"
     cfg_path.write_text(toml_content)
