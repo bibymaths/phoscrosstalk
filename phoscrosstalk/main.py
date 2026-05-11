@@ -1693,6 +1693,110 @@ def main():
                 return (P_sim_post - _P_scaled_jax).ravel()
 
             _sigma_noise = float(getattr(_posterior_cfg, "sigma_noise", 0.1))
+
+            # ------------------------------------------------------------
+            # Diagnose posterior initial point before BlackJAX
+            # ------------------------------------------------------------
+            theta_best_post = np.asarray(theta_best, dtype=np.float64)
+            xl_post = np.asarray(problem.xl, dtype=np.float64)
+            xu_post = np.asarray(problem.xu, dtype=np.float64)
+
+            if theta_best_post.shape != xl_post.shape or theta_best_post.shape != xu_post.shape:
+                raise RuntimeError(
+                    "[posterior] theta_best/bounds shape mismatch: "
+                    f"theta_best={theta_best_post.shape}, xl={xl_post.shape}, xu={xu_post.shape}"
+                )
+
+            below = theta_best_post < xl_post
+            above = theta_best_post > xu_post
+            out = below | above
+
+            if np.any(out):
+                bad_idx = np.where(out)[0]
+                preview = bad_idx[:20]
+
+                logger.error(
+                    "[posterior] theta_best is outside bounds for %d/%d parameter(s). "
+                    "First offending indices: %s",
+                    int(out.sum()),
+                    len(theta_best_post),
+                    preview.tolist(),
+                )
+
+                for i in preview:
+                    logger.error(
+                        "[posterior] theta[%d]=%.8e, lower=%.8e, upper=%.8e, "
+                        "below=%s, above=%s",
+                        int(i),
+                        float(theta_best_post[i]),
+                        float(xl_post[i]),
+                        float(xu_post[i]),
+                        bool(below[i]),
+                        bool(above[i]),
+                    )
+
+                # Repair tiny optimiser-bound violations.
+                # This is acceptable for posterior initialization, but large violations
+                # indicate a scale mismatch or broken optimizer output.
+                span = xu_post - xl_post
+                eps = np.maximum(1e-10 * span, 1e-12)
+                theta_best_post = np.clip(theta_best_post, xl_post + eps, xu_post - eps)
+
+                logger.warning(
+                    "[posterior] Clipped theta_best into open bounds for posterior initialization."
+                )
+
+            # Check residuals before building the posterior.
+            try:
+                _resid0 = np.asarray(
+                    _mech_residuals_fn(jnp.asarray(theta_best_post, dtype=jnp.float64)),
+                    dtype=np.float64,
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    "[posterior] Residual function failed at theta_best_post before MCMC. "
+                    "This usually means the ODE simulation fails at the optimized parameter vector."
+                ) from exc
+
+            if _resid0.ndim != 1:
+                _resid0 = _resid0.ravel()
+
+            finite_mask = np.isfinite(_resid0)
+
+            logger.info(
+                "[posterior] Initial residual diagnostic: shape=%s, finite=%d/%d, "
+                "min=%.4e, max=%.4e, rms=%.4e",
+                _resid0.shape,
+                int(finite_mask.sum()),
+                int(_resid0.size),
+                float(np.nanmin(_resid0)) if _resid0.size else float("nan"),
+                float(np.nanmax(_resid0)) if _resid0.size else float("nan"),
+                float(np.sqrt(np.nanmean(_resid0 ** 2))) if _resid0.size else float("nan"),
+            )
+
+            if not np.all(finite_mask):
+                bad_resid_idx = np.where(~finite_mask)[0][:20]
+                raise RuntimeError(
+                    "[posterior] Non-finite residuals at theta_best_post before MCMC. "
+                    f"First offending residual indices: {bad_resid_idx.tolist()}"
+                )
+
+            _sigma_noise = float(getattr(_posterior_cfg, "sigma_noise", 0.1))
+
+            if _sigma_noise <= 0:
+                raise RuntimeError(
+                    f"[posterior] sigma_noise must be > 0. Got sigma_noise={_sigma_noise}."
+                )
+
+            _initial_log_lik = -0.5 * float(np.sum(_resid0 ** 2)) / (_sigma_noise ** 2)
+
+            logger.info(
+                "[posterior] Initial likelihood diagnostic: sigma_noise=%.4e, "
+                "log_likelihood_without_prior=%.4e",
+                _sigma_noise,
+                _initial_log_lik,
+            )
+
             _log_post_fn = make_log_posterior_fn(
                 residuals_fn=_mech_residuals_fn,
                 theta_lower=problem.xl,
@@ -1701,15 +1805,18 @@ def main():
             )
 
             # Simple indexed theta names (dim can be large; indices are unambiguous).
-            _theta_names = [f"theta_{i}" for i in range(len(theta_best))]
+            _theta_names = [f"theta_{i}" for i in range(len(theta_best_post))]
 
             run_posterior_inference(
                 outdir=outdir,
-                theta_best=theta_best,
+                theta_best=theta_best_post,
                 log_posterior_fn=_log_post_fn,
                 posterior_cfg=_posterior_cfg,
                 theta_names=_theta_names,
+                theta_lower=problem.xl,
+                theta_upper=problem.xu,
             )
+
             logger.success("[*] Posterior inference complete. Results in %s/posterior", outdir)
         except ImportError as _post_err:
             logger.warning(

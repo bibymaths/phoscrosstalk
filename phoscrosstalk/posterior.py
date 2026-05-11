@@ -228,13 +228,21 @@ def make_log_posterior_fn(
         resid = jnp.asarray(residuals_fn(theta), dtype=jnp.float64)
         resid = jnp.ravel(resid)
 
-        log_lik = -0.5 * jnp.sum(resid ** 2) / (sigma_n ** 2)
+        resid_finite = jnp.all(jnp.isfinite(resid))
+        theta_finite = jnp.all(jnp.isfinite(theta))
+
+        ssr = jnp.sum(resid ** 2)
+
+        log_lik = -0.5 * ssr / (sigma_n ** 2)
         log_prior = -0.5 * jnp.sum(((theta - mu) / sigma_p) ** 2)
 
         total = log_lik + log_prior
+        total_finite = jnp.isfinite(total)
+
+        valid = in_bounds & theta_finite & resid_finite & total_finite
 
         return jnp.where(
-            in_bounds,
+            valid,
             total,
             jnp.asarray(-jnp.inf, dtype=jnp.float64),
         )
@@ -254,6 +262,8 @@ def run_posterior_inference(
         log_posterior_fn: Callable,
         posterior_cfg=None,
         theta_names: list[str] | None = None,
+        theta_lower: np.ndarray | None = None,
+        theta_upper: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """
     Run runtime-aware vectorized multi-chain BlackJAX NUTS posterior inference.
@@ -274,6 +284,12 @@ def run_posterior_inference(
 
     theta_names:
         Optional parameter names.
+
+    theta_lower:
+        Optional lower bounds for parameters. If None, no bounds are applied.
+
+    theta_upper:
+        Optional upper bounds for parameters. If None, no bounds are applied.
 
     Returns
     -------
@@ -309,6 +325,30 @@ def run_posterior_inference(
         )
 
     dim = theta_best.shape[0]
+
+    if theta_lower is not None and theta_upper is not None:
+        theta_lower = np.asarray(theta_lower, dtype=np.float64)
+        theta_upper = np.asarray(theta_upper, dtype=np.float64)
+
+        if theta_lower.shape != theta_best.shape or theta_upper.shape != theta_best.shape:
+            raise ValueError(
+                "[posterior] theta_lower/theta_upper must match theta_best shape. "
+                f"theta_best={theta_best.shape}, "
+                f"theta_lower={theta_lower.shape}, "
+                f"theta_upper={theta_upper.shape}."
+            )
+
+        if not np.all(np.isfinite(theta_lower)) or not np.all(np.isfinite(theta_upper)):
+            raise ValueError("[posterior] theta_lower/theta_upper contain non-finite values.")
+
+        if not np.all(theta_upper > theta_lower):
+            raise ValueError("[posterior] All theta_upper values must be > theta_lower.")
+
+        xl_jax = jnp.asarray(theta_lower, dtype=jnp.float64)
+        xu_jax = jnp.asarray(theta_upper, dtype=jnp.float64)
+    else:
+        xl_jax = None
+        xu_jax = None
 
     if theta_names is None:
         theta_names = [f"theta_{i}" for i in range(dim)]
@@ -464,6 +504,13 @@ def run_posterior_inference(
             repeats=num_chains,
             axis=0,
         )
+
+    # Keep chain starts inside the posterior support.
+    # This prevents chain jitter from pushing parameters outside hard bounds.
+    if xl_jax is not None and xu_jax is not None:
+        span = xu_jax - xl_jax
+        eps = jnp.maximum(1e-10 * span, jnp.asarray(1e-12, dtype=jnp.float64))
+        init_positions = jnp.clip(init_positions, xl_jax + eps, xu_jax - eps)
 
     nuts_kernel = blackjax.nuts(
         log_posterior_fn,

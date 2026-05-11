@@ -251,7 +251,7 @@ include_tfs_as_proteins = false
 # =============================================================================
 [optimisation]
 n_starts      = 5
-max_steps     = 200
+max_steps     = 100
 
 ls_solver     = "lm"         # options: "lm" | "gauss_newton" | "dogleg" | "indirect_lm"
 
