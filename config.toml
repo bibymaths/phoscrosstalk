@@ -253,14 +253,14 @@ include_tfs_as_proteins = false
 n_starts      = 5
 max_steps     = 1000
 
-ls_solver     = "lm"         # options: "lm" | "gauss_newton" | "dogleg" | "indirect_lm"
+ls_solver     = "lm"           # options: "lm" | "gauss_newton" | "dogleg" | "indirect_lm"
 
 optx_adjoint  = "checkpoint"   # options: "implicit" | "checkpoint"
-jac_mode      = "bwd"        # options: "fwd" | "bwd"
+jac_mode      = "bwd"          # options: "fwd" | "bwd"
 
 verbose       = false
 log_every     = 1
-loss_type     = "mse"
+loss_type     = "pseudo_huber"          # "mse", "pseudo_huber", "pseudo_huber_slope", "log_cosh"
 pseudo_huber_delta = 0.1
 slope_lambda  = 0.1
 

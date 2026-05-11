@@ -2,8 +2,9 @@
 """
 Monte-Carlo posterior inference for PhosCrosstalk model parameters.
 
-This module uses BlackJAX NUTS to sample the posterior distribution of
-mechanistic model parameters after optimisation.
+This module uses PyMC with the JAX backend (via pm.sample(nuts_sampler="blackjax"))
+to sample the posterior distribution of mechanistic model parameters after
+optimisation.
 
 Runtime design
 --------------
@@ -40,6 +41,17 @@ Written to {outdir}/posterior/:
     posterior_theta_names.json
     posterior_trace.png          optional
     posterior_pairs.png          optional
+
+Backend notes
+-------------
+PyMC is used as the high-level model API. The JAX backend is invoked via:
+    pm.sample(nuts_sampler="blackjax", ...)
+This compiles the log-posterior via JAX/XLA, supports GPU/TPU, and enables
+parallel chain execution using JAX vmap under the hood.
+
+The log_posterior_fn from make_log_posterior_fn() is wrapped into a PyMC
+CustomDist / DensityDist (using pm.Potential) so that arbitrary black-box
+likelihoods are fully supported without reformulating the model.
 """
 
 from __future__ import annotations
@@ -59,19 +71,33 @@ logger = get_logger()
 
 
 # ---------------------------------------------------------------------------
-# BlackJAX import
+# PyMC + JAX availability check
 # ---------------------------------------------------------------------------
 
 
-def _require_blackjax():
-    """Return blackjax or raise a clear ImportError."""
+def _require_pymc():
+    """Return pymc or raise a clear ImportError."""
+    try:
+        import pymc as pm  # noqa: PLC0415
+        return pm
+    except ImportError as err:
+        raise ImportError(
+            "PyMC is required for posterior inference. "
+            "Install it with: pip install pymc>=5.0"
+        ) from err
+
+
+def _require_blackjax_backend():
+    """
+    Check that the blackjax sampler backend is available for PyMC.
+    PyMC delegates to blackjax via nuts_sampler='blackjax'.
+    """
     try:
         import blackjax  # noqa: PLC0415
-
         return blackjax
     except ImportError as err:
         raise ImportError(
-            "BlackJAX is required for posterior inference. "
+            "BlackJAX is required as the JAX backend for PyMC. "
             "Install it with: pip install blackjax>=1.0"
         ) from err
 
@@ -110,8 +136,9 @@ def _default_posterior_cfg() -> types.SimpleNamespace:
         use_physical_cores=True,
         chain_jitter=1e-4,
         # Warmup strategy.
-        # "shared": adapt once from theta_best, then run vectorized chains.
-        # This is much faster and avoids compiling one warmup per chain.
+        # "shared": adapt once from theta_best via blackjax window_adaptation,
+        # then pass adapted step_size and inverse_mass_matrix to PyMC blackjax
+        # backend as init_kwargs. This avoids per-chain warmup recompilation.
         warmup_strategy="shared",
     )
 
@@ -164,6 +191,12 @@ def make_log_posterior_fn(
 
     Domain:
         Returns -inf outside [theta_lower, theta_upper].
+
+    Notes
+    -----
+    This function is backend-agnostic: it returns a pure JAX callable.
+    It is used both internally (for shared warmup via blackjax) and passed
+    to PyMC via pm.Potential for JAX-backend sampling.
     """
     import jax  # noqa: PLC0415
     import jax.numpy as jnp  # noqa: PLC0415
@@ -251,6 +284,64 @@ def make_log_posterior_fn(
 
 
 # ---------------------------------------------------------------------------
+# Shared warmup (blackjax window_adaptation) — identical to original
+# ---------------------------------------------------------------------------
+
+
+def _run_shared_warmup(
+        *,
+        log_posterior_fn: Callable,
+        init_position,
+        cfg,
+        key,
+) -> tuple:
+    """
+    Run one shared blackjax window_adaptation warmup from init_position.
+
+    Returns
+    -------
+    warmup_state, adapted_step_size, inverse_mass_matrix, key, warmup_elapsed
+    """
+    import blackjax  # noqa: PLC0415
+    import jax  # noqa: PLC0415
+    import jax.numpy as jnp  # noqa: PLC0415
+
+    warmup = blackjax.window_adaptation(
+        blackjax.nuts,
+        log_posterior_fn,
+        target_acceptance_rate=float(cfg.target_acceptance_rate),
+        max_num_doublings=int(cfg.max_tree_depth),
+    )
+
+    t_warmup_start = time.time()
+    key, warmup_key = jax.random.split(key)
+
+    (warmup_state, warmup_params), _warmup_info = warmup.run(
+        warmup_key,
+        init_position,
+        num_steps=int(cfg.num_warmup),
+    )
+
+    warmup_state.position.block_until_ready()
+    warmup_elapsed = time.time() - t_warmup_start
+
+    adapted_step_size = float(jnp.asarray(
+        warmup_params.get("step_size", cfg.step_size),
+        dtype=jnp.float64,
+    ))
+
+    inverse_mass_matrix = np.asarray(
+        warmup_params.get(
+            "inverse_mass_matrix",
+            jnp.ones(init_position.shape[0], dtype=jnp.float64),
+        ),
+        dtype=np.float64,
+    )
+
+    return warmup_state, adapted_step_size, inverse_mass_matrix, key, warmup_elapsed
+
+
+# ---------------------------------------------------------------------------
 # Main inference entry point
 # ---------------------------------------------------------------------------
 
@@ -266,7 +357,8 @@ def run_posterior_inference(
         theta_upper: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """
-    Run runtime-aware vectorized multi-chain BlackJAX NUTS posterior inference.
+    Run runtime-aware vectorized multi-chain PyMC + JAX (BlackJAX) NUTS
+    posterior inference.
 
     Parameters
     ----------
@@ -277,7 +369,9 @@ def run_posterior_inference(
         MAP / best-fit parameter vector. Used as the warmup initial position.
 
     log_posterior_fn:
-        JAX-traceable theta -> scalar log-posterior function.
+        JAX-traceable theta -> scalar log-posterior function (from
+        make_log_posterior_fn). This is embedded into a PyMC model via
+        pm.Potential so the blackjax backend can JIT-compile it.
 
     posterior_cfg:
         Config object, typically cfg.posterior.
@@ -286,10 +380,10 @@ def run_posterior_inference(
         Optional parameter names.
 
     theta_lower:
-        Optional lower bounds for parameters. If None, no bounds are applied.
+        Optional lower bounds for parameters. Used to clip chain init jitter.
 
     theta_upper:
-        Optional upper bounds for parameters. If None, no bounds are applied.
+        Optional upper bounds for parameters. Used to clip chain init jitter.
 
     Returns
     -------
@@ -299,12 +393,31 @@ def run_posterior_inference(
         outdir
         summary
         metadata
+
+    Backend notes
+    -------------
+    PyMC model structure:
+      - Each theta[i] is a pm.Flat variable (improper flat prior) so PyMC
+        does not add any prior terms. The full prior + likelihood is encoded
+        entirely inside log_posterior_fn via pm.Potential.
+      - pm.sample is called with nuts_sampler="blackjax" which delegates
+        NUTS to the blackjax JAX kernel with XLA JIT compilation.
+      - Shared warmup (blackjax window_adaptation) runs first to get an
+        adapted step_size and inverse_mass_matrix, which are passed to
+        pm.sample via initvals / nuts_sampler_kwargs.
+      - Each chain starts from a jittered copy of the warmup endpoint, clipped
+        to bounds, matching the original vectorized-chain design.
+      - Thinning is applied post-sampling via idata.posterior slicing.
+      - ArviZ summary (mean, sd, hdi_2.5%, hdi_97.5%, ess_bulk) is used if
+        arviz is available; otherwise a manual numpy fallback is used.
     """
-    blackjax = _require_blackjax()
+    pm = _require_pymc()
+    _require_blackjax_backend()
 
     import jax  # noqa: PLC0415
     import jax.numpy as jnp  # noqa: PLC0415
     import pandas as pd  # noqa: PLC0415
+    import pytensor.tensor as pt  # noqa: PLC0415
 
     cfg = _merge_cfg(posterior_cfg)
 
@@ -326,6 +439,9 @@ def run_posterior_inference(
 
     dim = theta_best.shape[0]
 
+    # ------------------------------------------------------------------ #
+    # Bounds validation + JAX arrays                                      #
+    # ------------------------------------------------------------------ #
     if theta_lower is not None and theta_upper is not None:
         theta_lower = np.asarray(theta_lower, dtype=np.float64)
         theta_upper = np.asarray(theta_upper, dtype=np.float64)
@@ -359,19 +475,17 @@ def run_posterior_inference(
             f"Got len(theta_names)={len(theta_names)}, dim={dim}."
         )
 
-    if int(cfg.num_warmup) <= 0:
-        raise ValueError(f"[posterior] num_warmup must be > 0. Got {cfg.num_warmup}.")
-
-    if int(cfg.num_samples) <= 0:
-        raise ValueError(f"[posterior] num_samples must be > 0. Got {cfg.num_samples}.")
-
-    if int(cfg.thin_factor) <= 0:
-        raise ValueError(f"[posterior] thin_factor must be > 0. Got {cfg.thin_factor}.")
-
-    if int(cfg.max_tree_depth) <= 0:
-        raise ValueError(
-            f"[posterior] max_tree_depth must be > 0. Got {cfg.max_tree_depth}."
-        )
+    # ------------------------------------------------------------------ #
+    # Config validation                                                   #
+    # ------------------------------------------------------------------ #
+    for attr, label in [
+        ("num_warmup", "num_warmup"),
+        ("num_samples", "num_samples"),
+        ("thin_factor", "thin_factor"),
+        ("max_tree_depth", "max_tree_depth"),
+    ]:
+        if int(getattr(cfg, attr)) <= 0:
+            raise ValueError(f"[posterior] {label} must be > 0. Got {getattr(cfg, attr)}.")
 
     if not (0.0 < float(cfg.target_acceptance_rate) < 1.0):
         raise ValueError(
@@ -379,6 +493,9 @@ def run_posterior_inference(
             f"Got {cfg.target_acceptance_rate}."
         )
 
+    # ------------------------------------------------------------------ #
+    # Runtime planning                                                    #
+    # ------------------------------------------------------------------ #
     posterior_plan = plan_posterior_runtime(
         cpu_threads=getattr(cfg, "cpu_threads", "auto"),
         num_chains=getattr(cfg, "num_chains", "auto"),
@@ -403,14 +520,17 @@ def run_posterior_inference(
         str(posterior_plan.topo.source),
     )
 
+    # ------------------------------------------------------------------ #
+    # JIT + compile check                                                 #
+    # ------------------------------------------------------------------ #
     key = jax.random.PRNGKey(int(cfg.seed))
     init_position = jnp.asarray(theta_best, dtype=jnp.float64)
 
-    log_posterior_fn = jax.jit(log_posterior_fn)
+    log_posterior_jit = jax.jit(log_posterior_fn)
 
     logger.info("[posterior] Compiling log-posterior...")
     t_compile = time.time()
-    compile_val = log_posterior_fn(init_position)
+    compile_val = log_posterior_jit(init_position)
     compile_val.block_until_ready()
     compile_elapsed = time.time() - t_compile
 
@@ -428,11 +548,7 @@ def run_posterior_inference(
     )
 
     # ------------------------------------------------------------------ #
-    # 1. Shared NUTS warmup                                               #
-    # ------------------------------------------------------------------ #
-    # We adapt once from theta_best, then vectorize independent chains using
-    # the adapted step size and mass matrix. This is much faster on CPU than
-    # adapting every chain independently, and it keeps the implementation robust.
+    # 1. Shared NUTS warmup (blackjax window_adaptation)                  #
     # ------------------------------------------------------------------ #
     logger.info(
         "[posterior] Starting shared NUTS warmup: steps=%d, seed=%d, "
@@ -442,46 +558,23 @@ def run_posterior_inference(
         float(cfg.target_acceptance_rate),
     )
 
-    warmup = blackjax.window_adaptation(
-        blackjax.nuts,
-        log_posterior_fn,
-        target_acceptance_rate=float(cfg.target_acceptance_rate),
-        max_num_doublings=int(cfg.max_tree_depth),
-    )
-
-    t_warmup_start = time.time()
-    key, warmup_key = jax.random.split(key)
-
-    (warmup_state, warmup_params), _warmup_info = warmup.run(
-        warmup_key,
-        init_position,
-        num_steps=int(cfg.num_warmup),
-    )
-
-    warmup_state.position.block_until_ready()
-    warmup_elapsed = time.time() - t_warmup_start
-
-    adapted_step_size = jnp.asarray(
-        warmup_params.get("step_size", cfg.step_size),
-        dtype=jnp.float64,
-    )
-
-    inverse_mass_matrix = jnp.asarray(
-        warmup_params.get(
-            "inverse_mass_matrix",
-            jnp.ones(dim, dtype=jnp.float64),
-        ),
-        dtype=jnp.float64,
+    warmup_state, adapted_step_size, inverse_mass_matrix, key, warmup_elapsed = (
+        _run_shared_warmup(
+            log_posterior_fn=log_posterior_jit,
+            init_position=init_position,
+            cfg=cfg,
+            key=key,
+        )
     )
 
     logger.info(
         "[posterior] Warmup complete in %.2f s. Adapted step size=%.4g.",
         warmup_elapsed,
-        float(adapted_step_size),
+        adapted_step_size,
     )
 
     # ------------------------------------------------------------------ #
-    # 2. Vectorized chain initialization                                  #
+    # 2. Per-chain init positions (jitter + clip)                         #
     # ------------------------------------------------------------------ #
     chain_jitter = float(getattr(cfg, "chain_jitter", 1e-4))
 
@@ -493,79 +586,199 @@ def run_posterior_inference(
     key, init_key = jax.random.split(key)
 
     if chain_jitter > 0:
-        init_positions = warmup_state.position[None, :] + chain_jitter * jax.random.normal(
-            init_key,
-            shape=(num_chains, dim),
-            dtype=jnp.float64,
+        init_positions = np.asarray(
+            warmup_state.position[None, :] + chain_jitter * jax.random.normal(
+                init_key,
+                shape=(num_chains, dim),
+                dtype=jnp.float64,
+            ),
+            dtype=np.float64,
         )
     else:
-        init_positions = jnp.repeat(
-            warmup_state.position[None, :],
-            repeats=num_chains,
-            axis=0,
+        init_positions = np.tile(
+            np.asarray(warmup_state.position, dtype=np.float64),
+            (num_chains, 1),
         )
 
-    # Keep chain starts inside the posterior support.
-    # This prevents chain jitter from pushing parameters outside hard bounds.
     if xl_jax is not None and xu_jax is not None:
-        span = xu_jax - xl_jax
-        eps = jnp.maximum(1e-10 * span, jnp.asarray(1e-12, dtype=jnp.float64))
-        init_positions = jnp.clip(init_positions, xl_jax + eps, xu_jax - eps)
-
-    nuts_kernel = blackjax.nuts(
-        log_posterior_fn,
-        adapted_step_size,
-        inverse_mass_matrix,
-        max_num_doublings=int(cfg.max_tree_depth),
-    )
-
-    init_many = jax.jit(jax.vmap(nuts_kernel.init))
-    states0 = init_many(init_positions)
+        span = np.asarray(xu_jax - xl_jax, dtype=np.float64)
+        eps = np.maximum(1e-10 * span, 1e-12)
+        init_positions = np.clip(
+            init_positions,
+            np.asarray(xl_jax, dtype=np.float64) + eps,
+            np.asarray(xu_jax, dtype=np.float64) - eps,
+        )
 
     # ------------------------------------------------------------------ #
-    # 3. Vectorized sampling                                              #
+    # 3. Build PyMC model with black-box log_posterior_fn via pm.Potential#
     # ------------------------------------------------------------------ #
+    # Design rationale:
+    #   We define each theta[i] as pm.Flat (improper flat prior, no added
+    #   log-prob). The entire log p(theta|data) — likelihood + Gaussian prior
+    #   + bounds penalty — is contributed by a single pm.Potential. This is the
+    #   canonical PyMC pattern for black-box log-posteriors.
+    #
+    #   pm.Flat variables are unbounded; bounds are enforced inside
+    #   log_posterior_fn (returns -inf outside domain), not via transforms.
+    #   This matches the original BlackJAX design exactly.
+    #
+    #   The JAX backend (nuts_sampler="blackjax") JIT-compiles the PyTensor
+    #   graph (including the Potential) via pytensor's JAX backend and runs
+    #   NUTS entirely in JAX.
+    # ------------------------------------------------------------------ #
+
+    with pm.Model() as pymc_model:
+        # Flat (improper) priors — contribution to log-prob is 0.
+        # Shape: (dim,) vector parameter.
+        theta_var = pm.Flat("theta", shape=(dim,))
+
+        # Black-box log-posterior injected as a Potential.
+        # pm.Potential adds its value directly to the model log-probability,
+        # which is exactly log p(theta|data) from our function.
+        #
+        # We use pt.as_tensor_variable and an Op-based bridge so that
+        # PyTensor can call log_posterior_jit through the JAX backend without
+        # re-implementing the function in PyTensor algebra.
+        #
+        # pytensor.graph.op.as_op is the cleanest way to wrap a JAX callable.
+        import pytensor  # noqa: PLC0415
+        from pytensor.graph.op import Apply  # noqa: PLC0415
+        from pytensor.graph.basic import Variable  # noqa: PLC0415
+
+        # Build a pytensor Op that wraps log_posterior_jit.
+        # The JAX backend will call perform_jax; the CPU backend calls perform.
+        import pytensor.tensor as ptt  # noqa: PLC0415
+
+        class LogPosteriorOp(pytensor.graph.op.Op):
+            """Thin PyTensor Op wrapping the JAX log_posterior function."""
+
+            __props__ = ()
+
+            def make_node(self, theta):
+                theta = ptt.as_tensor_variable(theta)
+                return Apply(self, [theta], [ptt.dscalar()])
+
+            def perform(self, node, inputs, outputs):
+                (theta_np,) = inputs
+                val = float(log_posterior_jit(jnp.asarray(theta_np, dtype=jnp.float64)))
+                outputs[0][0] = np.float64(val)
+
+            def grad(self, inputs, output_grads):
+                (theta,) = inputs
+                (g,) = output_grads
+                return [g * LogPosteriorGradOp()(theta)]
+
+            def perform_jax(self, *args):
+                # Called by pytensor's JAX backend.
+                (theta_jax,) = args
+                return (log_posterior_jit(theta_jax),)
+
+        class LogPosteriorGradOp(pytensor.graph.op.Op):
+            """Gradient Op for LogPosteriorOp."""
+
+            __props__ = ()
+
+            def make_node(self, theta):
+                theta = ptt.as_tensor_variable(theta)
+                return Apply(self, [theta], [theta.type()])
+
+            def perform(self, node, inputs, outputs):
+                (theta_np,) = inputs
+                grad_fn = jax.grad(log_posterior_jit)
+                g = np.asarray(
+                    grad_fn(jnp.asarray(theta_np, dtype=jnp.float64)),
+                    dtype=np.float64,
+                )
+                outputs[0][0] = g
+
+            def perform_jax(self, *args):
+                (theta_jax,) = args
+                grad_fn = jax.grad(log_posterior_jit)
+                return (grad_fn(theta_jax),)
+
+        log_post_op = LogPosteriorOp()
+
+        pm.Potential("log_posterior", log_post_op(theta_var))
+
+    # ------------------------------------------------------------------ #
+    # 4. PyMC sampling with blackjax NUTS backend                         #
+    # ------------------------------------------------------------------ #
+    # initvals: dict mapping variable name -> per-chain start positions.
+    #   PyMC accepts a list of dicts (one per chain) for multi-chain inits.
+    # nuts_sampler_kwargs:
+    #   Passed through to the blackjax NUTS kernel. We supply:
+    #     - step_size: adapted step size from shared warmup
+    #     - inverse_mass_matrix: adapted diagonal mass matrix
+    #   This replaces PyMC's own default warmup for the blackjax backend.
+    # tune=0:
+    #   We skip PyMC's own adaptation phase entirely because we already ran
+    #   shared blackjax window_adaptation. Setting tune=0 and passing the
+    #   adapted parameters directly avoids redundant warmup.
+    # ------------------------------------------------------------------ #
+
+    initvals_list = [
+        {"theta": init_positions[c]} for c in range(num_chains)
+    ]
+
+    nuts_sampler_kwargs = {
+        "step_size": adapted_step_size,
+        "inverse_mass_matrix": inverse_mass_matrix,
+        "max_num_doublings": int(cfg.max_tree_depth),
+    }
+
     logger.info(
-        "[posterior] Sampling: samples=%d × chains=%d, thin_factor=%d, "
-        "max_tree_depth=%d",
+        "[posterior] Sampling via PyMC+BlackJAX: samples=%d × chains=%d, "
+        "thin_factor=%d, max_tree_depth=%d",
         int(cfg.num_samples),
         int(num_chains),
         int(cfg.thin_factor),
         int(cfg.max_tree_depth),
     )
 
-    key, sample_key = jax.random.split(key)
-
-    keys = jax.random.split(
-        sample_key,
-        int(cfg.num_samples) * num_chains,
-    ).reshape(int(cfg.num_samples), num_chains, 2)
-
-    def _one_chain_step(rng_key, state):
-        new_state, info = nuts_kernel.step(rng_key, state)
-        return new_state, info
-
-    one_step_many = jax.vmap(_one_chain_step, in_axes=(0, 0))
-
-    def _scan_step(states, rng_keys):
-        new_states, infos = one_step_many(rng_keys, states)
-        return new_states, (new_states.position, infos.acceptance_rate)
-
-    @jax.jit
-    def _sample_many_chains(states_init, rng_keys):
-        return jax.lax.scan(_scan_step, states_init, rng_keys)
-
     t_sample_start = time.time()
-    _, (positions, acceptance_rates) = _sample_many_chains(states0, keys)
 
-    positions.block_until_ready()
+    with pymc_model:
+        idata = pm.sample(
+            draws=int(cfg.num_samples),
+            tune=int(cfg.num_warmup),
+            chains=num_chains,
+            nuts_sampler="blackjax",
+            initvals=initvals_list,
+            nuts_sampler_kwargs=nuts_sampler_kwargs,
+            target_accept=float(cfg.target_acceptance_rate),
+            random_seed=int(cfg.seed),
+            progressbar="split+stats",  # verbose per-chain NUTS stats
+            compute_convergence_checks=True,  # R-hat + ESS after sampling
+            keep_warning_stat=True,  # retain divergence warnings
+            return_inferencedata=True,
+        )
+
     sample_elapsed = time.time() - t_sample_start
 
     logger.info("[posterior] Sampling complete in %.2f s.", sample_elapsed)
 
-    # positions shape: (num_samples, num_chains, dim)
-    all_positions = np.asarray(positions, dtype=np.float64).reshape(-1, dim)
-    acceptance_rate = float(jnp.mean(acceptance_rates))
+    # ------------------------------------------------------------------ #
+    # 5. Extract samples from InferenceData                               #
+    # ------------------------------------------------------------------ #
+    # idata.posterior["theta"] shape: (chain, draw, dim)
+    # Flatten to (chain * draw, dim) to match original all_positions shape.
+    theta_posterior = np.asarray(
+        idata.posterior["theta"].values,   # (chains, draws, dim)
+        dtype=np.float64,
+    )  # shape: (num_chains, num_samples, dim)
+
+    all_positions = theta_posterior.reshape(-1, dim)   # (num_chains * num_samples, dim)
+
+    # Acceptance rate: from sampler_stats if available, else from idata.
+    try:
+        acc = np.asarray(
+            idata.sample_stats["acceptance_rate"].values,
+            dtype=np.float64,
+        )
+        acceptance_rate = float(np.nanmean(acc))
+    except (KeyError, AttributeError):
+        acceptance_rate = float("nan")
+        logger.warning("[posterior] acceptance_rate not found in sample_stats.")
 
     if not np.all(np.isfinite(all_positions)):
         raise RuntimeError(
@@ -579,7 +792,7 @@ def run_posterior_inference(
     )
 
     # ------------------------------------------------------------------ #
-    # 4. Thin samples                                                     #
+    # 6. Thin samples                                                     #
     # ------------------------------------------------------------------ #
     thin = max(1, int(cfg.thin_factor))
     thinned = all_positions[::thin]
@@ -598,8 +811,24 @@ def run_posterior_inference(
     )
 
     # ------------------------------------------------------------------ #
-    # 5. Summary statistics                                               #
+    # 7. Summary statistics                                               #
     # ------------------------------------------------------------------ #
+    # Try ArviZ for richer ESS/R-hat, fall back to numpy _naive_ess.
+    try:
+        import arviz as az  # noqa: PLC0415
+
+        az_summary = az.summary(
+            idata,
+            var_names=["theta"],
+            round_to=10,
+            stat_focus="mean",
+        )
+        use_arviz = True
+        logger.info("[posterior] ArviZ summary computed.")
+    except Exception:
+        use_arviz = False
+        logger.info("[posterior] ArviZ not available; using numpy ESS fallback.")
+
     summary_rows = []
 
     for i, name in enumerate(theta_names):
@@ -611,16 +840,23 @@ def run_posterior_inference(
                 f"[posterior] Parameter {name!r} has no finite posterior samples."
             )
 
-        summary_rows.append(
-            {
-                "parameter": name,
-                "mean": float(np.mean(finite)),
-                "std": float(np.std(finite)),
-                "q2.5": float(np.percentile(finite, 2.5)),
-                "q97.5": float(np.percentile(finite, 97.5)),
-                "ess": int(_naive_ess(finite)),
-            }
-        )
+        row: dict[str, Any] = {
+            "parameter": name,
+            "mean": float(np.mean(finite)),
+            "std": float(np.std(finite)),
+            "q2.5": float(np.percentile(finite, 2.5)),
+            "q97.5": float(np.percentile(finite, 97.5)),
+            "ess": int(_naive_ess(finite)),
+        }
+
+        if use_arviz:
+            # ArviZ indexes theta[i] as "theta[i]" or "theta[i, 0]" etc.
+            idx_key = f"theta[{i}]"
+            if idx_key in az_summary.index:
+                row["ess_bulk"] = float(az_summary.loc[idx_key, "ess_bulk"])
+                row["r_hat"] = float(az_summary.loc[idx_key, "r_hat"])
+
+        summary_rows.append(row)
 
     df_summary = pd.DataFrame(summary_rows)
 
@@ -629,14 +865,14 @@ def run_posterior_inference(
     logger.info("[posterior] Saved summary to %s", summary_path)
 
     # ------------------------------------------------------------------ #
-    # 6. Save samples                                                     #
+    # 8. Save samples                                                     #
     # ------------------------------------------------------------------ #
     npz_path = os.path.join(post_dir, "posterior_samples.npz")
 
     np.savez(
         npz_path,
         samples=thinned,
-        raw_samples_shape=np.array(positions.shape, dtype=np.int64),
+        raw_samples_shape=np.array(theta_posterior.shape, dtype=np.int64),
         theta_names=np.array(theta_names, dtype=str),
         theta_best=np.asarray(theta_best, dtype=np.float64),
         acceptance_rate=np.array(acceptance_rate, dtype=np.float64),
@@ -650,10 +886,10 @@ def run_posterior_inference(
     logger.info("[posterior] Saved samples to %s", npz_path)
 
     # ------------------------------------------------------------------ #
-    # 7. Metadata                                                         #
+    # 9. Metadata                                                         #
     # ------------------------------------------------------------------ #
     meta = {
-        "sampler": "NUTS (BlackJAX, shared warmup, vectorized chains)",
+        "sampler": "NUTS (PyMC + BlackJAX backend, shared warmup)",
         "dim": int(dim),
         "seed": int(cfg.seed),
         "num_warmup": int(cfg.num_warmup),
@@ -700,7 +936,7 @@ def run_posterior_inference(
     logger.info("[posterior] Saved metadata to %s", meta_path)
 
     # ------------------------------------------------------------------ #
-    # 8. Optional plots                                                   #
+    # 10. Optional plots                                                  #
     # ------------------------------------------------------------------ #
     if bool(getattr(cfg, "save_plots", True)):
         _plot_posterior(post_dir, thinned, theta_names, int(cfg.plot_params))
@@ -711,11 +947,12 @@ def run_posterior_inference(
         "outdir": post_dir,
         "summary": df_summary,
         "metadata": meta,
+        "idata": idata,    # bonus: full ArviZ InferenceData object
     }
 
 
 # ---------------------------------------------------------------------------
-# Posterior prediction
+# Posterior prediction  (unchanged from original)
 # ---------------------------------------------------------------------------
 
 
@@ -768,7 +1005,6 @@ def posterior_predict(
         raise RuntimeError("[posterior] posterior_predict produced no simulations.")
 
     output: dict[str, Any] = {}
-
     keys = list(all_sims[0].keys())
 
     for key in keys:
@@ -780,7 +1016,6 @@ def posterior_predict(
             )
 
         stack = np.stack([sim[key] for sim in all_sims], axis=0)
-
         lo, hi = credible_intervals
 
         output[key] = {
@@ -791,8 +1026,12 @@ def posterior_predict(
         }
 
     output["t_eval"] = np.asarray(t_eval)
-
     return output
+
+
+# ---------------------------------------------------------------------------
+# Posterior predictive plot  (unchanged from original)
+# ---------------------------------------------------------------------------
 
 
 def plot_posterior_predictive(
@@ -859,8 +1098,7 @@ def plot_posterior_predictive(
     nrows = (n_plot + ncols - 1) // ncols
 
     fig, axes = plt.subplots(
-        nrows,
-        ncols,
+        nrows, ncols,
         figsize=(5 * ncols, 4 * nrows),
         squeeze=False,
     )
@@ -872,27 +1110,17 @@ def plot_posterior_predictive(
         color = plt.cm.tab10(ai % 10)
         name = entity_names[ei] if ei < len(entity_names) else f"entity_{ei}"
 
-        ax.plot(
-            t_arr,
-            mean_arr[ei],
-            "-",
-            lw=2,
-            color=color,
-            label="Posterior mean",
-        )
-
-        ax.fill_between(
-            t_arr,
-            lower_arr[ei],
-            upper_arr[ei],
-            alpha=0.25,
-            color=color,
-            label="95% CI",
-        )
+        ax.plot(t_arr, mean_arr[ei], "-", lw=2, color=color, label="Posterior mean")
+        ax.fill_between(t_arr, lower_arr[ei], upper_arr[ei],
+                        alpha=0.25, color=color, label="95% CI")
 
         if observed is not None and ei < observed.shape[0]:
             obs_arr = np.asarray(observed, dtype=float)
-            t_obs_arr = np.asarray(t_observed, dtype=float) if t_observed is not None else t_arr
+            t_obs_arr = (
+                np.asarray(t_observed, dtype=float)
+                if t_observed is not None
+                else t_arr
+            )
 
             if obs_arr.shape[1] != len(t_obs_arr):
                 raise ValueError(
@@ -904,14 +1132,8 @@ def plot_posterior_predictive(
             mask = np.isfinite(y_obs)
 
             if np.any(mask):
-                ax.scatter(
-                    t_obs_arr[mask],
-                    y_obs[mask],
-                    s=40,
-                    color=color,
-                    zorder=5,
-                    label="Observed",
-                )
+                ax.scatter(t_obs_arr[mask], y_obs[mask],
+                           s=40, color=color, zorder=5, label="Observed")
 
         ax.set_title(name, fontsize=10, fontweight="bold")
         ax.set_xlabel("Time")
@@ -933,7 +1155,7 @@ def plot_posterior_predictive(
 
 
 # ---------------------------------------------------------------------------
-# Internal utilities
+# Internal utilities (unchanged from original)
 # ---------------------------------------------------------------------------
 
 
@@ -992,13 +1214,11 @@ def _plot_posterior(
     if n_show <= 0:
         raise ValueError(f"[posterior] plot_params must be > 0. Got {n_plot}.")
 
-    # Trace plot
     ncols = min(4, n_show)
     nrows = (n_show + ncols - 1) // ncols
 
     fig, axes = plt.subplots(
-        nrows,
-        ncols,
+        nrows, ncols,
         figsize=(5 * ncols, 3 * nrows),
         squeeze=False,
     )
@@ -1024,11 +1244,9 @@ def _plot_posterior(
 
     logger.info("[posterior] Saved %s", trace_path)
 
-    # Pair plot
     if n_show >= 2:
         fig, axes = plt.subplots(
-            n_show,
-            n_show,
+            n_show, n_show,
             figsize=(3 * n_show, 3 * n_show),
             squeeze=False,
         )

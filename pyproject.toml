@@ -37,6 +37,8 @@ dependencies = [
   "jaxopt>=0.8.5",
   "jax>=0.8.3",
   "sympy>=1.14.0",
+  "pytensor>=2.38.3",
+  "pymc>=5.28.5",
 ]
 
 [project.optional-dependencies]
